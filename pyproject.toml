@@ -12,6 +12,9 @@ license = { text = "Apache-2.0" }
 authors = [{ name = "Nels Chantarotwong" }]
 keywords = ["llm", "agent", "guardrails", "claude-code", "codex", "safety"]
 
+[project.optional-dependencies]
+test = ["pytest>=9"]
+
 [project.urls]
 Homepage = "https://github.com/"
 
@@ -21,6 +24,7 @@ include = ["agent_rails*"]
 [tool.setuptools.package-data]
 agent_rails = ["config.default.json"]
 "agent_rails.adapters.claude_code" = ["install.sh"]
+"agent_rails.adapters.codex" = ["install.sh"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
