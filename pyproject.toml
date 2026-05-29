@@ -18,5 +18,9 @@ Homepage = "https://github.com/"
 [tool.setuptools.packages.find]
 include = ["agent_rails*"]
 
+[tool.setuptools.package-data]
+agent_rails = ["config.default.json"]
+"agent_rails.adapters.claude_code" = ["install.sh"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

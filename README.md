@@ -49,22 +49,24 @@ interface, registered in `core/engine.py`.
 * `enforce` — blocks for real.
 * `off` — disabled.
 
-**Per-repo opt-out:** drop a `.agent-rails-off` file in a project root and the
+**Per-repo opt-out:** drop a `.agent-rails-off` file at the repo root and the
 guard stands down there — recording goes inert too — for repos that
-legitimately flail (long migrations, known-noisy tasks).
+legitimately flail (long migrations, known-noisy tasks). It's honored even when
+the agent runs in a subdirectory.
 
 ### Config & trust model
 
 Configuration resolves in this order, and the trust boundary matters:
 
 1. built-in defaults
-2. packaged `config/config.default.json` — **trusted** (ships with the install)
-3. per-project `.agent-rails.json` in the agent's cwd — **untrusted**: it may
-   only *relax* the guard (raise thresholds, disable detectors, lower the
-   window, downgrade mode toward `off`). It can **never** escalate to `enforce`
-   or lower a threshold, so a hostile or careless repo cannot brick the agent
-   by forcing its first tool call to be denied.
-4. `.agent-rails-off` marker → `off`
+2. packaged `agent_rails/config.default.json` — **trusted** (ships with the install)
+3. per-project `.agent-rails.json`, searched from the agent's cwd up to the
+   repo root — **untrusted**: it may only *relax* the guard (raise thresholds,
+   disable detectors, lower the window, downgrade mode toward `off`). It can
+   **never** escalate to `enforce` or lower a threshold, so a hostile or
+   careless repo cannot brick the agent by forcing its first tool call to be
+   denied.
+4. `.agent-rails-off` marker (same upward search) → `off`
 5. `AGENT_RAILS_MODE` env var — **trusted** (your shell); may set any mode.
 
 All values are sanitized: modes are canonicalized, and `window`/`block_at`/
@@ -81,9 +83,9 @@ agent_rails/
                api.py      check()/record() — the one entry point adapters call
   detectors/   base.py     Detector interface + Verdict
                repetition.py, error_streak.py
+               config.default.json   packaged trusted defaults (ships in the wheel)
   adapters/    claude_code/  PreToolUse tripwire + PostToolUse recorder + install.sh
                generic/      observe()/check() for any custom agent loop
-config/        config.default.json
 tests/         synthetic-sequence unit tests
 ```
 

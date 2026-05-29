@@ -134,31 +134,72 @@ def _restrict_merge(baseline: dict, project) -> dict:
     return out
 
 
+_PROJECT_BOUNDARY = (".git", ".hg", ".svn")
+
+
+def _search_dirs(start: str):
+    """Yield `start` and its ancestors, stopping at a repo/home/filesystem
+    boundary. This lets a .agent-rails.json / .agent-rails-off placed at the
+    REPO ROOT be honored even when the agent's cwd is a subdirectory — without
+    ever wandering above the project (which could pick up an unrelated file)."""
+    try:
+        cur = Path(start).resolve()
+    except Exception:
+        return
+    try:
+        home = Path.home().resolve()
+    except Exception:
+        home = None
+    seen = 0
+    while True:
+        yield cur
+        seen += 1
+        if cur.parent == cur or seen > 64:  # filesystem root / runaway guard
+            break
+        if any((cur / b).exists() for b in _PROJECT_BOUNDARY):
+            break  # cur is the project root; do not ascend past it
+        if home is not None and cur == home:
+            break  # never ascend above the user's home dir
+        cur = cur.parent
+
+
+def _find_upwards(start: str, name: str) -> Optional[Path]:
+    for d in _search_dirs(start):
+        p = d / name
+        try:
+            if p.exists():
+                return p
+        except Exception:
+            continue
+    return None
+
+
 def load_config(project_dir: Optional[str] = None) -> dict:
     baseline = deepcopy(_DEFAULT)
 
     # 2. trusted packaged override
     try:
-        pkg = Path(__file__).resolve().parent.parent / "config" / "config.default.json"
+        pkg = Path(__file__).resolve().parent / "config.default.json"
         if pkg.exists():
             baseline = _deep_merge(baseline, json.loads(pkg.read_text(encoding="utf-8")))
     except Exception:
         pass
     baseline = _sanitize_baseline(baseline)
 
-    proj = Path(project_dir or os.getcwd())
+    start = project_dir or os.getcwd()
 
-    # 3. untrusted per-project overlay — relax only
+    # 3. untrusted per-project overlay — relax only. Searched from cwd up to the
+    #    repo root, so a repo-root config applies in any subdirectory.
     try:
-        ov = proj / ".agent-rails.json"
-        if ov.exists():
+        ov = _find_upwards(start, ".agent-rails.json")
+        if ov is not None:
             baseline = _restrict_merge(baseline, json.loads(ov.read_text(encoding="utf-8")))
     except Exception:
         pass
 
-    # 4. opt-out marker (a relaxation)
+    # 4. opt-out marker (a relaxation), same upward search.
     try:
-        if (proj / ".agent-rails-off").exists():
+        if _find_upwards(start, ".agent-rails-off") is not None:
             baseline["mode"] = "off"
     except Exception:
         pass

@@ -124,6 +124,44 @@ def test_env_mode_canonicalized_and_validated():
             os.environ["AGENT_RAILS_MODE"] = old
 
 
+# --- repo-root search (cwd may be a subdirectory) -----------------------
+
+def test_off_marker_found_at_repo_root_from_subdir():
+    def body():
+        root = tempfile.mkdtemp(prefix="agent-rails-root-")
+        os.mkdir(os.path.join(root, ".git"))
+        open(os.path.join(root, ".agent-rails-off"), "w").close()
+        sub = os.path.join(root, "a", "b")
+        os.makedirs(sub)
+        assert load_config(sub)["mode"] == "off"
+    _no_env(body)
+
+
+def test_project_json_found_at_repo_root_from_subdir():
+    def body():
+        root = tempfile.mkdtemp(prefix="agent-rails-root2-")
+        os.mkdir(os.path.join(root, ".git"))
+        with open(os.path.join(root, ".agent-rails.json"), "w") as f:
+            f.write(json.dumps({"detectors": {"repetition": {"block_at": 9}}}))
+        sub = os.path.join(root, "deep", "nested")
+        os.makedirs(sub)
+        assert load_config(sub)["detectors"]["repetition"]["block_at"] == 9
+    _no_env(body)
+
+
+def test_search_stops_at_repo_boundary():
+    # a marker ABOVE the repo root must NOT be honored (don't wander out of the repo)
+    def body():
+        outer = tempfile.mkdtemp(prefix="agent-rails-outer-")
+        open(os.path.join(outer, ".agent-rails-off"), "w").close()
+        repo = os.path.join(outer, "repo")
+        os.makedirs(os.path.join(repo, ".git"))
+        sub = os.path.join(repo, "x")
+        os.makedirs(sub)
+        assert load_config(sub)["mode"] == "observe"
+    _no_env(body)
+
+
 if __name__ == "__main__":
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from _run import run_module_tests
