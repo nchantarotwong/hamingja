@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Claude Code PreToolUse adapter — the tripwire.
 
-Wired as a PreToolUse hook. Reads the hook payload on stdin, builds a
-candidate ToolEvent for the call that's about to run, evaluates it against the
-session's recent history, and emits the appropriate Claude Code hook response:
+Wired as a PreToolUse hook. Reads the hook payload on stdin, asks the shared
+core API whether the call about to run is flailing, and emits the appropriate
+Claude Code hook response:
 
     BLOCK  -> permissionDecision "deny" with the reason (enforce mode only)
-    NUDGE  -> additionalContext only (advisory, the call still proceeds)
+    NUDGE  -> additionalContext only (advisory, the call still proceeds);
+              when this was a block downgraded by observe mode
+              (verdict.would_block), the context says so.
     ALLOW  -> empty output
 
 Output contract (per code.claude.com/docs/en/hooks):
@@ -16,20 +18,16 @@ Output contract (per code.claude.com/docs/en/hooks):
             "additionalContext": "..."}}   # no permissionDecision => normal flow
 
 FAIL-OPEN: any error path prints nothing and exits 0, so the call proceeds.
-The tripwire can never be the reason a session stalls.
 """
 from __future__ import annotations
 
 import json
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from agent_rails.config import load_config  # noqa: E402
-from agent_rails.core.engine import evaluate  # noqa: E402
-from agent_rails.core.events import PENDING, ToolEvent, hash_args  # noqa: E402
+from agent_rails.core.api import check  # noqa: E402
 from agent_rails.detectors.base import BLOCK, NUDGE  # noqa: E402
 
 
@@ -64,14 +62,18 @@ def main() -> int:
         tool_input = payload.get("tool_input", {})
         cwd = payload.get("cwd")
 
-        cfg = load_config(cwd)
-        candidate = ToolEvent(session_id, tool, hash_args(tool_input), PENDING, time.time())
-        verdict = evaluate(session_id, cfg, candidate=candidate)
+        verdict = check(session_id, tool, tool_input, project_dir=cwd)
 
         if verdict.action == BLOCK:
             _emit_deny(verdict.reason)
         elif verdict.action == NUDGE:
-            _emit_nudge(verdict.reason)
+            context = verdict.reason
+            if getattr(verdict, "would_block", False):
+                context = (
+                    "[observe] This call WOULD BE BLOCKED in enforce mode. "
+                    + context
+                )
+            _emit_nudge(context)
         # ALLOW: print nothing
     except Exception:
         return 0  # any failure -> allow

@@ -39,15 +39,25 @@ def test_sessions_are_isolated():
     assert [e.arg_hash for e in read_recent("sessB", 10)] == ["b"]
 
 
+def test_truncation_keeps_last_cap():
+    s = "cap"
+    for i in range(250):
+        append_event(ToolEvent(s, "Bash", f"h{i}", OK, float(i)), cap=200)
+    got = read_recent(s, 1000)
+    assert len(got) == 200
+    assert got[0].arg_hash == "h50"
+    assert got[-1].arg_hash == "h249"
+
+
+def test_nonpositive_window_does_not_return_everything():
+    # window<=0 used to hit the lines[-0:] == lines[:] quirk; guard clamps to 1
+    s = "zerowin"
+    for i in range(5):
+        append_event(ToolEvent(s, "Bash", f"h{i}", OK, float(i)))
+    assert len(read_recent(s, 0)) == 1
+
+
 if __name__ == "__main__":
-    fns = {k: v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)}
-    failed = 0
-    for name, fn in fns.items():
-        try:
-            fn()
-            print(f"PASS {name}")
-        except AssertionError as e:
-            failed += 1
-            print(f"FAIL {name}: {e}")
-    print(f"\n{len(fns) - failed}/{len(fns)} passed")
-    sys.exit(1 if failed else 0)
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from _run import run_module_tests
+    sys.exit(run_module_tests(globals()))

@@ -14,7 +14,7 @@ _TMP = tempfile.mkdtemp(prefix="agent-rails-test-")
 os.environ["AGENT_RAILS_STATE_DIR"] = _TMP
 
 from agent_rails.core.engine import evaluate  # noqa: E402
-from agent_rails.core.events import ERROR, OK, PENDING, ToolEvent, hash_args  # noqa: E402
+from agent_rails.core.events import ERROR, OK, PENDING, ToolEvent  # noqa: E402
 from agent_rails.core.state import append_event  # noqa: E402
 from agent_rails.detectors.base import ALLOW, BLOCK, NUDGE  # noqa: E402
 
@@ -47,6 +47,7 @@ def test_enforce_mode_blocks_repetition():
     seed(s, 3, arg="a")
     v = evaluate(s, cfg("enforce"), candidate=cand(s, arg="a"))
     assert v.action == BLOCK
+    assert v.would_block is False
 
 
 def test_observe_mode_downgrades_block_to_nudge():
@@ -54,7 +55,7 @@ def test_observe_mode_downgrades_block_to_nudge():
     seed(s, 3, arg="a")
     v = evaluate(s, cfg("observe"), candidate=cand(s, arg="a"))
     assert v.action == NUDGE
-    assert "WOULD BLOCK" in v.reason
+    assert v.would_block is True  # carried as structured data, not prose
 
 
 def test_off_mode_always_allows():
@@ -65,7 +66,6 @@ def test_off_mode_always_allows():
 
 
 def test_highest_severity_wins():
-    # both detectors fire; repetition BLOCK should beat error_streak NUDGE
     s = "agg"
     seed(s, 3, arg="a", status=ERROR)  # 3 identical AND 3 errors
     v = evaluate(s, cfg("enforce"), candidate=cand(s, arg="a"))
@@ -80,15 +80,20 @@ def test_clean_session_allows():
     assert v.action == ALLOW
 
 
+def test_central_enable_gate_disables_detector():
+    # repetition disabled in config -> engine skips it even though it would fire
+    s = "gated"
+    seed(s, 5, arg="a")
+    c = cfg("enforce")
+    c["detectors"] = {
+        "repetition": {"enabled": False, "nudge_at": 3, "block_at": 4},
+        "error_streak": {"enabled": True, "nudge_at": 3, "block_at": 6},
+    }
+    v = evaluate(s, c, candidate=cand(s, arg="a"))
+    assert v.action == ALLOW
+
+
 if __name__ == "__main__":
-    fns = {k: v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)}
-    failed = 0
-    for name, fn in fns.items():
-        try:
-            fn()
-            print(f"PASS {name}")
-        except AssertionError as e:
-            failed += 1
-            print(f"FAIL {name}: {e}")
-    print(f"\n{len(fns) - failed}/{len(fns)} passed")
-    sys.exit(1 if failed else 0)
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from _run import run_module_tests
+    sys.exit(run_module_tests(globals()))

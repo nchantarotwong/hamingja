@@ -4,6 +4,14 @@ State lives in a temp dir, one JSONL file per session, so concurrent sessions
 never poison each other's counters. We keep only the most recent `cap` events
 to bound file growth.
 
+Concurrency: a single session can have hooks fire close together (a PreToolUse
+read interleaving a PostToolUse append/truncate, or batched tool calls). All
+access is serialized with an advisory file lock (flock): writers take an
+exclusive lock for the whole append+truncate, readers a shared lock. The
+truncate is done in place under the exclusive lock, so a reader never observes
+a half-rewritten file. flock is best-effort — if unavailable (e.g. Windows), we
+degrade to lock-free access rather than failing.
+
 Everything here is FAIL-OPEN: any error (missing dir, unreadable file, bad
 line) degrades to a no-op or an empty result. The store can never be the
 reason a tool call is blocked.
@@ -15,6 +23,30 @@ import tempfile
 from pathlib import Path
 
 from .events import ToolEvent
+
+try:
+    import fcntl  # POSIX only
+    _HAVE_FCNTL = True
+except Exception:  # pragma: no cover
+    _HAVE_FCNTL = False
+
+
+def _lock(fh, exclusive: bool) -> None:
+    if not _HAVE_FCNTL:
+        return
+    try:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+    except Exception:
+        pass
+
+
+def _unlock(fh) -> None:
+    if not _HAVE_FCNTL:
+        return
+    try:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+    except Exception:
+        pass
 
 
 def _state_dir() -> Path:
@@ -32,21 +64,26 @@ def _session_file(session_id: str) -> Path:
 
 
 def append_event(event: ToolEvent, cap: int = 200) -> None:
-    """Append an event to its session log. Never raises."""
+    """Append an event, truncating to `cap`, under an exclusive lock. Never raises."""
     try:
         path = _session_file(event.session_id)
-        with path.open("a", encoding="utf-8") as fh:
-            fh.write(event.to_json() + "\n")
-        _truncate(path, cap)
-    except Exception:
-        return
-
-
-def _truncate(path: Path, cap: int) -> None:
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-        if len(lines) > cap:
-            path.write_text("\n".join(lines[-cap:]) + "\n", encoding="utf-8")
+        # 'a+': created if absent; in append mode every write goes to EOF, which
+        # — after an in-place truncate to 0 — means the rewrite lands at the start.
+        with path.open("a+", encoding="utf-8") as fh:
+            _lock(fh, exclusive=True)
+            try:
+                fh.write(event.to_json() + "\n")
+                fh.flush()
+                fh.seek(0)
+                lines = fh.read().splitlines()
+                if len(lines) > cap:
+                    kept = "\n".join(lines[-cap:]) + "\n"
+                    fh.seek(0)
+                    fh.truncate()
+                    fh.write(kept)
+                    fh.flush()
+            finally:
+                _unlock(fh)
     except Exception:
         return
 
@@ -54,12 +91,18 @@ def _truncate(path: Path, cap: int) -> None:
 def read_recent(session_id: str, window: int) -> list[ToolEvent]:
     """Return up to `window` most-recent events (oldest first). [] on any error."""
     try:
+        n = window if isinstance(window, int) and window > 0 else 1
         path = _session_file(session_id)
         if not path.exists():
             return []
-        lines = path.read_text(encoding="utf-8").splitlines()
+        with path.open("r", encoding="utf-8") as fh:
+            _lock(fh, exclusive=False)
+            try:
+                data = fh.read()
+            finally:
+                _unlock(fh)
         events: list[ToolEvent] = []
-        for line in lines[-window:]:
+        for line in data.splitlines()[-n:]:
             if not line.strip():
                 continue
             try:

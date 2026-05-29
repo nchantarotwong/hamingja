@@ -44,25 +44,41 @@ interface, registered in `core/engine.py`.
 
 ## Modes (safe rollout)
 
-Set in `config/config.default.json`, or per-project `.agent-rails.json`, or the
-`AGENT_RAILS_MODE` env var:
-
-* `observe` *(default)* — never blocks; logs what it **would** have blocked, so
-  you can tune thresholds against your real workflow first.
+* `observe` *(default)* — never blocks; emits a nudge carrying `would_block`, so
+  you can tune thresholds against your real workflow before enforcing.
 * `enforce` — blocks for real.
 * `off` — disabled.
 
 **Per-repo opt-out:** drop a `.agent-rails-off` file in a project root and the
-guard stands down there (for repos that legitimately flail — long migrations,
-known-noisy tasks).
+guard stands down there — recording goes inert too — for repos that
+legitimately flail (long migrations, known-noisy tasks).
+
+### Config & trust model
+
+Configuration resolves in this order, and the trust boundary matters:
+
+1. built-in defaults
+2. packaged `config/config.default.json` — **trusted** (ships with the install)
+3. per-project `.agent-rails.json` in the agent's cwd — **untrusted**: it may
+   only *relax* the guard (raise thresholds, disable detectors, lower the
+   window, downgrade mode toward `off`). It can **never** escalate to `enforce`
+   or lower a threshold, so a hostile or careless repo cannot brick the agent
+   by forcing its first tool call to be denied.
+4. `.agent-rails-off` marker → `off`
+5. `AGENT_RAILS_MODE` env var — **trusted** (your shell); may set any mode.
+
+All values are sanitized: modes are canonicalized, and `window`/`block_at`/
+`nudge_at` are coerced to ints with safe floors, so a typo or out-of-range
+value can neither crash a detector nor cause a spurious block.
 
 ## Architecture
 
 ```
 agent_rails/
   core/        events.py   normalized ToolEvent (the harness-neutral schema)
-               state.py    session-keyed rolling log (fail-open)
-               engine.py   run detectors -> aggregate -> verdict
+               state.py    session-keyed rolling log (locked, fail-open)
+               engine.py   run enabled detectors -> aggregate -> verdict
+               api.py      check()/record() — the one entry point adapters call
   detectors/   base.py     Detector interface + Verdict
                repetition.py, error_streak.py
   adapters/    claude_code/  PreToolUse tripwire + PostToolUse recorder + install.sh
@@ -86,9 +102,12 @@ harness's response. Two ingestion modes are supported by design:
 bash agent_rails/adapters/claude_code/install.sh
 ```
 
-Merges a PreToolUse tripwire and PostToolUse recorder into
-`~/.claude/settings.json` (backs it up first; idempotent). Default mode is
-`observe`, so nothing is blocked until you flip to `enforce`.
+Merges three hooks into `~/.claude/settings.json` — a `PreToolUse` tripwire and
+a recorder on both `PostToolUse` (success) and `PostToolUseFailure` (failure, so
+error detection is by event, not by parsing an undocumented result shape). The
+merge preserves your other hooks, is idempotent, self-heals a moved repo path,
+and backs up only when it actually changes something. Default mode is `observe`,
+so nothing is blocked until you flip to `enforce`.
 
 ## Use in your own agent loop
 

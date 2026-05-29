@@ -64,7 +64,6 @@ def test_repetition_respects_disabled():
 # --- error streak -------------------------------------------------------
 
 def test_error_streak_resets_on_success():
-    # 5 errors then a success then 1 error -> trailing streak is 1
     hist = [ev(status=ERROR) for _ in range(5)] + [ev(status=OK), ev(status=ERROR)]
     assert ErrorStreakDetector().evaluate(hist, None, CFG) is None
 
@@ -87,14 +86,6 @@ def test_error_streak_clean_history_is_quiet():
 
 
 if __name__ == "__main__":
-    fns = {k: v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)}
-    failed = 0
-    for name, fn in fns.items():
-        try:
-            fn()
-            print(f"PASS {name}")
-        except AssertionError as e:
-            failed += 1
-            print(f"FAIL {name}: {e}")
-    print(f"\n{len(fns) - failed}/{len(fns)} passed")
-    sys.exit(1 if failed else 0)
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from _run import run_module_tests
+    sys.exit(run_module_tests(globals()))

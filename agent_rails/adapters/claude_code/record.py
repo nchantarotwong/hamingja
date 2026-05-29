@@ -1,38 +1,40 @@
 #!/usr/bin/env python3
-"""Claude Code PostToolUse adapter — records the outcome of each tool call.
+"""Claude Code recorder — records the outcome of each tool call.
 
-Wired as a PostToolUse hook. Reads the hook payload on stdin, translates it
-into a ToolEvent, and appends it to the session log. It never blocks anything
-and always exits 0 — recording is pure observation.
+Wired as BOTH:
+  * PostToolUse        -> the call succeeded (record OK), with a payload
+                          heuristic fallback in case a failure is delivered here
+  * PostToolUseFailure -> the call failed (record ERROR), authoritative
 
-Claude Code PostToolUse stdin (per code.claude.com/docs/en/hooks):
-    { session_id, transcript_path, cwd, permission_mode,
-      hook_event_name: "PostToolUse", tool_name, tool_input, tool_output }
+Detecting errors by the EVENT is deterministic; the per-tool shape of the
+result payload is undocumented, so we don't rely on parsing it. The heuristic
+below is only a best-effort fallback for harness versions that route a failure
+through PostToolUse.
 
-Error detection is best-effort and conservative: we only mark a call as an
-error when the output clearly says so (success == False, or a non-empty
-`error`). Anything ambiguous counts as OK, so we never manufacture a phantom
-error streak.
+It never blocks anything and always exits 0 — recording is pure observation.
+Recording also honors mode=off / .agent-rails-off (handled in core.api.record),
+so an opted-out repo stays fully inert.
 """
 from __future__ import annotations
 
 import json
 import sys
-import time
 from pathlib import Path
 
 # make `agent_rails` importable when run as a standalone hook script
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from agent_rails.core.events import ERROR, OK, ToolEvent, hash_args  # noqa: E402
-from agent_rails.core.state import append_event  # noqa: E402
+from agent_rails.core.api import record  # noqa: E402
 
 
-def _is_error(tool_output) -> bool:
-    if isinstance(tool_output, dict):
-        if tool_output.get("success") is False:
+def _looks_like_error(result) -> bool:
+    """Best-effort fallback error detection from an undocumented result shape."""
+    if isinstance(result, dict):
+        if result.get("is_error") is True:
             return True
-        err = tool_output.get("error")
+        if result.get("success") is False:
+            return True
+        err = result.get("error")
         if isinstance(err, str) and err.strip():
             return True
         if err is True:
@@ -47,12 +49,19 @@ def main() -> int:
         return 0  # fail-open: unparseable payload, record nothing
 
     try:
+        event = str(payload.get("hook_event_name", ""))
         session_id = str(payload.get("session_id", "default"))
         tool = str(payload.get("tool_name", "unknown"))
         tool_input = payload.get("tool_input", {})
-        tool_output = payload.get("tool_output", payload.get("tool_response"))
-        status = ERROR if _is_error(tool_output) else OK
-        append_event(ToolEvent(session_id, tool, hash_args(tool_input), status, time.time()))
+        cwd = payload.get("cwd")
+
+        if event == "PostToolUseFailure":
+            ok = False  # authoritative: this event only fires on failure
+        else:
+            result = payload.get("tool_response", payload.get("tool_output"))
+            ok = not _looks_like_error(result)
+
+        record(session_id, tool, tool_input, ok, project_dir=cwd)
     except Exception:
         pass  # never let recording surface an error to the agent
 

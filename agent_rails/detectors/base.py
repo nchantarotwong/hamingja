@@ -3,7 +3,8 @@
 A detector inspects a window of recent ToolEvents (plus an optional candidate
 call that is about to run) and optionally returns a Verdict. Adding a new
 guardrail is exactly: subclass Detector, implement evaluate(), register it in
-the engine's DETECTORS list.
+the engine's DETECTORS list. Whether a detector is *enabled* is decided
+centrally by the engine — a detector does not have to remember to check it.
 
 Detectors must never raise for control flow — the engine wraps each call and
 treats an exception as "no verdict" (fail-open), but a detector that raises on
@@ -26,9 +27,10 @@ _RANK = {ALLOW: 0, NUDGE: 1, BLOCK: 2}
 
 @dataclass
 class Verdict:
-    action: str  # ALLOW | NUDGE | BLOCK
+    action: str  # ALLOW | NUDGE | BLOCK — the EFFECTIVE action to take
     detector: str
     reason: str
+    would_block: bool = False  # True when a BLOCK was downgraded by observe mode
 
     @property
     def rank(self) -> int:
@@ -49,7 +51,7 @@ class Detector:
         events:    recent history, oldest first (the candidate is NOT included).
         candidate: the call about to run (PreToolUse), or None when evaluating
                    purely on history.
-        config:    the merged config dict.
+        config:    the merged, already-sanitized config dict.
         """
         raise NotImplementedError
 
