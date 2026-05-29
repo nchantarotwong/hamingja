@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+
+# OS
+.DS_Store
+
+# Local agent-rails state (also lives in the system temp dir by default)
+.agent-rails/
+
+# NEVER commit captured real sessions — they can carry private repo internals
+# into history. Detector fixtures must stay synthetic.
+fixtures/real/
+*.transcript

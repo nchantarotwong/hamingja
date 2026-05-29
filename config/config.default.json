@@ -1,0 +1,16 @@
+{
+  "mode": "observe",
+  "window": 12,
+  "detectors": {
+    "repetition": {
+      "enabled": true,
+      "nudge_at": 3,
+      "block_at": 4
+    },
+    "error_streak": {
+      "enabled": true,
+      "nudge_at": 3,
+      "block_at": 6
+    }
+  }
+}
