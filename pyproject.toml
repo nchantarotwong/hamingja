@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-rails"
+version = "0.1.0"
+description = "Harness-neutral guardrails for LLM coding agents — detect and interrupt doom-loop / context-poisoning before it burns tokens."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Nels Chantarotwong" }]
+keywords = ["llm", "agent", "guardrails", "claude-code", "codex", "safety"]
+
+[project.urls]
+Homepage = "https://github.com/"
+
+[tool.setuptools.packages.find]
+include = ["agent_rails*"]
+
+[tool.setuptools.package-data]
+agent_rails = ["config.default.json"]
+"agent_rails.adapters.claude_code" = ["install.sh"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
