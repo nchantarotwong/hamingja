@@ -85,6 +85,7 @@ agent_rails/
                repetition.py, error_streak.py
                config.default.json   packaged trusted defaults (ships in the wheel)
   adapters/    claude_code/  PreToolUse tripwire + PostToolUse recorder + install.sh
+               codex/        PreToolUse tripwire + PostToolUse recorder + install.sh
                generic/      observe()/check() for any custom agent loop
 tests/         synthetic-sequence unit tests
 ```
@@ -111,6 +112,25 @@ merge preserves your other hooks, is idempotent, self-heals a moved repo path,
 and backs up only when it actually changes something. Default mode is `observe`,
 so nothing is blocked until you flip to `enforce`.
 
+## Install (Codex)
+
+```bash
+bash agent_rails/adapters/codex/install.sh
+```
+
+Merges two hooks into `~/.codex/hooks.json` — a `PreToolUse` tripwire and a
+`PostToolUse` recorder. The merge preserves your other hooks, is idempotent,
+self-heals a moved repo path, and backs up only when it actually changes
+something. Codex may ask you to review/trust the new hooks with `/hooks`.
+Default mode is `observe`, so nothing is blocked until you flip to `enforce`.
+
+Codex hook coverage follows Codex's hook support: `PreToolUse` / `PostToolUse`
+currently cover Bash, `apply_patch`, and MCP tools, but not every possible
+tool path. In particular, newer shell execution paths may bypass tool hooks;
+when Codex does not emit `PostToolUse`, agent-rails cannot observe that result,
+so the `error_streak` detector is best-effort for Codex. `repetition` still
+works for any `PreToolUse`-covered call.
+
 ## Use in your own agent loop
 
 ```python
@@ -135,7 +155,7 @@ carry private repo internals into history.
 ## Status
 
 Early. Core + `repetition`/`error_streak` detectors + Claude Code adapter +
-generic adapter. Codex adapter and the transcript-tail supervisor are planned.
+Codex adapter + generic adapter. The transcript-tail supervisor is planned.
 
 ## License
 
