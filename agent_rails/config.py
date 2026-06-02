@@ -35,11 +35,27 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Optional
 
+# Tools whose repeated identical use is normal, not flailing: read-only /
+# idempotent queries (re-reading a file, re-grepping, re-listing, polling).
+# Exempt from the repetition detector by default so a legitimately repeated
+# lookup never trips a block. error_streak still applies — a read that keeps
+# ERRORING is still a stuck loop.
+_DEFAULT_EXEMPT_TOOLS = [
+    "Read", "Glob", "Grep", "LS", "NotebookRead",
+    "WebFetch", "WebSearch", "TodoRead",
+]
+
 _DEFAULT = {
     "mode": "observe",  # observe | enforce | off
     "window": 12,
     "detectors": {
-        "repetition": {"enabled": True, "nudge_at": 3, "block_at": 4},
+        "repetition": {
+            "enabled": True,
+            "nudge_at": 3,
+            "block_at": 4,
+            "exempt_tools": list(_DEFAULT_EXEMPT_TOOLS),
+        },
+        "oscillation": {"enabled": True, "nudge_at": 4, "block_at": 6},
         "error_streak": {"enabled": True, "nudge_at": 3, "block_at": 6},
     },
 }
@@ -57,6 +73,13 @@ def _to_int(v, default: int) -> int:
         return int(v)
     except (TypeError, ValueError):
         return default
+
+
+def _to_str_list(v) -> list:
+    """Coerce a config value to a clean list of non-empty strings ([] on junk)."""
+    if not isinstance(v, list):
+        return []
+    return [s for s in (str(x).strip() for x in v) if s]
 
 
 def _canon_mode(v) -> Optional[str]:
@@ -89,6 +112,8 @@ def _clamp_floors(cfg: dict) -> dict:
         d["enabled"] = bool(d.get("enabled", True))
         d["block_at"] = max(_BLOCK_MIN, _to_int(d.get("block_at"), 4))
         d["nudge_at"] = max(_NUDGE_MIN, _to_int(d.get("nudge_at"), 3))
+        if "exempt_tools" in d:
+            d["exempt_tools"] = _to_str_list(d.get("exempt_tools"))
     cfg["detectors"] = dets
     return cfg
 
@@ -131,6 +156,13 @@ def _restrict_merge(baseline: dict, project) -> dict:
                 d["block_at"] = max(d["block_at"], _to_int(pd.get("block_at"), d["block_at"]))
             if "nudge_at" in pd:  # raise only
                 d["nudge_at"] = max(d["nudge_at"], _to_int(pd.get("nudge_at"), d["nudge_at"]))
+            if "exempt_tools" in pd:  # extend only: more exemptions = less blocking
+                base_ex = d.get("exempt_tools") if isinstance(d.get("exempt_tools"), list) else []
+                merged = list(base_ex)
+                for t in _to_str_list(pd.get("exempt_tools")):
+                    if t not in merged:
+                        merged.append(t)
+                d["exempt_tools"] = merged
     return out
 
 

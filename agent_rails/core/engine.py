@@ -25,10 +25,14 @@ from .state import read_recent
 from ..detectors.base import ALLOW, BLOCK, NUDGE, Verdict
 from ..detectors.repetition import RepetitionDetector
 from ..detectors.error_streak import ErrorStreakDetector
+from ..detectors.oscillation import OscillationDetector
 
-# Registry. Add a detector here to enable it.
+# Registry. Add a detector here to enable it. Order matters only for ties:
+# on equal severity the earlier detector's verdict is kept (see evaluate()),
+# so list them most-precise first.
 DETECTORS = [
     RepetitionDetector(),
+    OscillationDetector(),
     ErrorStreakDetector(),
 ]
 

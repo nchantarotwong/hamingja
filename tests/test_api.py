@@ -42,6 +42,42 @@ def test_check_blocks_after_repeats_via_api_in_enforce():
             os.environ["AGENT_RAILS_MODE"] = old
 
 
+def test_enforced_block_records_marker_and_breaks_streak():
+    """Regression: an enforced block must not wedge the agent.
+
+    error_streak is candidate-independent, so once it trips, a naive
+    implementation denies EVERY following call; the denied calls never run, so
+    no success is ever recorded to reset the streak. check() records a BLOCKED
+    marker for the denied call, which is not an ERROR, so the streak resets and
+    the agent can run a *different* (diagnostic) call.
+    """
+    old = os.environ.get("AGENT_RAILS_MODE")
+    try:
+        os.environ["AGENT_RAILS_MODE"] = "enforce"
+        d = _proj({})
+        for _ in range(6):
+            record("wedge", "Bash", {"command": "broken"}, ok=False, project_dir=d)
+        # error_streak (6) trips -> block; check() records the BLOCKED marker.
+        assert check("wedge", "Bash", {"command": "broken"}, project_dir=d).action == "block"
+        # A DIFFERENT call must now be allowed: the marker broke the streak.
+        assert check("wedge", "Bash", {"command": "diagnose"}, project_dir=d).action == "allow"
+    finally:
+        if old is None:
+            os.environ.pop("AGENT_RAILS_MODE", None)
+        else:
+            os.environ["AGENT_RAILS_MODE"] = old
+
+
+def test_observe_block_does_not_record_marker():
+    """observe mode downgrades a block to a nudge — the call PROCEEDS and will
+    record its own outcome, so check() must NOT inject a phantom BLOCKED marker."""
+    d = _proj({})  # default mode is observe
+    before = len(read_recent("obs-nomark", 200))
+    v = check("obs-nomark", "Bash", {"command": "x"}, project_dir=d)
+    assert v.action != "block"  # downgraded
+    assert len(read_recent("obs-nomark", 200)) == before  # nothing recorded
+
+
 def test_record_is_inert_when_off():
     d = _proj({".agent-rails-off": ""})
     for _ in range(6):

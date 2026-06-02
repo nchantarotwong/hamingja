@@ -5,7 +5,16 @@
     "repetition": {
       "enabled": true,
       "nudge_at": 3,
-      "block_at": 4
+      "block_at": 4,
+      "exempt_tools": [
+        "Read", "Glob", "Grep", "LS", "NotebookRead",
+        "WebFetch", "WebSearch", "TodoRead"
+      ]
+    },
+    "oscillation": {
+      "enabled": true,
+      "nudge_at": 4,
+      "block_at": 6
     },
     "error_streak": {
       "enabled": true,

@@ -29,6 +29,13 @@ class RepetitionDetector(Detector):
         if target is None:
             return None
 
+        # Read-only / idempotent tools repeat legitimately (re-reading a file,
+        # re-grepping, polling). Exempt them so a harmless repeated lookup never
+        # trips a block. error_streak still covers a read that keeps erroring.
+        exempt = cfg.get("exempt_tools")
+        if isinstance(exempt, list) and target.tool in exempt:
+            return None
+
         prior = sum(
             1 for e in events if e.tool == target.tool and e.arg_hash == target.arg_hash
         )

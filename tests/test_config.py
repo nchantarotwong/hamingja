@@ -80,6 +80,36 @@ def test_off_marker_disables():
     _no_env(body)
 
 
+# --- exempt_tools allowlist (a relaxation: extend-only) -----------------
+
+def test_baseline_has_default_exempt_tools():
+    def body():
+        ex = load_config(_proj({}))["detectors"]["repetition"]["exempt_tools"]
+        assert "Read" in ex and "Grep" in ex
+    _no_env(body)
+
+
+def test_project_can_extend_exempt_tools():
+    def body():
+        d = _proj({".agent-rails.json": json.dumps(
+            {"detectors": {"repetition": {"exempt_tools": ["MyCustomReadTool"]}}})})
+        ex = load_config(d)["detectors"]["repetition"]["exempt_tools"]
+        assert "MyCustomReadTool" in ex  # added
+        assert "Read" in ex               # baseline entries preserved (extend-only)
+    _no_env(body)
+
+
+def test_project_cannot_shrink_exempt_tools():
+    # supplying a shorter list must not REMOVE baseline exemptions (that would
+    # tighten the guard); the result is the union.
+    def body():
+        d = _proj({".agent-rails.json": json.dumps(
+            {"detectors": {"repetition": {"exempt_tools": []}}})})
+        ex = load_config(d)["detectors"]["repetition"]["exempt_tools"]
+        assert "Read" in ex and "Grep" in ex
+    _no_env(body)
+
+
 # --- sanitization / floors ----------------------------------------------
 
 def test_non_numeric_threshold_does_not_disable_detector():
