@@ -54,6 +54,19 @@ def test_repetition_distinguishes_by_tool():
     assert RepetitionDetector().evaluate(hist, cand, CFG) is None
 
 
+def test_repetition_exempts_read_only_tools():
+    # repeating a read-only tool with identical args is normal, not flailing
+    cfg = {"detectors": {"repetition": {
+        "enabled": True, "nudge_at": 3, "block_at": 4, "exempt_tools": ["Read"]}}}
+    hist = [ev(tool="Read", arg="a") for _ in range(5)]
+    cand = ev(tool="Read", arg="a", status=PENDING)
+    assert RepetitionDetector().evaluate(hist, cand, cfg) is None
+    # a non-exempt tool with the same pattern still trips
+    hist2 = [ev(tool="Bash", arg="a") for _ in range(5)]
+    cand2 = ev(tool="Bash", arg="a", status=PENDING)
+    assert RepetitionDetector().evaluate(hist2, cand2, cfg).action == BLOCK
+
+
 def test_repetition_respects_disabled():
     cfg = {"detectors": {"repetition": {"enabled": False}}}
     hist = [ev(arg="a") for _ in range(5)]

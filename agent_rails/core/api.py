@@ -13,11 +13,12 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from .audit import log_verdict
 from .engine import evaluate
 from .events import ToolEvent
 from .state import append_event
 from ..config import load_config
-from ..detectors.base import ALLOW, Verdict
+from ..detectors.base import ALLOW, BLOCK, Verdict
 
 
 def check(
@@ -26,11 +27,27 @@ def check(
     args: Any,
     project_dir: Optional[str] = None,
 ) -> Verdict:
-    """Evaluate a candidate call against recent history. Fail-open: ALLOW on error."""
+    """Evaluate a candidate call against recent history. Fail-open: ALLOW on error.
+
+    Side effect: when this returns an ENFORCED block, it records a BLOCKED
+    marker for the denied call. A denied call never runs, so no PostToolUse
+    follows it; without the marker the error_streak detector — which is
+    candidate-independent — would keep denying every subsequent call and wedge
+    the agent. Recording the intervention lets the streak reset so the agent
+    can run the diagnostic the block demands. Recorded HERE, in the one shared
+    site, so no adapter can reintroduce the wedge by forgetting it.
+    """
     try:
         cfg = load_config(project_dir)
         candidate = ToolEvent.candidate(session_id, tool, args)
-        return evaluate(session_id, cfg, candidate=candidate)
+        verdict = evaluate(session_id, cfg, candidate=candidate)
+        log_verdict(session_id, tool, verdict)  # observability; no-op on ALLOW
+        if verdict.action == BLOCK:  # real, enforced block (observe downgrades to nudge)
+            try:
+                append_event(ToolEvent.blocked(session_id, tool, args))
+            except Exception:
+                pass  # recording is best-effort; never turn a block into a crash
+        return verdict
     except Exception:
         return Verdict(ALLOW, "api", "")
 

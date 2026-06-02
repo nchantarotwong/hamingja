@@ -17,6 +17,7 @@ from typing import Any
 OK = "ok"
 ERROR = "error"
 PENDING = "pending"  # a candidate call (PreToolUse) whose outcome isn't known yet
+BLOCKED = "blocked"  # an enforced block we recorded: the call was DENIED, not run
 
 
 @dataclass
@@ -54,6 +55,18 @@ class ToolEvent:
     def record(cls, session_id: str, tool: str, args: Any, ok: bool) -> "ToolEvent":
         """A completed call with a known outcome (PostToolUse / observe)."""
         return cls(session_id, tool, hash_args(args), OK if ok else ERROR, time.time())
+
+    @classmethod
+    def blocked(cls, session_id: str, tool: str, args: Any) -> "ToolEvent":
+        """A call we DENIED in enforce mode. Recorded so the history reflects the
+        intervention: a blocked call never runs, so no PostToolUse follows it.
+        Without this marker, a candidate-independent detector (error_streak)
+        would keep blocking every subsequent call — the denied calls produce no
+        success to reset the streak — and wedge the agent permanently. The
+        marker is not an ERROR, so it breaks the streak and lets the agent run
+        the diagnostic the block asked for; it carries the candidate's hash, so
+        an identical *retry* still matches and stays blocked under repetition."""
+        return cls(session_id, tool, hash_args(args), BLOCKED, time.time())
 
 
 def _nonjson(o: Any):
