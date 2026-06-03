@@ -1,11 +1,14 @@
 # AGENTS.md (Codex)
 
-Codex reads `AGENTS.md` at the repository root. This variant is the same
-content as the default `AGENTS.md` template, with a short Codex-specific note
-appended.
+Codex reads `AGENTS.md` at the repository root. With the default
+`agent-rails init` workflow, `AGENTS.md` is a relative symlink to
+`CLAUDE.md` (where the actual content lives), so Codex sees the same
+profiles Claude Code does without any duplication.
 
-Use the default `agent-rails init` output as your `AGENTS.md`. If you want a
-Codex-specific addition, append it under the header below.
+If you want a Codex-specific addition that should NOT also appear in
+Claude Code's context, break the symlink and use a real `AGENTS.md`
+(e.g. `agent-rails init --out AGENTS.md --no-link`), then append your
+Codex-only notes under the header below.
 
 ---
 

@@ -1,9 +1,10 @@
 # Agent instructions
 
-This file is read by coding agents working in this repository
-(Codex natively, Claude Code via a `CLAUDE.md` that points here).
-It carries the **soft workflow rails** for this project: how to debug,
-when to escalate, what to do when the user asks the agent to stop.
+Soft workflow rails for this repository: how to debug, when to escalate,
+what to do when the user asks the agent to stop. Read by your coding agent
+(Claude Code reads `CLAUDE.md` natively; Codex reads `AGENTS.md`; the two
+are typically linked so they share content — `agent-rails init` writes
+`CLAUDE.md` and drops `AGENTS.md` as a relative symlink to it).
 
 These instructions are **advisory**. They are not a kill switch. The
 deterministic safety layer — repetition / oscillation / error-streak

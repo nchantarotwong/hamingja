@@ -4,16 +4,18 @@ A thin operator-facing CLI over the same core the hooks use. Subcommands:
 
     agent-rails report [--reset]   tuning summary: what fired, would-block rates
     agent-rails status [DIR]       resolved config for DIR (default: cwd)
-    agent-rails install HARNESS    run the bundled installer (claude | codex)
-    agent-rails init [...]         compose an AGENTS.md from soft workflow profiles
+    agent-rails install [HARNESS]  install hooks; no arg = all detected harnesses
+    agent-rails init [...]         compose a CLAUDE.md + AGENTS.md symlink from profiles
     agent-rails version
 
 `report` is the other half of `observe` mode: observe logs every non-ALLOW
 verdict to the audit log; `report` reads it back so you can tune thresholds
 against your real workflow before flipping to `enforce`.
 
-`init` is the offline doc generator for the soft workflow layer; it composes
-an AGENTS.md from packaged profiles and writes it into the project.
+`init` is the offline doc generator for the soft workflow layer. By default
+it writes `./CLAUDE.md` from the bundled profiles and drops `./AGENTS.md` as
+a relative symlink to it — Claude Code reads `CLAUDE.md` natively, Codex
+reads `AGENTS.md`, both see the same content.
 
 Nothing here can block a tool call — it's all read/aggregate plus wrappers
 around install scripts and file generation.
@@ -26,6 +28,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 from . import __version__
 from .config import load_config
@@ -81,10 +84,26 @@ def _cmd_status(args: argparse.Namespace) -> int:
 
 
 _HARNESS_ALIASES = {"claude": "claude_code"}
+# All harnesses agent-rails knows how to install for. Order matters: when
+# installing multiple, we run them in this order so output is predictable.
+_KNOWN_HARNESSES = ["claude_code", "codex"]
+# Config-dir -> harness slug. Used by the detection path under `install`.
+_HARNESS_HOMES = {".claude": "claude_code", ".codex": "codex"}
 
 
-def _cmd_install(args: argparse.Namespace) -> int:
-    harness = _HARNESS_ALIASES.get(args.harness, args.harness)
+def _detect_harnesses(home: Path) -> list[str]:
+    """Return harnesses whose config dir exists under `home`, in stable order."""
+    out: list[str] = []
+    for sub, slug in _HARNESS_HOMES.items():
+        try:
+            if (home / sub).is_dir():
+                out.append(slug)
+        except OSError:
+            continue
+    return out
+
+
+def _run_single_install(harness: str) -> int:
     script = (
         Path(__file__).resolve().parent
         / "adapters"
@@ -92,13 +111,44 @@ def _cmd_install(args: argparse.Namespace) -> int:
         / "install.sh"
     )
     if not script.exists():
-        print(f"error: no installer for harness {args.harness!r}", file=sys.stderr)
+        print(f"error: no installer for harness {harness!r}", file=sys.stderr)
         return 1
     try:
         return subprocess.call(["bash", str(script)])
     except FileNotFoundError:
         print("error: bash not found on PATH", file=sys.stderr)
         return 1
+
+
+def _run_installs(harnesses: list[str]) -> int:
+    rc = 0
+    for i, h in enumerate(harnesses):
+        if len(harnesses) > 1:
+            if i:
+                print()
+            print(f"--- installing for {h} ---")
+        r = _run_single_install(h)
+        if r != 0:
+            rc = r
+    return rc
+
+
+def _cmd_install(args: argparse.Namespace) -> int:
+    harness = args.harness
+    if harness is None:
+        detected = _detect_harnesses(Path.home())
+        if not detected:
+            print(
+                "error: no harness detected at ~/.claude/ or ~/.codex/.\n"
+                "Pass an explicit harness name: claude | codex | all",
+                file=sys.stderr,
+            )
+            return 1
+        return _run_installs(detected)
+    if harness == "all":
+        return _run_installs(list(_KNOWN_HARNESSES))
+    actual = _HARNESS_ALIASES.get(harness, harness)
+    return _run_installs([actual])
 
 
 def _split_profile_args(values) -> list[str]:
@@ -120,12 +170,66 @@ def _render_agents_md(profile_names: list[str]) -> str:
     return "\n".join(parts) + "\n"
 
 
+def _resolve_link_path(
+    out_was_default: bool,
+    out_path: Path,
+    explicit_link: Optional[str],
+    no_link: bool,
+) -> Optional[Path]:
+    """Decide where (if anywhere) the sibling symlink should go.
+
+    Defaults: with `agent-rails init` (no flags) we write CLAUDE.md AND drop
+    AGENTS.md as a relative symlink. A custom --out implies single-file
+    intent unless --link is also given. --no-link suppresses the default.
+    """
+    if no_link:
+        return None
+    if explicit_link is not None:
+        return Path(explicit_link)
+    if out_was_default:
+        return out_path.parent / "AGENTS.md"
+    return None
+
+
+def _rel_to_cwd(p: Path) -> Path:
+    try:
+        return p.relative_to(Path.cwd())
+    except ValueError:
+        return p
+
+
+def _make_relative_symlink(link_path: Path, target_path: Path, force: bool) -> Optional[str]:
+    """Create `link_path` as a relative symlink pointing at `target_path`.
+
+    Returns an error message on failure (the OUT file write succeeded first,
+    so the caller can decide how loud to be). Refuses to clobber an existing
+    file/symlink unless `force` is set.
+    """
+    if link_path.is_symlink() or link_path.exists():
+        if not force:
+            return f"{link_path} already exists (re-run with --force to overwrite)"
+        try:
+            link_path.unlink()
+        except OSError as e:
+            return f"could not remove existing {link_path}: {e}"
+    rel_target = os.path.relpath(str(target_path), start=str(link_path.parent))
+    try:
+        link_path.symlink_to(rel_target)
+    except OSError as e:
+        return f"could not create symlink {link_path} -> {rel_target}: {e}"
+    return None
+
+
 def _cmd_init(args: argparse.Namespace) -> int:
     if args.list:
         for name in ALL_PROFILES:
             tag = "  (default)" if name in DEFAULT_PROFILES else ""
             print(f"{name}{tag}")
         return 0
+
+    if args.no_link and args.link is not None:
+        print("error: --link and --no-link are mutually exclusive", file=sys.stderr)
+        return 2
 
     raw = _split_profile_args(args.profile)
     selected = [_normalize_profile(p) for p in raw] if raw else list(DEFAULT_PROFILES)
@@ -148,15 +252,39 @@ def _cmd_init(args: argparse.Namespace) -> int:
             ordered.append(n)
 
     content = _render_agents_md(ordered)
-    out_path = Path(args.out) if args.out else Path.cwd() / "AGENTS.md"
+    out_was_default = args.out is None
+    out_path = Path(args.out) if args.out else Path.cwd() / "CLAUDE.md"
+    link_path = _resolve_link_path(out_was_default, out_path, args.link, args.no_link)
+
+    if link_path is not None:
+        # Compare LITERAL paths, not symlink-followed paths: if a previous
+        # run already created the symlink, link_path.resolve() would follow
+        # it to out_path and falsely trip this guard. os.path.abspath
+        # normalizes `..`/`.` without dereferencing the final component.
+        if os.path.abspath(str(link_path)) == os.path.abspath(str(out_path)):
+            print(
+                f"error: --link path is the same as --out ({out_path})",
+                file=sys.stderr,
+            )
+            return 2
 
     if args.dry_run:
         print(content, end="" if content.endswith("\n") else "\n")
+        if link_path is not None:
+            rel_target = os.path.relpath(str(out_path), start=str(link_path.parent))
+            print(f"(would also create symlink: {_rel_to_cwd(link_path)} -> {rel_target})")
         return 0
 
     if out_path.exists() and not args.force:
         print(
             f"error: {out_path} already exists. Re-run with --force to overwrite.",
+            file=sys.stderr,
+        )
+        return 1
+
+    if link_path is not None and (link_path.is_symlink() or link_path.exists()) and not args.force:
+        print(
+            f"error: {link_path} already exists. Re-run with --force to overwrite.",
             file=sys.stderr,
         )
         return 1
@@ -168,12 +296,23 @@ def _cmd_init(args: argparse.Namespace) -> int:
         print(f"error: could not write {out_path}: {e}", file=sys.stderr)
         return 1
 
-    rel = out_path
-    try:
-        rel = out_path.relative_to(Path.cwd())
-    except ValueError:
-        pass
-    print(f"wrote {rel}  ({len(ordered)} profile(s): {', '.join(ordered)})")
+    summary = (
+        f"wrote {_rel_to_cwd(out_path)}  "
+        f"({len(ordered)} profile(s): {', '.join(ordered)})"
+    )
+
+    if link_path is not None:
+        err = _make_relative_symlink(link_path, out_path, args.force)
+        if err is not None:
+            # The output file was written; surface the symlink failure clearly
+            # with a non-zero exit so the user notices.
+            print(summary)
+            print(f"warning: symlink not created: {err}", file=sys.stderr)
+            return 1
+        rel_target = os.path.relpath(str(out_path), start=str(link_path.parent))
+        summary += f"\nlinked {_rel_to_cwd(link_path)} -> {rel_target}"
+
+    print(summary)
     return 0
 
 
@@ -194,13 +333,21 @@ def build_parser() -> argparse.ArgumentParser:
     st.add_argument("dir", nargs="?", help="directory to resolve (default: cwd)")
     st.set_defaults(func=_cmd_status)
 
-    ins = sub.add_parser("install", help="install hooks for a harness")
-    ins.add_argument("harness", choices=["claude", "claude_code", "codex"])
+    ins = sub.add_parser(
+        "install",
+        help="install hooks for a harness (no arg = all detected; 'all' = both known)",
+    )
+    ins.add_argument(
+        "harness",
+        nargs="?",
+        choices=["claude", "claude_code", "codex", "all"],
+        help="harness to install for; omit to auto-detect ~/.claude and ~/.codex",
+    )
     ins.set_defaults(func=_cmd_install)
 
     init = sub.add_parser(
         "init",
-        help="compose an AGENTS.md from packaged soft workflow profiles",
+        help="compose a CLAUDE.md + AGENTS.md symlink from packaged workflow profiles",
     )
     init.add_argument(
         "--profile",
@@ -211,11 +358,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     init.add_argument("--list", action="store_true", help="list available profiles and exit")
     init.add_argument("--dry-run", action="store_true", help="print rendered content; no file writes")
-    init.add_argument("--force", action="store_true", help="overwrite an existing output file")
+    init.add_argument("--force", action="store_true", help="overwrite an existing output file/symlink")
     init.add_argument(
         "--out",
         metavar="PATH",
-        help="output path (default: ./AGENTS.md)",
+        help="output path (default: ./CLAUDE.md)",
+    )
+    init.add_argument(
+        "--link",
+        metavar="PATH",
+        help="also create a relative symlink at PATH pointing at the output "
+        "(default: ./AGENTS.md when --out is the default)",
+    )
+    init.add_argument(
+        "--no-link",
+        action="store_true",
+        help="suppress the default AGENTS.md symlink",
     )
     init.set_defaults(func=_cmd_init)
 
