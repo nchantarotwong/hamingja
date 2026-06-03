@@ -15,5 +15,8 @@ Codex-specific addition, append it under the header below.
   shell-execution paths may bypass hook coverage. The `error_streak` detector
   is best-effort under Codex for that reason — see the agent-rails README.
 - If you run `/hooks` and Codex asks you to trust the agent-rails hooks, do so
-  once; the hooks are read-only on `PreToolUse` and only record state on
-  `PostToolUse`.
+  once. The `PreToolUse` hook may deny a tool call (in `enforce` mode) and
+  records guardrail/audit state (a marker for the denied call, plus an entry
+  in the verdict audit log behind `observe` mode). The `PostToolUse` hook
+  records the outcome of each completed call. Neither hook reads or modifies
+  your source files.
