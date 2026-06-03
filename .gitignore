@@ -9,6 +9,7 @@ dist/
 venv/
 .pytest_cache/
 .pytest_output.log
+.idea/
 
 # OS
 .DS_Store

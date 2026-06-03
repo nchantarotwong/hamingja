@@ -186,6 +186,7 @@ _MANAGED_NOTICE = (
     "<!-- managed by `agent-rails init`; edits between these markers will be "
     "overwritten on re-run -->"
 )
+_PROFILE_HEADING_RE = re.compile(r"^#\s+([A-Za-z0-9_-]+)\s*$", re.MULTILINE)
 
 
 def _make_managed_block(profile_names: list[str]) -> str:
@@ -217,6 +218,50 @@ def _upsert_managed_block(existing: str, block: str) -> str:
         return block + "\n"
     cleaned = existing.rstrip() + "\n"
     return cleaned + "\n" + block + "\n"
+
+
+def _profiles_from_existing_text(existing: str) -> list[str]:
+    """Return known profile slugs found in an existing managed block."""
+    match = _MANAGED_BLOCK_RE.search(existing)
+    if match is None:
+        return []
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in _PROFILE_HEADING_RE.findall(match.group(0)):
+        name = _normalize_profile(raw)
+        if name in ALL_PROFILES and name not in seen:
+            seen.add(name)
+            out.append(name)
+    return out
+
+
+def _profiles_from_existing_paths(paths: list[Path]) -> list[str]:
+    """Infer the previous managed profile set from existing files, if present."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for path in paths:
+        try:
+            if not path.exists() or not path.is_file():
+                continue
+            found = _profiles_from_existing_text(path.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+        for name in found:
+            if name not in seen:
+                seen.add(name)
+                out.append(name)
+    return out
+
+
+def _default_or_existing_profiles(args: argparse.Namespace) -> list[str]:
+    """Use defaults for first init; on re-run, preserve the existing profile set."""
+    paths: list[Path]
+    if args.out is not None:
+        paths = [Path(args.out)]
+    else:
+        paths = [Path.cwd() / "CLAUDE.md", Path.cwd() / "AGENTS.md"]
+    return _profiles_from_existing_paths(paths) or list(DEFAULT_PROFILES)
 
 
 def _rel_to_cwd(p: Path) -> Path:
@@ -360,7 +405,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
         return 2
 
     raw = _split_profile_args(args.profile)
-    selected = [_normalize_profile(p) for p in raw] if raw else list(DEFAULT_PROFILES)
+    selected = [_normalize_profile(p) for p in raw] if raw else _default_or_existing_profiles(args)
 
     unknown = [n for n in selected if n not in ALL_PROFILES]
     if unknown:
@@ -615,7 +660,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         metavar="NAME",
         help="add a profile (repeatable; comma-separated also accepted). "
-        "Defaults to: " + ", ".join(DEFAULT_PROFILES),
+        "Defaults to the existing managed profile set on re-run, otherwise: "
+        + ", ".join(DEFAULT_PROFILES),
     )
     init.add_argument("--list", action="store_true", help="list available profiles and exit")
     init.add_argument("--dry-run", action="store_true", help="print rendered content; no file writes")
