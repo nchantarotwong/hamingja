@@ -12,6 +12,66 @@ agent-rails is that circuit breaker: a deterministic monitor that watches the
 tool-call stream, detects the mechanical signature of flailing (not "errors" —
 **errors with no novelty**), and interrupts the loop before it burns tokens.
 
+Alongside those detectors, agent-rails also ships a soft layer of reusable
+workflow profiles — markdown rails for debugging, escalation, non-convergence,
+and review passes — that you drop into a project with `agent-rails init`. The
+detectors block; the profiles guide.
+
+---
+
+## Install
+
+```bash
+pip install -e .              # or: pip install agent-rails (once published)
+agent-rails install           # installs for every harness it detects under ~/
+# or, explicitly:
+agent-rails install claude    # Claude Code   (alias for claude_code)
+agent-rails install codex     # Codex
+agent-rails install all       # both, regardless of what's already set up
+```
+
+`agent-rails install` runs the bundled installer; with no argument it picks
+up whatever it finds under `~/.claude/` and `~/.codex/`. The raw
+`bash agent_rails/adapters/<harness>/install.sh` still works if you'd rather
+not install the package. After installing, `agent-rails status` prints the
+resolved config for any directory, `agent-rails report` shows what has fired,
+and `agent-rails init` generates a `CLAUDE.md` (+ `AGENTS.md` symlink) for
+the project's soft workflow rails.
+
+### Claude Code
+
+```bash
+agent-rails install claude
+```
+
+Merges three hooks into `~/.claude/settings.json` — a `PreToolUse` tripwire and
+a recorder on both `PostToolUse` (success) and `PostToolUseFailure` (failure, so
+error detection is by event, not by parsing an undocumented result shape). The
+merge preserves your other hooks, is idempotent, self-heals a moved repo path,
+and backs up only when it actually changes something. Default mode is `observe`,
+so nothing is blocked until you flip to `enforce`.
+
+### Codex
+
+```bash
+agent-rails install codex
+```
+
+Merges two hooks into `~/.codex/hooks.json` — a `PreToolUse` tripwire and a
+`PostToolUse` recorder. The merge preserves your other hooks, is idempotent,
+self-heals a moved repo path, and backs up only when it actually changes
+something. Codex may ask you to review/trust the new hooks with `/hooks`.
+Default mode is `observe`, so nothing is blocked until you flip to `enforce`.
+
+Codex hook coverage follows Codex's hook support: `PreToolUse` / `PostToolUse`
+currently cover Bash, `apply_patch`, and MCP tools, but not every possible
+tool path. In particular, newer shell execution paths may bypass tool hooks;
+when Codex does not emit `PostToolUse`, agent-rails cannot observe that result,
+so the `error_streak` detector is best-effort for Codex. `repetition` still
+works for any `PreToolUse`-covered call.
+
+---
+
 ## The one rule: fail open
 
 A guardrail that fails *closed* — blocking tool calls because of its own bug —
@@ -112,6 +172,8 @@ All values are sanitized: modes are canonicalized, and `window`/`block_at`/
 `nudge_at` are coerced to ints with safe floors, so a typo or out-of-range
 value can neither crash a detector nor cause a spurious block.
 
+---
+
 ## Architecture
 
 ```
@@ -130,7 +192,7 @@ agent_rails/
                codex/        PreToolUse tripwire + PostToolUse recorder + install.sh
                generic/      observe()/check() for any custom agent loop
   profiles/    base / non_convergence / debugging / ...   <-- SOFT layer (advisory)
-  templates/   AGENTS.md / CLAUDE.md / codex/AGENTS.md     installable headers
+  templates/   AGENTS.md / codex/AGENTS.md   installable header used by `init`
 tests/         synthetic-sequence unit tests
 ```
 
@@ -143,18 +205,45 @@ harness's response. Two ingestion modes are supported by design:
    the universal fallback for harnesses without pre-call hooks, and the basis
    for an at-scale fleet watchdog. *(planned)*
 
-## Install
+---
 
-```bash
-pip install -e .              # or: pip install agent-rails (once published)
-agent-rails install claude    # Claude Code   (alias for claude_code)
-agent-rails install codex     # Codex
+## Soft workflow layer (profiles + `init`)
+
+The detectors above are the **hard** layer: deterministic, mechanical, can
+block. Sitting next to them — and deliberately off the hot path — is a
+**soft** layer of reusable agent-facing workflow rails:
+
+```
+agent_rails/profiles/   # pure markdown, no runtime
+  base.md               progress = repro/narrow/shrink, not tokens
+  non_convergence.md    user-says-stop -> review packet, no edits
+  debugging.md          classify, repro, hypothesize, falsify before editing
+  escalation.md         default fast model; escalate only with a bounded packet
+  review_passes.md      several bounded passes, not one giant pass
+  compiler_language.md  opt-in: phase-based compiler/language work
 ```
 
-`agent-rails install` runs the bundled installer for that harness; the raw
-`bash agent_rails/adapters/<harness>/install.sh` still works if you'd rather not
-install the package. After installing, `agent-rails status` prints the resolved
-config for any directory, and `agent-rails report` shows what has fired.
+`agent-rails init` drops them into a project. The default writes
+`./CLAUDE.md` and creates `./AGENTS.md` as a relative symlink to it, so
+Claude Code (reads `CLAUDE.md` natively) and Codex (reads `AGENTS.md`) see
+the same content with no second file to keep in sync:
+
+```bash
+agent-rails init                                # ./CLAUDE.md + ./AGENTS.md -> CLAUDE.md
+agent-rails init --list                         # show available profiles
+agent-rails init --profile debugging,escalation # explicit profile set (replaces defaults)
+agent-rails init --force                        # regenerate, overwriting both files
+agent-rails init --no-link                      # CLAUDE.md only, no symlink
+agent-rails init --out AGENTS.md --no-link      # single AGENTS.md (no CLAUDE.md, no symlink)
+agent-rails init --out X.md --link Y.md         # custom pair: writes X, links Y -> X
+agent-rails init --dry-run                      # preview content + symlink plan; no writes
+```
+
+Profiles are markdown read **only at `init`-time** — they don't load at hook
+time, don't get parsed by detectors, and can't affect the fail-open trust
+model. They're advisory, not enforced. The blocking still comes from the
+detectors; this layer is documentation that ships with the package so projects
+have one less thing to write from scratch.
 
 ### Use from another repo
 
@@ -174,8 +263,7 @@ From the agent-rails checkout:
 ```bash
 cd ~/dev/agent-rails
 pip install -e .          # or: pipx install -e .
-agent-rails install claude
-agent-rails install codex
+agent-rails install       # installs for whichever of claude_code / codex is on this machine
 ```
 
 That global install is the mechanical layer: it puts the CLI on PATH and
@@ -192,18 +280,20 @@ myrepo/
   AGENTS.md -> CLAUDE.md
 ```
 
-Start with a `CLAUDE.md` generated from the default profiles, adding the
-compiler/language profile when the repo needs it, then symlink `AGENTS.md` to
-it so Codex reads the same instructions:
+One command for the per-repo instructions — the default substitutes profiles
+when `--profile` is given, so spell out the full set when you want defaults
+plus an opt-in:
 
 ```bash
 cd ~/dev/myrepo
-agent-rails init --out CLAUDE.md --profile base,non-convergence,debugging,escalation,review-passes,compiler-language
-ln -s CLAUDE.md AGENTS.md
+agent-rails init                                                      # default profiles
+# or, with the opt-in compiler-language profile (substitutes, not adds):
+agent-rails init --force --profile base,non-convergence,debugging,escalation,review-passes,compiler-language
 ```
 
-If `AGENTS.md` already exists, replace it with the symlink only after preserving
-any repo-specific instructions you still need.
+Either form writes `./CLAUDE.md` and drops `./AGENTS.md` as a relative
+symlink. If `AGENTS.md` already exists as a real file, `init` refuses; pass
+`--force` only after preserving anything you still need from it.
 
 Use `.agent-rails.json` only for the hard guardrail runtime config. Project
 config is untrusted and may only relax the installed baseline: raise thresholds,
@@ -232,9 +322,9 @@ Example repo-local config:
 }
 ```
 
-Profiles are **not** runtime config. They are markdown copied into the output
-file by `agent-rails init`, so changing the profile set means regenerating or
-editing `CLAUDE.md`.
+Profiles are **not** runtime config. They are markdown copied into `CLAUDE.md`
+by `agent-rails init`, so changing the profile set means regenerating or
+editing the file.
 
 Run in `observe` first, then inspect what would have fired:
 
@@ -251,73 +341,7 @@ AGENT_RAILS_MODE=enforce claude
 Use `.agent-rails-off` at a repo root to stand the guard down completely for
 that repo.
 
-### Claude Code
-
-```bash
-agent-rails install claude
-```
-
-Merges three hooks into `~/.claude/settings.json` — a `PreToolUse` tripwire and
-a recorder on both `PostToolUse` (success) and `PostToolUseFailure` (failure, so
-error detection is by event, not by parsing an undocumented result shape). The
-merge preserves your other hooks, is idempotent, self-heals a moved repo path,
-and backs up only when it actually changes something. Default mode is `observe`,
-so nothing is blocked until you flip to `enforce`.
-
-### Codex
-
-```bash
-agent-rails install codex
-```
-
-Merges two hooks into `~/.codex/hooks.json` — a `PreToolUse` tripwire and a
-`PostToolUse` recorder. The merge preserves your other hooks, is idempotent,
-self-heals a moved repo path, and backs up only when it actually changes
-something. Codex may ask you to review/trust the new hooks with `/hooks`.
-Default mode is `observe`, so nothing is blocked until you flip to `enforce`.
-
-Codex hook coverage follows Codex's hook support: `PreToolUse` / `PostToolUse`
-currently cover Bash, `apply_patch`, and MCP tools, but not every possible
-tool path. In particular, newer shell execution paths may bypass tool hooks;
-when Codex does not emit `PostToolUse`, agent-rails cannot observe that result,
-so the `error_streak` detector is best-effort for Codex. `repetition` still
-works for any `PreToolUse`-covered call.
-
-## Soft workflow layer (profiles + `init`)
-
-The detectors above are the **hard** layer: deterministic, mechanical, can
-block. Sitting next to them — and deliberately off the hot path — is a
-**soft** layer of reusable agent-facing workflow rails:
-
-```
-agent_rails/profiles/   # pure markdown, no runtime
-  base.md               progress = repro/narrow/shrink, not tokens
-  non_convergence.md    user-says-stop -> review packet, no edits
-  debugging.md          classify, repro, hypothesize, falsify before editing
-  escalation.md         default fast model; escalate only with a bounded packet
-  review_passes.md      several bounded passes, not one giant pass
-  compiler_language.md  opt-in: phase-based compiler/language work
-```
-
-`agent-rails init` composes these into an `AGENTS.md` for a project:
-
-```bash
-agent-rails init                          # ./AGENTS.md with the default profile set
-agent-rails init --list                   # show available profiles
-agent-rails init --profile debugging,escalation
-agent-rails init --profile compiler-language --out AGENTS.md --force
-agent-rails init --dry-run                # preview without writing
-```
-
-Profiles are markdown read **only at `init`-time** — they don't load at hook
-time, don't get parsed by detectors, and can't affect the fail-open trust
-model. They're advisory, not enforced. The blocking still comes from the
-detectors; this layer is documentation that ships with the package so projects
-have one less thing to write from scratch.
-
-For Claude Code, drop a `CLAUDE.md` next to `AGENTS.md` that points at it (a
-ready-made pointer template ships at `agent_rails/templates/CLAUDE.md`);
-Codex reads `AGENTS.md` directly.
+---
 
 ## Use in your own agent loop
 
@@ -340,11 +364,14 @@ python tests/test_detectors.py   # or run any test file directly
 Fixtures are **synthetic only** — never commit captured real sessions; they can
 carry private repo internals into history.
 
+---
+
 ## Status
 
 Early. Core + `repetition`/`oscillation`/`error_streak` detectors + read-only
 exemption + verdict audit log & `agent-rails report` + Claude Code, Codex, and
-generic adapters. The transcript-tail supervisor is planned.
+generic adapters + soft workflow profile layer & `agent-rails init` (writes
+`CLAUDE.md`, symlinks `AGENTS.md`). The transcript-tail supervisor is planned.
 
 Two detectors from the roadmap are deliberately **not** shipped yet, to keep the
 "lowest false-positive first" promise intact:
