@@ -156,6 +156,101 @@ agent-rails install codex     # Codex
 install the package. After installing, `agent-rails status` prints the resolved
 config for any directory, and `agent-rails report` shows what has fired.
 
+### Use from another repo
+
+Install agent-rails once from its own checkout, then use it across all of your
+coding-agent repos. The agent-rails checkout does **not** need to live inside
+each repo; a common sibling layout is enough:
+
+```
+~/dev/
+  agent-rails/        # checked out once
+  myrepo/               # your language/compiler repo
+  other-repo/
+```
+
+From the agent-rails checkout:
+
+```bash
+cd ~/dev/agent-rails
+pip install -e .          # or: pipx install -e .
+agent-rails install claude
+agent-rails install codex
+```
+
+That global install is the mechanical layer: it puts the CLI on PATH and
+merges hooks into `~/.claude/settings.json` and/or `~/.codex/hooks.json`. The
+hooks resolve the installed package, so every repo gets the guardrail without
+vendoring agent-rails.
+
+Each target repo only needs local configuration and instructions:
+
+```
+myrepo/
+  .agent-rails.json   # optional guardrail thresholds / mode relaxations
+  CLAUDE.md           # generated soft workflow instructions
+  AGENTS.md -> CLAUDE.md
+```
+
+Start with a `CLAUDE.md` generated from the default profiles, adding the
+compiler/language profile when the repo needs it, then symlink `AGENTS.md` to
+it so Codex reads the same instructions:
+
+```bash
+cd ~/dev/myrepo
+agent-rails init --out CLAUDE.md --profile base,non-convergence,debugging,escalation,review-passes,compiler-language
+ln -s CLAUDE.md AGENTS.md
+```
+
+If `AGENTS.md` already exists, replace it with the symlink only after preserving
+any repo-specific instructions you still need.
+
+Use `.agent-rails.json` only for the hard guardrail runtime config. Project
+config is untrusted and may only relax the installed baseline: raise thresholds,
+disable detectors, lower `window`, downgrade `mode` toward `off`, or extend the
+read-only exemption list. It cannot force `enforce` or lower thresholds.
+
+Example repo-local config:
+
+```json
+{
+  "mode": "observe",
+  "detectors": {
+    "repetition": {
+      "nudge_at": 3,
+      "block_at": 5
+    },
+    "oscillation": {
+      "nudge_at": 4,
+      "block_at": 7
+    },
+    "error_streak": {
+      "nudge_at": 4,
+      "block_at": 8
+    }
+  }
+}
+```
+
+Profiles are **not** runtime config. They are markdown copied into the output
+file by `agent-rails init`, so changing the profile set means regenerating or
+editing `CLAUDE.md`.
+
+Run in `observe` first, then inspect what would have fired:
+
+```bash
+agent-rails report
+```
+
+When you are ready to enforce blocks, set trusted mode from your shell:
+
+```bash
+AGENT_RAILS_MODE=enforce claude
+```
+
+Use `.agent-rails-off` at a repo root to stand the guard down completely for
+that repo.
+
 ### Claude Code
 
 ```bash
