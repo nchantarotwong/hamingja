@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -162,7 +163,8 @@ def _split_profile_args(values) -> list[str]:
     return out
 
 
-def _render_agents_md(profile_names: list[str]) -> str:
+def _render_profiles_md(profile_names: list[str]) -> str:
+    """Render the inner content: template header + profile sections, no markers."""
     parts = [read_template(ROOT_TEMPLATE).rstrip()]
     for name in profile_names:
         parts.append("")  # blank line between sections
@@ -170,25 +172,51 @@ def _render_agents_md(profile_names: list[str]) -> str:
     return "\n".join(parts) + "\n"
 
 
-def _resolve_link_path(
-    out_was_default: bool,
-    out_path: Path,
-    explicit_link: Optional[str],
-    no_link: bool,
-) -> Optional[Path]:
-    """Decide where (if anywhere) the sibling symlink should go.
+# HTML-comment markers — invisible in rendered markdown — that delimit the
+# agent-rails-managed block within an existing CLAUDE.md / AGENTS.md. The
+# upsert path uses these to detect and replace the prior managed block in
+# place, so re-running `init` is idempotent and never duplicates.
+_BEGIN_MARKER = "<!-- BEGIN agent-rails workflow profiles -->"
+_END_MARKER = "<!-- END agent-rails workflow profiles -->"
+_MANAGED_BLOCK_RE = re.compile(
+    re.escape(_BEGIN_MARKER) + r".*?" + re.escape(_END_MARKER),
+    re.DOTALL,
+)
+_MANAGED_NOTICE = (
+    "<!-- managed by `agent-rails init`; edits between these markers will be "
+    "overwritten on re-run -->"
+)
 
-    Defaults: with `agent-rails init` (no flags) we write CLAUDE.md AND drop
-    AGENTS.md as a relative symlink. A custom --out implies single-file
-    intent unless --link is also given. --no-link suppresses the default.
+
+def _make_managed_block(profile_names: list[str]) -> str:
+    """Wrap the rendered profile content in the BEGIN/END marker block."""
+    inner = _render_profiles_md(profile_names).rstrip()
+    return (
+        f"{_BEGIN_MARKER}\n"
+        f"{_MANAGED_NOTICE}\n"
+        f"\n"
+        f"{inner}\n"
+        f"\n"
+        f"{_END_MARKER}"
+    )
+
+
+def _upsert_managed_block(existing: str, block: str) -> str:
+    """Insert or replace the managed block in `existing`, preserving everything else.
+
+    - markers present: replace the existing block in place.
+    - markers absent + non-empty file: append the block at the end with a
+      blank line of separation, preserving the existing content untouched.
+    - empty/whitespace-only file: write just the block.
     """
-    if no_link:
-        return None
-    if explicit_link is not None:
-        return Path(explicit_link)
-    if out_was_default:
-        return out_path.parent / "AGENTS.md"
-    return None
+    block = block.rstrip()
+    if _BEGIN_MARKER in existing and _END_MARKER in existing:
+        result = _MANAGED_BLOCK_RE.sub(block, existing, count=1)
+        return result if result.endswith("\n") else result + "\n"
+    if not existing.strip():
+        return block + "\n"
+    cleaned = existing.rstrip() + "\n"
+    return cleaned + "\n" + block + "\n"
 
 
 def _rel_to_cwd(p: Path) -> Path:
@@ -201,8 +229,7 @@ def _rel_to_cwd(p: Path) -> Path:
 def _make_relative_symlink(link_path: Path, target_path: Path, force: bool) -> Optional[str]:
     """Create `link_path` as a relative symlink pointing at `target_path`.
 
-    Returns an error message on failure (the OUT file write succeeded first,
-    so the caller can decide how loud to be). Refuses to clobber an existing
+    Returns an error message on failure. Refuses to clobber an existing
     file/symlink unless `force` is set.
     """
     if link_path.is_symlink() or link_path.exists():
@@ -218,6 +245,107 @@ def _make_relative_symlink(link_path: Path, target_path: Path, force: bool) -> O
     except OSError as e:
         return f"could not create symlink {link_path} -> {rel_target}: {e}"
     return None
+
+
+# State of one file in the canonical CLAUDE.md / AGENTS.md pair.
+# 'missing'            -- nothing there
+# 'real'               -- regular file
+# 'symlink_to_sibling' -- a symlink whose target resolves to the OTHER file
+# 'weird'              -- anything else: directory, broken symlink, symlink
+#                         to an unrelated path, special file
+_FileState = str
+
+
+def _classify(path: Path, sibling: Path) -> _FileState:
+    """Classify one half of the canonical pair against the other."""
+    if path.is_symlink():
+        try:
+            tgt = os.readlink(path)
+        except OSError:
+            return "weird"
+        try:
+            resolved = (path.parent / tgt).resolve(strict=False)
+            sib_resolved = sibling.resolve(strict=False)
+        except OSError:
+            return "weird"
+        return "symlink_to_sibling" if resolved == sib_resolved else "weird"
+    if path.exists():
+        return "real" if path.is_file() else "weird"
+    return "missing"
+
+
+def _decide_canonical_actions(
+    claude_state: _FileState,
+    agents_state: _FileState,
+) -> Optional[tuple[list[str], bool]]:
+    """Map (CLAUDE.md state, AGENTS.md state) -> (targets-to-modify, create_symlink).
+
+    Returns None for "weird" combinations the caller must refuse.
+
+    Decision table (agreed in design discussion):
+      (missing, missing)               -> write CLAUDE.md fresh + symlink AGENTS.md
+      (real,    missing)               -> append/upsert CLAUDE.md only
+      (missing, real)                  -> append/upsert AGENTS.md only
+      (real,    real)                  -> append/upsert BOTH (they may differ)
+      (real,    symlink_to_sibling)    -> append/upsert CLAUDE.md (symlink follows)
+      (symlink_to_sibling, real)       -> append/upsert AGENTS.md (symlink follows)
+      anything else                    -> refuse (weird / cyclic / broken)
+    """
+    pair = (claude_state, agents_state)
+    if pair == ("missing", "missing"):
+        return ["CLAUDE.md"], True
+    if pair == ("real", "missing"):
+        return ["CLAUDE.md"], False
+    if pair == ("missing", "real"):
+        return ["AGENTS.md"], False
+    if pair == ("real", "real"):
+        return ["CLAUDE.md", "AGENTS.md"], False
+    if pair == ("real", "symlink_to_sibling"):
+        return ["CLAUDE.md"], False
+    if pair == ("symlink_to_sibling", "real"):
+        return ["AGENTS.md"], False
+    return None
+
+
+def _describe_state(name: str, state: _FileState, path: Path) -> str:
+    if state == "missing":
+        return f"  {name}: missing"
+    if state == "real":
+        return f"  {name}: regular file"
+    if state == "symlink_to_sibling":
+        try:
+            tgt = os.readlink(path)
+        except OSError:
+            tgt = "?"
+        return f"  {name}: symlink -> {tgt}"
+    # weird
+    if path.is_symlink():
+        try:
+            tgt = os.readlink(path)
+        except OSError:
+            tgt = "?"
+        return f"  {name}: symlink -> {tgt}  (not pointing at the sibling)"
+    if path.exists():
+        return f"  {name}: not a regular file (directory or special)"
+    return f"  {name}: weird state"
+
+
+def _apply_to_file(path: Path, block: str, force: bool) -> tuple[str, str]:
+    """Write the block into `path` per upsert rules. Returns (verb, filename).
+
+    verb is one of: 'wrote', 'updated', 'appended to', 'clobbered'.
+    """
+    name = path.name
+    existed = path.exists()
+    if force or not existed:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(block + "\n", encoding="utf-8")
+        return ("clobbered" if force and existed else "wrote", name)
+    existing = path.read_text(encoding="utf-8")
+    had_block = _BEGIN_MARKER in existing and _END_MARKER in existing
+    new_content = _upsert_managed_block(existing, block)
+    path.write_text(new_content, encoding="utf-8")
+    return ("updated" if had_block else "appended to", name)
 
 
 def _cmd_init(args: argparse.Namespace) -> int:
@@ -251,16 +379,19 @@ def _cmd_init(args: argparse.Namespace) -> int:
             seen.add(n)
             ordered.append(n)
 
-    content = _render_agents_md(ordered)
-    out_was_default = args.out is None
-    out_path = Path(args.out) if args.out else Path.cwd() / "CLAUDE.md"
-    link_path = _resolve_link_path(out_was_default, out_path, args.link, args.no_link)
+    block = _make_managed_block(ordered)
+
+    if args.out is not None:
+        return _init_explicit_out(args, block, ordered)
+    return _init_canonical_pair(args, block, ordered)
+
+
+def _init_explicit_out(args: argparse.Namespace, block: str, ordered: list[str]) -> int:
+    """Single-file mode: write/upsert at --out, optionally create --link symlink."""
+    out_path = Path(args.out)
+    link_path: Optional[Path] = Path(args.link) if args.link else None
 
     if link_path is not None:
-        # Compare LITERAL paths, not symlink-followed paths: if a previous
-        # run already created the symlink, link_path.resolve() would follow
-        # it to out_path and falsely trip this guard. os.path.abspath
-        # normalizes `..`/`.` without dereferencing the final component.
         if os.path.abspath(str(link_path)) == os.path.abspath(str(out_path)):
             print(
                 f"error: --link path is the same as --out ({out_path})",
@@ -269,18 +400,14 @@ def _cmd_init(args: argparse.Namespace) -> int:
             return 2
 
     if args.dry_run:
-        print(content, end="" if content.endswith("\n") else "\n")
+        verb = _preview_action_for(out_path, force=args.force)
+        print(block)
+        print()
+        print(f"(would {verb} {_rel_to_cwd(out_path)})")
         if link_path is not None:
             rel_target = os.path.relpath(str(out_path), start=str(link_path.parent))
             print(f"(would also create symlink: {_rel_to_cwd(link_path)} -> {rel_target})")
         return 0
-
-    if out_path.exists() and not args.force:
-        print(
-            f"error: {out_path} already exists. Re-run with --force to overwrite.",
-            file=sys.stderr,
-        )
-        return 1
 
     if link_path is not None and (link_path.is_symlink() or link_path.exists()) and not args.force:
         print(
@@ -290,30 +417,164 @@ def _cmd_init(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(content, encoding="utf-8")
+        verb, _ = _apply_to_file(out_path, block, args.force)
     except OSError as e:
         print(f"error: could not write {out_path}: {e}", file=sys.stderr)
         return 1
 
-    summary = (
-        f"wrote {_rel_to_cwd(out_path)}  "
-        f"({len(ordered)} profile(s): {', '.join(ordered)})"
-    )
+    lines = [f"{verb} {_rel_to_cwd(out_path)}  ({len(ordered)} profile(s): {', '.join(ordered)})"]
 
     if link_path is not None:
         err = _make_relative_symlink(link_path, out_path, args.force)
         if err is not None:
-            # The output file was written; surface the symlink failure clearly
-            # with a non-zero exit so the user notices.
-            print(summary)
+            print("\n".join(lines))
             print(f"warning: symlink not created: {err}", file=sys.stderr)
             return 1
         rel_target = os.path.relpath(str(out_path), start=str(link_path.parent))
-        summary += f"\nlinked {_rel_to_cwd(link_path)} -> {rel_target}"
+        lines.append(f"linked {_rel_to_cwd(link_path)} -> {rel_target}")
 
-    print(summary)
+    print("\n".join(lines))
     return 0
+
+
+def _init_canonical_pair(args: argparse.Namespace, block: str, ordered: list[str]) -> int:
+    """Default canonical-pair mode: act on CLAUDE.md / AGENTS.md per the decision table."""
+    claude_path = Path.cwd() / "CLAUDE.md"
+    agents_path = Path.cwd() / "AGENTS.md"
+
+    # --force short-circuits the decision table: clobber CLAUDE.md fresh and
+    # create the AGENTS.md symlink (or whatever --link/--no-link say). Matches
+    # the "I want a clean slate" semantics of the prior --force.
+    if args.force:
+        return _init_force_canonical(args, block, ordered, claude_path, agents_path)
+
+    c_state = _classify(claude_path, agents_path)
+    a_state = _classify(agents_path, claude_path)
+    decision = _decide_canonical_actions(c_state, a_state)
+
+    if decision is None:
+        # Weird state — refuse loudly, describe what we saw, suggest --force
+        print("error: CLAUDE.md / AGENTS.md are in a state `init` won't guess at:", file=sys.stderr)
+        print(_describe_state("CLAUDE.md", c_state, claude_path), file=sys.stderr)
+        print(_describe_state("AGENTS.md", a_state, agents_path), file=sys.stderr)
+        print(
+            "\nFix the offending file manually (or remove it), or re-run with "
+            "--force to clobber CLAUDE.md and rewrite the canonical pair.",
+            file=sys.stderr,
+        )
+        return 1
+
+    targets, want_symlink = decision
+
+    if args.dry_run:
+        for name in targets:
+            path = Path.cwd() / name
+            verb = _preview_action_for(path, force=False)
+            print(f"# {verb} {name}:")
+            print(block)
+            print()
+        if want_symlink and not args.no_link:
+            link_path = Path(args.link) if args.link else agents_path
+            rel_target = os.path.relpath(str(claude_path), start=str(link_path.parent))
+            print(f"(would also create symlink: {_rel_to_cwd(link_path)} -> {rel_target})")
+        return 0
+
+    lines: list[str] = []
+    for name in targets:
+        path = Path.cwd() / name
+        try:
+            verb, fname = _apply_to_file(path, block, force=False)
+        except OSError as e:
+            print(f"error: could not write {path}: {e}", file=sys.stderr)
+            return 1
+        lines.append(f"{verb} {fname}")
+
+    if want_symlink and not args.no_link:
+        link_path = Path(args.link) if args.link else agents_path
+        if os.path.abspath(str(link_path)) == os.path.abspath(str(claude_path)):
+            print("\n".join(lines))
+            print(
+                f"error: --link path is the same as the canonical CLAUDE.md ({claude_path})",
+                file=sys.stderr,
+            )
+            return 2
+        err = _make_relative_symlink(link_path, claude_path, force=False)
+        if err is not None:
+            print("\n".join(lines))
+            print(f"warning: symlink not created: {err}", file=sys.stderr)
+            return 1
+        rel_target = os.path.relpath(str(claude_path), start=str(link_path.parent))
+        lines.append(f"linked {_rel_to_cwd(link_path)} -> {rel_target}")
+
+    lines.append(f"({len(ordered)} profile(s): {', '.join(ordered)})")
+    print("\n".join(lines))
+    return 0
+
+
+def _init_force_canonical(
+    args: argparse.Namespace,
+    block: str,
+    ordered: list[str],
+    claude_path: Path,
+    agents_path: Path,
+) -> int:
+    """--force in canonical-pair mode: rewrite CLAUDE.md from scratch + recreate symlink."""
+    # If --link points at CLAUDE.md itself, that's a config error.
+    link_path: Optional[Path]
+    if args.no_link:
+        link_path = None
+    elif args.link is not None:
+        link_path = Path(args.link)
+        if os.path.abspath(str(link_path)) == os.path.abspath(str(claude_path)):
+            print(
+                f"error: --link path is the same as the canonical CLAUDE.md ({claude_path})",
+                file=sys.stderr,
+            )
+            return 2
+    else:
+        link_path = agents_path
+
+    if args.dry_run:
+        print(f"# would clobber {claude_path.name}:")
+        print(block)
+        if link_path is not None:
+            rel_target = os.path.relpath(str(claude_path), start=str(link_path.parent))
+            print()
+            print(f"(would also (re)create symlink: {_rel_to_cwd(link_path)} -> {rel_target})")
+        return 0
+
+    try:
+        verb, _ = _apply_to_file(claude_path, block, force=True)
+    except OSError as e:
+        print(f"error: could not write {claude_path}: {e}", file=sys.stderr)
+        return 1
+
+    lines = [f"{verb} {claude_path.name}  ({len(ordered)} profile(s): {', '.join(ordered)})"]
+    if link_path is not None:
+        err = _make_relative_symlink(link_path, claude_path, force=True)
+        if err is not None:
+            print("\n".join(lines))
+            print(f"warning: symlink not created: {err}", file=sys.stderr)
+            return 1
+        rel_target = os.path.relpath(str(claude_path), start=str(link_path.parent))
+        lines.append(f"linked {_rel_to_cwd(link_path)} -> {rel_target}")
+    print("\n".join(lines))
+    return 0
+
+
+def _preview_action_for(path: Path, force: bool) -> str:
+    """Word for dry-run output: what would happen to `path` if we ran for real."""
+    if force and path.exists():
+        return "clobber"
+    if not path.exists():
+        return "write"
+    try:
+        existing = path.read_text(encoding="utf-8")
+    except OSError:
+        return "(re)write"
+    if _BEGIN_MARKER in existing and _END_MARKER in existing:
+        return "update managed block in"
+    return "append managed block to"
 
 
 def build_parser() -> argparse.ArgumentParser:

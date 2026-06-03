@@ -3,9 +3,9 @@
 Init is not on the tool-call hot path, so these are conventional CLI tests
 (no fail-open semantics to honor here). Coverage: listing, dry-run, default
 profile set, default symlink behavior (CLAUDE.md + AGENTS.md -> CLAUDE.md),
---profile (repeated, comma-list, alias normalization), --link / --no-link,
-unknown profile rejected, refuse-overwrite (file AND symlink), --force,
---out, de-dup, and a few mutual-exclusion guards.
+managed-block append/upsert, --profile (repeated, comma-list, alias
+normalization), --link / --no-link, unknown profile rejected, weird-state
+refusal, --force, --out, de-dup, and a few mutual-exclusion guards.
 """
 import io
 import os
@@ -52,7 +52,8 @@ def test_dry_run_prints_default_set_and_does_not_write():
         for name in DEFAULT_PROFILES:
             assert f"# {name}" in out
         assert "# compiler_language" not in out
-        assert "# Agent instructions" in out
+        assert "<!-- BEGIN agent-rails workflow profiles -->" in out
+        assert "## Workflow rails (agent-rails)" in out
         # default would also produce the AGENTS.md symlink — dry-run announces it
         assert "would also create symlink" in out
         assert "AGENTS.md" in out
@@ -75,7 +76,8 @@ def test_default_writes_claude_md_and_symlinks_agents_md():
         # symlink resolves to the same content
         assert agents.read_text(encoding="utf-8") == claude.read_text(encoding="utf-8")
         body = claude.read_text(encoding="utf-8")
-        assert "# Agent instructions" in body
+        assert "<!-- BEGIN agent-rails workflow profiles -->" in body
+        assert "## Workflow rails (agent-rails)" in body
         assert "# base" in body
         assert "wrote CLAUDE.md" in out
         assert "linked AGENTS.md -> CLAUDE.md" in out
@@ -136,25 +138,73 @@ def test_link_same_as_out_errors():
         assert not (Path(d) / "X.md").exists()
 
 
-def test_refuses_overwrite_without_force_on_out():
+def test_existing_claude_md_gets_managed_block_appended_without_force():
     with tempfile.TemporaryDirectory() as d:
         (Path(d) / "CLAUDE.md").write_text("preexisting\n", encoding="utf-8")
-        rc, _, err = _run(["init"], cwd=d)
-        assert rc == 1
-        assert "already exists" in err
-        assert (Path(d) / "CLAUDE.md").read_text(encoding="utf-8") == "preexisting\n"
+        rc, out, err = _run(["init"], cwd=d)
+        assert rc == 0
+        assert err == ""
+        body = (Path(d) / "CLAUDE.md").read_text(encoding="utf-8")
+        assert body.startswith("preexisting\n\n")
+        assert body.count("<!-- BEGIN agent-rails workflow profiles -->") == 1
+        assert "# base" in body
+        assert "appended to CLAUDE.md" in out
+        assert not (Path(d) / "AGENTS.md").exists()
 
 
-def test_refuses_overwrite_without_force_on_symlink():
+def test_existing_agents_md_gets_managed_block_appended_without_force():
     with tempfile.TemporaryDirectory() as d:
-        # AGENTS.md already exists (as a regular file, in this case)
         (Path(d) / "AGENTS.md").write_text("preexisting AGENTS\n", encoding="utf-8")
+        rc, out, err = _run(["init"], cwd=d)
+        assert rc == 0
+        assert err == ""
+        assert not (Path(d) / "CLAUDE.md").exists()
+        body = (Path(d) / "AGENTS.md").read_text(encoding="utf-8")
+        assert body.startswith("preexisting AGENTS\n\n")
+        assert body.count("<!-- BEGIN agent-rails workflow profiles -->") == 1
+        assert "# base" in body
+        assert "appended to AGENTS.md" in out
+
+
+def test_existing_managed_block_is_replaced_not_duplicated():
+    with tempfile.TemporaryDirectory() as d:
+        existing = "\n".join(
+            [
+                "# local instructions",
+                "",
+                "<!-- BEGIN agent-rails workflow profiles -->",
+                "old managed content",
+                "<!-- END agent-rails workflow profiles -->",
+                "",
+                "tail note",
+                "",
+            ]
+        )
+        (Path(d) / "CLAUDE.md").write_text(existing, encoding="utf-8")
+        rc, out, err = _run(["init", "--profile", "base"], cwd=d)
+        assert rc == 0
+        assert err == ""
+        body = (Path(d) / "CLAUDE.md").read_text(encoding="utf-8")
+        assert "# local instructions" in body
+        assert "tail note" in body
+        assert "old managed content" not in body
+        assert body.count("<!-- BEGIN agent-rails workflow profiles -->") == 1
+        assert body.count("<!-- END agent-rails workflow profiles -->") == 1
+        assert "# base" in body
+        assert "# debugging" not in body
+        assert "updated CLAUDE.md" in out
+
+
+def test_refuses_weird_canonical_pair_without_force():
+    with tempfile.TemporaryDirectory() as d:
+        (Path(d) / "CLAUDE.md").write_text("preexisting\n", encoding="utf-8")
+        os.symlink("elsewhere.md", Path(d) / "AGENTS.md")
         rc, _, err = _run(["init"], cwd=d)
         assert rc == 1
-        assert "already exists" in err
-        # neither file written
-        assert not (Path(d) / "CLAUDE.md").exists()
-        assert (Path(d) / "AGENTS.md").read_text(encoding="utf-8") == "preexisting AGENTS\n"
+        assert "won't guess" in err
+        assert "not pointing at the sibling" in err
+        assert (Path(d) / "CLAUDE.md").read_text(encoding="utf-8") == "preexisting\n"
+        assert os.readlink(Path(d) / "AGENTS.md") == "elsewhere.md"
 
 
 def test_force_overwrites_both_files():
