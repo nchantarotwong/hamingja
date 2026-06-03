@@ -63,6 +63,15 @@ def test_dry_run_prints_default_set_and_does_not_write():
         assert not (Path(d) / "AGENTS.md").is_symlink()
 
 
+def test_default_includes_sub_agent_escalation_guidance():
+    with tempfile.TemporaryDirectory() as d:
+        rc, out, _ = _run(["init", "--dry-run"], cwd=d)
+        assert rc == 0
+        assert "Sub-agent packet:" in out
+        assert "Model choice for the sub-agent:" in out
+        assert "use the day-to-day model when the packet is narrow" in out
+
+
 def test_default_writes_claude_md_and_symlinks_agents_md():
     with tempfile.TemporaryDirectory() as d:
         rc, out, _ = _run(["init"], cwd=d)

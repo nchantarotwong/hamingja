@@ -218,7 +218,7 @@ agent_rails/profiles/   # pure markdown, no runtime
   base.md               progress = repro/narrow/shrink, not tokens
   non_convergence.md    user-says-stop -> review packet, no edits
   debugging.md          classify, repro, hypothesize, falsify before editing
-  escalation.md         default fast model; escalate only with a bounded packet
+  escalation.md         bounded sub-agent packet; stronger model only when needed
   review_passes.md      several bounded passes, not one giant pass
   compiler_language.md  opt-in: phase-based compiler/language work
 ```
