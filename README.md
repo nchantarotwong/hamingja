@@ -116,19 +116,21 @@ value can neither crash a detector nor cause a spurious block.
 
 ```
 agent_rails/
-  cli.py       agent-rails report / status / install — operator-facing CLI
+  cli.py       agent-rails report / status / install / init — operator-facing CLI
   core/        events.py   normalized ToolEvent (the harness-neutral schema)
                state.py    session-keyed rolling log (locked, fail-open)
                engine.py   run enabled detectors -> aggregate -> verdict
                api.py      check()/record() — the one entry point adapters call
                audit.py    verdict audit log behind observe mode (the report source)
-  detectors/   base.py     Detector interface + Verdict
+  detectors/   base.py     Detector interface + Verdict   <-- HARD layer (can block)
                repetition.py, oscillation.py, error_streak.py
   config.py    config loading, trust model, sanitization
   config.default.json      packaged trusted defaults (ships in the wheel)
   adapters/    claude_code/  PreToolUse tripwire + PostToolUse recorder + install.sh
                codex/        PreToolUse tripwire + PostToolUse recorder + install.sh
                generic/      observe()/check() for any custom agent loop
+  profiles/    base / non_convergence / debugging / ...   <-- SOFT layer (advisory)
+  templates/   AGENTS.md / CLAUDE.md / codex/AGENTS.md     installable headers
 tests/         synthetic-sequence unit tests
 ```
 
@@ -185,6 +187,42 @@ tool path. In particular, newer shell execution paths may bypass tool hooks;
 when Codex does not emit `PostToolUse`, agent-rails cannot observe that result,
 so the `error_streak` detector is best-effort for Codex. `repetition` still
 works for any `PreToolUse`-covered call.
+
+## Soft workflow layer (profiles + `init`)
+
+The detectors above are the **hard** layer: deterministic, mechanical, can
+block. Sitting next to them — and deliberately off the hot path — is a
+**soft** layer of reusable agent-facing workflow rails:
+
+```
+agent_rails/profiles/   # pure markdown, no runtime
+  base.md               progress = repro/narrow/shrink, not tokens
+  non_convergence.md    user-says-stop -> review packet, no edits
+  debugging.md          classify, repro, hypothesize, falsify before editing
+  escalation.md         default fast model; escalate only with a bounded packet
+  review_passes.md      several bounded passes, not one giant pass
+  compiler_language.md  opt-in: phase-based compiler/language work
+```
+
+`agent-rails init` composes these into an `AGENTS.md` for a project:
+
+```bash
+agent-rails init                          # ./AGENTS.md with the default profile set
+agent-rails init --list                   # show available profiles
+agent-rails init --profile debugging,escalation
+agent-rails init --profile compiler-language --out AGENTS.md --force
+agent-rails init --dry-run                # preview without writing
+```
+
+Profiles are markdown read **only at `init`-time** — they don't load at hook
+time, don't get parsed by detectors, and can't affect the fail-open trust
+model. They're advisory, not enforced. The blocking still comes from the
+detectors; this layer is documentation that ships with the package so projects
+have one less thing to write from scratch.
+
+For Claude Code, drop a `CLAUDE.md` next to `AGENTS.md` that points at it (a
+ready-made pointer template ships at `agent_rails/templates/CLAUDE.md`);
+Codex reads `AGENTS.md` directly.
 
 ## Use in your own agent loop
 
