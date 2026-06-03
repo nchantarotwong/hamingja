@@ -276,6 +276,41 @@ def test_compiler_language_is_opt_in():
         assert "# compiler_language" in body  # hyphen alias normalized
 
 
+def test_rerun_without_profile_preserves_existing_compiler_language_opt_in():
+    with tempfile.TemporaryDirectory() as d:
+        profiles = [
+            "base",
+            "non-convergence",
+            "debugging",
+            "escalation",
+            "review-passes",
+            "compiler-language",
+        ]
+        rc, _, _ = _run(["init", "--profile", ",".join(profiles)], cwd=d)
+        assert rc == 0
+
+        rc, out, err = _run(["init"], cwd=d)
+        assert rc == 0
+        assert err == ""
+        body = (Path(d) / "CLAUDE.md").read_text(encoding="utf-8")
+        assert "# compiler_language" in body
+        assert "(6 profile(s): base, non_convergence, debugging, escalation, review_passes, compiler_language)" in out
+
+
+def test_rerun_without_profile_reuses_existing_managed_profile_set():
+    with tempfile.TemporaryDirectory() as d:
+        rc, _, _ = _run(["init", "--profile", "compiler-language"], cwd=d)
+        assert rc == 0
+
+        rc, out, err = _run(["init"], cwd=d)
+        assert rc == 0
+        assert err == ""
+        body = (Path(d) / "CLAUDE.md").read_text(encoding="utf-8")
+        assert "# compiler_language" in body
+        assert "# base" not in body
+        assert "(1 profile(s): compiler_language)" in out
+
+
 def test_duplicate_profiles_render_once():
     with tempfile.TemporaryDirectory() as d:
         rc, _, _ = _run(

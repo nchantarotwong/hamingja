@@ -231,7 +231,7 @@ the same content with no second file to keep in sync:
 ```bash
 agent-rails init                                # ./CLAUDE.md + ./AGENTS.md -> CLAUDE.md
 agent-rails init --list                         # show available profiles
-agent-rails init --profile debugging,escalation # explicit profile set (replaces defaults)
+agent-rails init --profile debugging,escalation # explicit profile set
 agent-rails init --force                        # regenerate, overwriting both files
 agent-rails init --no-link                      # CLAUDE.md only, no symlink
 agent-rails init --out AGENTS.md --no-link      # single AGENTS.md (no CLAUDE.md, no symlink)
@@ -280,14 +280,15 @@ myrepo/
   AGENTS.md -> CLAUDE.md
 ```
 
-One command for the per-repo instructions — the default substitutes profiles
-when `--profile` is given, so spell out the full set when you want defaults
-plus an opt-in:
+One command for the per-repo instructions. A first `agent-rails init` uses the
+default profiles. Re-running without `--profile` preserves the profile set in
+the existing managed block, including opt-ins like `compiler_language`.
+`--profile` is still explicit: it writes exactly the set you pass.
 
 ```bash
 cd ~/dev/myrepo
 agent-rails init                                                      # default profiles
-# or, with the opt-in compiler-language profile (substitutes, not adds):
+# or, with the opt-in compiler-language profile:
 agent-rails init --force --profile base,non-convergence,debugging,escalation,review-passes,compiler-language
 ```
 
