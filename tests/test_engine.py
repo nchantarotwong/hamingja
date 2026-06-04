@@ -33,9 +33,9 @@ def cfg(mode):
     return c
 
 
-def seed(session, n, tool="Bash", arg="a", status=OK):
+def seed(session, n, tool="Bash", arg="a", status=OK, output_hash=""):
     for _ in range(n):
-        append_event(ToolEvent(session, tool, arg, status, 0.0))
+        append_event(ToolEvent(session, tool, arg, status, 0.0, output_hash=output_hash))
 
 
 def cand(session, tool="Bash", arg="a"):
@@ -44,7 +44,7 @@ def cand(session, tool="Bash", arg="a"):
 
 def test_enforce_mode_blocks_repetition():
     s = "enforce-rep"
-    seed(s, 3, arg="a")
+    seed(s, 3, arg="a", status=ERROR)
     v = evaluate(s, cfg("enforce"), candidate=cand(s, arg="a"))
     assert v.action == BLOCK
     assert v.would_block is False
@@ -52,7 +52,7 @@ def test_enforce_mode_blocks_repetition():
 
 def test_observe_mode_downgrades_block_to_nudge():
     s = "observe-rep"
-    seed(s, 3, arg="a")
+    seed(s, 3, arg="a", status=ERROR)
     v = evaluate(s, cfg("observe"), candidate=cand(s, arg="a"))
     assert v.action == NUDGE
     assert v.would_block is True  # carried as structured data, not prose
@@ -83,7 +83,7 @@ def test_clean_session_allows():
 def test_central_enable_gate_disables_detector():
     # repetition disabled in config -> engine skips it even though it would fire
     s = "gated"
-    seed(s, 5, arg="a")
+    seed(s, 5, arg="a", status=OK, output_hash="same")
     c = cfg("enforce")
     c["detectors"] = {
         "repetition": {"enabled": False, "nudge_at": 3, "block_at": 4},

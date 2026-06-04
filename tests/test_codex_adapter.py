@@ -92,7 +92,7 @@ def test_codex_tripwire_denies_in_enforce_after_repetition():
     d = _proj()
     args = {"command": "npm test"}
     for _ in range(3):
-        append_event(ToolEvent.record("codex-deny", "Bash", args, True))
+        append_event(ToolEvent.record("codex-deny", "Bash", args, False, output={"exit_code": 1, "stderr": "same failure"}))
     payload = {
         "hook_event_name": "PreToolUse",
         "session_id": "codex-deny",
@@ -114,7 +114,7 @@ def test_codex_tripwire_observe_downgrades_block_to_context():
     d = _proj()
     args = {"command": "npm test -- --watch=false"}
     for _ in range(3):
-        append_event(ToolEvent.record("codex-observe", "Bash", args, True))
+        append_event(ToolEvent.record("codex-observe", "Bash", args, False, output={"exit_code": 1, "stderr": "same failure"}))
     payload = {
         "hook_event_name": "PreToolUse",
         "session_id": "codex-observe",
@@ -129,6 +129,35 @@ def test_codex_tripwire_observe_downgrades_block_to_context():
     assert hso["hookEventName"] == "PreToolUse"
     assert "permissionDecision" not in hso
     assert "WOULD BE BLOCKED" in hso["additionalContext"]
+
+
+def test_codex_bash_payload_variants_hash_distinct_commands():
+    _reset_state_env()
+    a = ToolEvent.record("codex-normalize", "Bash", {"parameters": {"cmd": "rg foo"}}, True)
+    b = ToolEvent.record("codex-normalize", "Bash", {"arguments": {"command": "rg bar"}}, True)
+    assert a.args_complete is True
+    assert b.args_complete is True
+    assert a.arg_hash != b.arg_hash
+    assert a.arg_preview == "rg foo"
+    assert b.arg_preview == "rg bar"
+
+
+def test_codex_missing_bash_command_is_not_enforceable_repetition():
+    _reset_state_env()
+    d = _proj()
+    args = {}
+    for _ in range(5):
+        append_event(ToolEvent.record("codex-missing", "Bash", args, True, output={"stdout": "same"}))
+    payload = {
+        "hook_event_name": "PreToolUse",
+        "session_id": "codex-missing",
+        "cwd": d,
+        "tool_name": "Bash",
+        "tool_input": args,
+    }
+    p = _run_script(TRIPWIRE, payload, {"AGENT_RAILS_MODE": "enforce"})
+    assert p.returncode == 0
+    assert p.stdout == ""
 
 
 def test_codex_install_merges_and_is_idempotent():

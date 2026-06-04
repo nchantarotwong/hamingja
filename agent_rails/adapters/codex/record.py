@@ -63,7 +63,7 @@ def main() -> int:
         cwd = payload.get("cwd")
         result = payload.get("tool_response", payload.get("tool_output"))
 
-        record(session_id, tool, tool_input, not _looks_like_error(result), project_dir=cwd)
+        record(session_id, tool, tool_input, not _looks_like_error(result), project_dir=cwd, output=result)
     except Exception:
         pass
 

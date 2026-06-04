@@ -86,7 +86,7 @@ Ranked by signal quality (lowest false-positive rate first):
 
 | Detector | Fires on | Why it's safe |
 |---|---|---|
-| `repetition` | the **same** `(tool, args)` call repeating | progress *varies* calls; only literal repetition trips it — legitimate correction changes the call |
+| `repetition` | the **same** normalized tool identity recurring | progress *varies* calls; nudges fire on literal repetition, while enforcement requires a complete payload plus repeated failure or identical substantive output |
 | `oscillation` | a short **cycle** (period 2–4) repeating — flipping between the same handful of calls | requires ≥2 distinct calls in the cycle (pure repetition is left to `repetition`), and ≥2 full laps, so a couple of coincidental back-and-forths don't trip it |
 | `error_streak` | consecutive errors with no success between | resets to zero on **any** success, so "failed → fixed → succeeded" never trips it |
 
@@ -94,7 +94,10 @@ Ranked by signal quality (lowest false-positive rate first):
 (`Read`, `Grep`, `Glob`, `LS`, `WebFetch`, …): re-reading a file or re-running
 a query is normal, not flailing. The exempt list is configurable and a project
 may only *extend* it (see below). `error_streak` still applies to those tools —
-a read that keeps *erroring* is still a stuck loop.
+a read that keeps *erroring* is still a stuck loop. Bash is normalized separately:
+shell commands get a short preview and kind (`shell:read-only`, `shell:test`,
+`shell:mutating`, etc.). Repeated read-only shell commands nudge, but do not
+hard-block unless the recorded output proves they are returning the same signal.
 
 Add a guardrail = a new file in `detectors/` implementing the `Detector`
 interface, registered in `core/engine.py`.
@@ -106,7 +109,10 @@ interface, registered in `core/engine.py`.
   state-then-hypothesis discipline at the right moment.
 * **block** — deny the call. A hard block is the only thing that reliably
   interrupts the loop, because injected text can be ignored by a poisoned
-  context but a denied call cannot.
+  context but a denied call cannot. Repetition blocks are deliberately stricter
+  than repetition nudges: incomplete tool payloads are not enforceable, and a
+  repeat needs strong evidence such as repeated errors or identical substantive
+  output.
 
 A block must never **wedge** the agent. A denied call doesn't run, so it
 produces no result — which means a detector keyed on outcomes (`error_streak`)

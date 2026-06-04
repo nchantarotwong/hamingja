@@ -58,12 +58,13 @@ def record(
     args: Any,
     ok: bool,
     project_dir: Optional[str] = None,
+    output: Any = None,
 ) -> None:
     """Record the outcome of a completed call. Honors mode=off (inert). Never raises."""
     try:
         cfg = load_config(project_dir)
         if cfg.get("mode") == "off":
             return  # opted-out repo: stay fully inert, record nothing
-        append_event(ToolEvent.record(session_id, tool, args, ok))
+        append_event(ToolEvent.record(session_id, tool, args, ok, output=output))
     except Exception:
         return

@@ -55,13 +55,13 @@ def main() -> int:
         tool_input = payload.get("tool_input", {})
         cwd = payload.get("cwd")
 
+        result = payload.get("tool_response", payload.get("tool_output"))
         if event == "PostToolUseFailure":
             ok = False  # authoritative: this event only fires on failure
         else:
-            result = payload.get("tool_response", payload.get("tool_output"))
             ok = not _looks_like_error(result)
 
-        record(session_id, tool, tool_input, ok, project_dir=cwd)
+        record(session_id, tool, tool_input, ok, project_dir=cwd, output=result)
     except Exception:
         pass  # never let recording surface an error to the agent
 

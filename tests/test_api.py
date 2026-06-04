@@ -32,7 +32,7 @@ def test_check_blocks_after_repeats_via_api_in_enforce():
         d = _proj({})
         args = {"command": "npm test"}
         for _ in range(3):
-            record("sy", "Bash", args, ok=True, project_dir=d)
+            record("sy", "Bash", args, ok=False, project_dir=d, output={"exit_code": 1, "stderr": "same failure"})
         v = check("sy", "Bash", args, project_dir=d)
         assert v.action == "block"
     finally:
