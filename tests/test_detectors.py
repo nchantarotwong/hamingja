@@ -28,8 +28,8 @@ def ev(tool="Bash", arg="x", status=OK, sid="s"):
 
 # --- repetition ---------------------------------------------------------
 
-def test_repetition_blocks_the_fourth_identical_call():
-    hist = [ev(arg="a") for _ in range(3)]
+def test_repetition_blocks_the_fourth_identical_failed_call():
+    hist = [ev(arg="a", status=ERROR) for _ in range(3)]
     cand = ev(arg="a", status=PENDING)
     v = RepetitionDetector().evaluate(hist, cand, CFG)
     assert v is not None and v.action == BLOCK
@@ -40,6 +40,7 @@ def test_repetition_nudges_on_the_third():
     cand = ev(arg="a", status=PENDING)
     v = RepetitionDetector().evaluate(hist, cand, CFG)
     assert v is not None and v.action == NUDGE
+    assert "3rd" in v.reason
 
 
 def test_repetition_ignores_varied_calls():
@@ -61,10 +62,54 @@ def test_repetition_exempts_read_only_tools():
     hist = [ev(tool="Read", arg="a") for _ in range(5)]
     cand = ev(tool="Read", arg="a", status=PENDING)
     assert RepetitionDetector().evaluate(hist, cand, cfg) is None
-    # a non-exempt tool with the same pattern still trips
-    hist2 = [ev(tool="Bash", arg="a") for _ in range(5)]
+    # a non-exempt tool with the same failed pattern still trips
+    hist2 = [ev(tool="Bash", arg="a", status=ERROR) for _ in range(5)]
     cand2 = ev(tool="Bash", arg="a", status=PENDING)
     assert RepetitionDetector().evaluate(hist2, cand2, cfg).action == BLOCK
+
+
+def test_repetition_blocks_identical_output():
+    hist = [ToolEvent("s", "Bash", "a", OK, 0.0, output_hash="same") for _ in range(3)]
+    cand = ev(arg="a", status=PENDING)
+    v = RepetitionDetector().evaluate(hist, cand, CFG)
+    assert v is not None and v.action == BLOCK
+
+
+def test_repetition_requires_multiple_output_hashes_to_block():
+    hist = [
+        ToolEvent("s", "Bash", "a", OK, 0.0, output_hash="same"),
+        ToolEvent("s", "Bash", "a", OK, 0.0),
+        ToolEvent("s", "Bash", "a", OK, 0.0),
+    ]
+    cand = ev(arg="a", status=PENDING)
+    v = RepetitionDetector().evaluate(hist, cand, CFG)
+    assert v is not None and v.action == NUDGE
+
+
+def test_repetition_does_not_block_success_without_output_evidence():
+    hist = [ev(arg="a", status=OK) for _ in range(3)]
+    cand = ev(arg="a", status=PENDING)
+    v = RepetitionDetector().evaluate(hist, cand, CFG)
+    assert v is not None and v.action == NUDGE
+
+
+def test_repetition_ignores_incomplete_payloads():
+    hist = [ToolEvent("s", "Bash", "a", OK, 0.0, args_complete=False) for _ in range(5)]
+    cand = ToolEvent("s", "Bash", "a", PENDING, 0.0, args_complete=False)
+    assert RepetitionDetector().evaluate(hist, cand, CFG) is None
+
+
+def test_repetition_low_noise_shell_repeat_is_quiet_before_block_threshold():
+    hist = [ToolEvent("s", "Bash", "a", OK, 0.0, arg_kind="shell:test", arg_preview="python3 -m pytest") for _ in range(2)]
+    cand = ToolEvent("s", "Bash", "a", PENDING, 0.0, arg_kind="shell:test", arg_preview="python3 -m pytest")
+    assert RepetitionDetector().evaluate(hist, cand, CFG) is None
+
+
+def test_repetition_read_only_shell_repeat_nudges_not_blocks_without_output_evidence():
+    hist = [ToolEvent("s", "Bash", "a", OK, 0.0, arg_kind="shell:read-only", arg_preview="rg foo") for _ in range(3)]
+    cand = ToolEvent("s", "Bash", "a", PENDING, 0.0, arg_kind="shell:read-only", arg_preview="rg foo")
+    v = RepetitionDetector().evaluate(hist, cand, CFG)
+    assert v is not None and v.action == NUDGE
 
 
 def test_repetition_respects_disabled():
