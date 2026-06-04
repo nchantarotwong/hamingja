@@ -57,6 +57,15 @@ _DEFAULT = {
         },
         "oscillation": {"enabled": True, "nudge_at": 4, "block_at": 6},
         "error_streak": {"enabled": True, "nudge_at": 3, "block_at": 6},
+        "leverage_fallback": {
+            "enabled": True,
+            "nudge_at": 1,
+            "block_at": 2,
+            "lookback": 4,
+            "required_patterns": [],
+            "fallback_patterns": ["grep ", "rg ", "sed ", "awk "],
+            "protected_targets": [],
+        },
     },
 }
 

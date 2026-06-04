@@ -20,6 +20,20 @@
       "enabled": true,
       "nudge_at": 3,
       "block_at": 6
+    },
+    "leverage_fallback": {
+      "enabled": true,
+      "block_at": 2,
+      "nudge_at": 1,
+      "lookback": 4,
+      "required_patterns": [],
+      "fallback_patterns": [
+        "grep ",
+        "rg ",
+        "sed ",
+        "awk "
+      ],
+      "protected_targets": []
     }
   }
 }

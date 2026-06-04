@@ -12,12 +12,22 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from agent_rails.core.events import ERROR, OK, PENDING, ToolEvent  # noqa: E402
 from agent_rails.detectors.base import ALLOW, BLOCK, NUDGE  # noqa: E402
 from agent_rails.detectors.error_streak import ErrorStreakDetector  # noqa: E402
+from agent_rails.detectors.leverage_fallback import LeverageFallbackDetector  # noqa: E402
 from agent_rails.detectors.repetition import RepetitionDetector  # noqa: E402
 
 CFG = {
     "detectors": {
         "repetition": {"enabled": True, "nudge_at": 3, "block_at": 4},
         "error_streak": {"enabled": True, "nudge_at": 3, "block_at": 6},
+        "leverage_fallback": {
+            "enabled": True,
+            "nudge_at": 1,
+            "block_at": 2,
+            "lookback": 4,
+            "required_patterns": ["semantic-nav"],
+            "fallback_patterns": ["grep ", "rg ", "sed ", "awk "],
+            "protected_targets": ["src/compiler/main.lang"],
+        },
     }
 }
 
@@ -105,6 +115,23 @@ def test_repetition_low_noise_shell_repeat_is_quiet_before_block_threshold():
     assert RepetitionDetector().evaluate(hist, cand, CFG) is None
 
 
+def test_repetition_build_repeat_is_quiet_before_block_threshold():
+    hist = [
+        ToolEvent(
+            "s", "Bash", "a", OK, 0.0,
+            arg_kind="shell:build",
+            arg_preview="bash scripts/rebuild.sh",
+        )
+        for _ in range(2)
+    ]
+    cand = ToolEvent(
+        "s", "Bash", "a", PENDING, 0.0,
+        arg_kind="shell:build",
+        arg_preview="bash scripts/rebuild.sh",
+    )
+    assert RepetitionDetector().evaluate(hist, cand, CFG) is None
+
+
 def test_repetition_read_only_shell_repeat_nudges_not_blocks_without_output_evidence():
     hist = [ToolEvent("s", "Bash", "a", OK, 0.0, arg_kind="shell:read-only", arg_preview="rg foo") for _ in range(3)]
     cand = ToolEvent("s", "Bash", "a", PENDING, 0.0, arg_kind="shell:read-only", arg_preview="rg foo")
@@ -141,6 +168,49 @@ def test_error_streak_blocks_at_six():
 def test_error_streak_clean_history_is_quiet():
     hist = [ev(status=OK) for _ in range(8)]
     assert ErrorStreakDetector().evaluate(hist, None, CFG) is None
+
+
+# --- leverage fallback --------------------------------------------------
+
+def test_leverage_fallback_blocks_required_tool_failure_to_protected_grep():
+    hist = [
+        ToolEvent(
+            "s", "Bash", "refs", ERROR, 0.0,
+            arg_preview="semantic-nav --def parse_expr",
+        )
+    ]
+    cand = ToolEvent(
+        "s", "Bash", "grep", PENDING, 0.0,
+        arg_preview="grep -n \"parse_expr\" src/compiler/main.lang",
+    )
+    v = LeverageFallbackDetector().evaluate(hist, cand, CFG)
+    assert v is not None and v.action == BLOCK
+
+
+def test_leverage_fallback_ignores_successful_required_tool_before_grep():
+    hist = [
+        ToolEvent(
+            "s", "Bash", "refs", OK, 0.0,
+            arg_preview="semantic-nav --def parse_expr",
+        )
+    ]
+    cand = ToolEvent(
+        "s", "Bash", "grep", PENDING, 0.0,
+        arg_preview="grep -n \"parse_expr\" src/compiler/main.lang",
+    )
+    assert LeverageFallbackDetector().evaluate(hist, cand, CFG) is None
+
+
+def test_leverage_fallback_blocks_inline_or_grep_bypass():
+    cand = ToolEvent(
+        "s", "Bash", "combo", PENDING, 0.0,
+        arg_preview=(
+            "semantic-nav parse_expr || "
+            "grep -n \"parse_expr\" src/compiler/main.lang"
+        ),
+    )
+    v = LeverageFallbackDetector().evaluate([], cand, CFG)
+    assert v is not None and v.action == BLOCK
 
 
 if __name__ == "__main__":

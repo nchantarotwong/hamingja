@@ -87,6 +87,7 @@ Ranked by signal quality (lowest false-positive rate first):
 | Detector | Fires on | Why it's safe |
 |---|---|---|
 | `repetition` | the **same** normalized tool identity recurring | progress *varies* calls; nudges fire on literal repetition, while enforcement requires a complete payload plus repeated failure or identical substantive output |
+| `leverage_fallback` | a configured semantic/freshness tool fails and the next command switches to weaker broad search over a configured protected target | inert until configured; catches fail-open bypasses without policing ordinary search |
 | `oscillation` | a short **cycle** (period 2–4) repeating — flipping between the same handful of calls | requires ≥2 distinct calls in the cycle (pure repetition is left to `repetition`), and ≥2 full laps, so a couple of coincidental back-and-forths don't trip it |
 | `error_streak` | consecutive errors with no success between | resets to zero on **any** success, so "failed → fixed → succeeded" never trips it |
 
@@ -96,8 +97,18 @@ a query is normal, not flailing. The exempt list is configurable and a project
 may only *extend* it (see below). `error_streak` still applies to those tools —
 a read that keeps *erroring* is still a stuck loop. Bash is normalized separately:
 shell commands get a short preview and kind (`shell:read-only`, `shell:test`,
-`shell:mutating`, etc.). Repeated read-only shell commands nudge, but do not
-hard-block unless the recorded output proves they are returning the same signal.
+`shell:build`, `shell:mutating`, etc.). Repeated read-only, test, and
+build/rebuild shell commands stay quiet before the block threshold unless
+repeated failures or identical substantive output prove they are returning the
+same signal.
+
+`leverage_fallback` is deliberately not a broad "grep is bad" rule. It only
+fires when a configured leverage tool has just failed (or is embedded in the
+same `|| grep`-style command) and the fallback targets a configured protected
+surface. The packaged default leaves the project-specific pattern lists empty,
+so the detector is inert until an operator adds trusted patterns for their
+semantic navigator, freshness guard, generated-artifact validator, or similar
+leverage tool.
 
 Add a guardrail = a new file in `detectors/` implementing the `Detector`
 interface, registered in `core/engine.py`.

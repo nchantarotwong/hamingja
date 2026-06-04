@@ -31,9 +31,13 @@ def test_missing_bash_command_is_incomplete():
 def test_shell_command_kind_classification():
     read = ToolEvent.candidate("s", "Bash", {"command": "rg foo"})
     test = ToolEvent.candidate("s", "Bash", {"command": "python -m pytest"})
+    build = ToolEvent.candidate("s", "Bash", {"command": "bash scripts/rebuild.sh"})
+    plain = ToolEvent.candidate("s", "Bash", {"command": "curl https://build.example.invalid"})
     mutate = ToolEvent.candidate("s", "Bash", {"command": "git add file.py"})
     assert read.arg_kind == "shell:read-only"
     assert test.arg_kind == "shell:test"
+    assert build.arg_kind == "shell:build"
+    assert plain.arg_kind == "shell"
     assert mutate.arg_kind == "shell:mutating"
 
 

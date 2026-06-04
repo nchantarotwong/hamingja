@@ -37,7 +37,7 @@ def _is_read_only_shell(event) -> bool:
 
 def _is_low_noise_shell(event) -> bool:
     return getattr(event, "arg_kind", "") in {
-        "shell:read-only", "shell:test", "shell:diagnostic-script"
+        "shell:read-only", "shell:test", "shell:build", "shell:diagnostic-script"
     }
 
 
