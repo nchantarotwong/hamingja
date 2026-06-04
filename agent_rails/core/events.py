@@ -175,6 +175,7 @@ def _classify_shell_command(command: str) -> str:
         "sed", "tail", "wc", "git",
     }
     tests = {"pytest", "tox"}
+    builds = {"make", "cmake", "ninja", "cargo", "go", "mvn", "gradle"}
     mutating = {"cp", "mv", "rm", "mkdir", "touch", "git"}
     if base == "git":
         parts = s.split()
@@ -187,11 +188,26 @@ def _classify_shell_command(command: str) -> str:
         return "shell:read-only"
     if base in tests or "test" in s or "check" in s:
         return "shell:test"
+    if _is_build_shell_command(base, s, builds):
+        return "shell:build"
     if base in mutating or any(op in s for op in (" >", ">>", " 2>", " | tee ")):
         return "shell:mutating"
     if base in {"python", "python3", "node", "ruby", "perl"} and "<<" in s:
         return "shell:diagnostic-script"
     return "shell"
+
+
+def _is_build_shell_command(base: str, command: str, build_bins: set[str]) -> bool:
+    if base in build_bins:
+        return True
+    parts = command.split()
+    if base in {"bash", "sh", "zsh"} and len(parts) > 1:
+        script = parts[1].rsplit("/", 1)[-1].lower()
+        if "build" in script or "rebuild" in script:
+            return True
+    if base in {"npm", "pnpm", "yarn"} and any(part == "build" for part in parts[1:]):
+        return True
+    return False
 
 
 def hash_output(output: Any) -> str:

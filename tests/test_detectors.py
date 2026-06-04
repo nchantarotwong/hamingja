@@ -105,6 +105,23 @@ def test_repetition_low_noise_shell_repeat_is_quiet_before_block_threshold():
     assert RepetitionDetector().evaluate(hist, cand, CFG) is None
 
 
+def test_repetition_build_repeat_is_quiet_before_block_threshold():
+    hist = [
+        ToolEvent(
+            "s", "Bash", "a", OK, 0.0,
+            arg_kind="shell:build",
+            arg_preview="bash bootstrap/scripts/heatc_rebuild.sh",
+        )
+        for _ in range(2)
+    ]
+    cand = ToolEvent(
+        "s", "Bash", "a", PENDING, 0.0,
+        arg_kind="shell:build",
+        arg_preview="bash bootstrap/scripts/heatc_rebuild.sh",
+    )
+    assert RepetitionDetector().evaluate(hist, cand, CFG) is None
+
+
 def test_repetition_read_only_shell_repeat_nudges_not_blocks_without_output_evidence():
     hist = [ToolEvent("s", "Bash", "a", OK, 0.0, arg_kind="shell:read-only", arg_preview="rg foo") for _ in range(3)]
     cand = ToolEvent("s", "Bash", "a", PENDING, 0.0, arg_kind="shell:read-only", arg_preview="rg foo")

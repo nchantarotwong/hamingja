@@ -96,8 +96,10 @@ a query is normal, not flailing. The exempt list is configurable and a project
 may only *extend* it (see below). `error_streak` still applies to those tools —
 a read that keeps *erroring* is still a stuck loop. Bash is normalized separately:
 shell commands get a short preview and kind (`shell:read-only`, `shell:test`,
-`shell:mutating`, etc.). Repeated read-only shell commands nudge, but do not
-hard-block unless the recorded output proves they are returning the same signal.
+`shell:build`, `shell:mutating`, etc.). Repeated read-only, test, and
+build/rebuild shell commands stay quiet before the block threshold unless
+repeated failures or identical substantive output prove they are returning the
+same signal.
 
 Add a guardrail = a new file in `detectors/` implementing the `Detector`
 interface, registered in `core/engine.py`.
