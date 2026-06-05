@@ -57,8 +57,8 @@ def main() -> int:
             context = verdict.reason
             if getattr(verdict, "would_block", False):
                 context = (
-                    "[observe] This call WOULD BE BLOCKED in enforce mode. "
-                    + context
+                    "[observe] This call WOULD BE BLOCKED if this detector "
+                    "were enforcing. " + context
                 )
             _emit_nudge(context)
     except Exception:

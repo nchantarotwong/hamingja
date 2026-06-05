@@ -59,6 +59,28 @@ def test_project_cannot_escalate_to_enforce():
     _no_env(body)
 
 
+def test_project_cannot_escalate_detector_mode_to_enforce():
+    def body():
+        d = _proj({".agent-rails.json": json.dumps(
+            {"detectors": {"repetition": {"mode": "enforce"}}})})
+        assert "mode" not in load_config(d)["detectors"]["repetition"]
+    _no_env(body)
+
+
+def test_project_can_relax_detector_mode():
+    def body():
+        home = _trusted_home({
+            "config.json": json.dumps({
+                "detectors": {"repetition": {"mode": "enforce"}}
+            })
+        })
+        os.environ["AGENT_RAILS_HOME"] = home
+        d = _proj({".agent-rails.json": json.dumps(
+            {"detectors": {"repetition": {"mode": "observe"}}})})
+        assert load_config(d)["detectors"]["repetition"]["mode"] == "observe"
+    _no_env(body)
+
+
 def test_project_cannot_lower_block_at():
     def body():
         d = _proj({".agent-rails.json": json.dumps(
@@ -137,6 +159,7 @@ def test_trusted_user_config_can_tighten():
                 "detectors": {
                     "repetition": {"block_at": 2},
                     "leverage_fallback": {
+                        "mode": "enforce",
                         "required_patterns": ["semantic-nav"],
                         "protected_targets": ["src/compiler/main.lang"],
                     },
@@ -148,6 +171,7 @@ def test_trusted_user_config_can_tighten():
         assert cfg["mode"] == "enforce"
         assert cfg["detectors"]["repetition"]["block_at"] == 2
         lf = cfg["detectors"]["leverage_fallback"]
+        assert lf["mode"] == "enforce"
         assert lf["required_patterns"] == ["semantic-nav"]
         assert lf["protected_targets"] == ["src/compiler/main.lang"]
     _no_env(body)

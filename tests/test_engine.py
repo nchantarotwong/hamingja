@@ -6,6 +6,7 @@ session log.
 import os
 import sys
 import tempfile
+from copy import deepcopy
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -28,7 +29,7 @@ BASE = {
 
 
 def cfg(mode):
-    c = dict(BASE)
+    c = deepcopy(BASE)
     c["mode"] = mode
     return c
 
@@ -56,6 +57,51 @@ def test_observe_mode_downgrades_block_to_nudge():
     v = evaluate(s, cfg("observe"), candidate=cand(s, arg="a"))
     assert v.action == NUDGE
     assert v.would_block is True  # carried as structured data, not prose
+
+
+def test_detector_enforce_overrides_global_observe():
+    s = "detector-enforce"
+    seed(s, 3, arg="a", status=ERROR)
+    c = cfg("observe")
+    c["detectors"]["repetition"]["mode"] = "enforce"
+    v = evaluate(s, c, candidate=cand(s, arg="a"))
+    assert v.action == BLOCK
+    assert v.would_block is False
+
+
+def test_detector_observe_overrides_global_enforce():
+    s = "detector-observe"
+    seed(s, 3, arg="a", status=ERROR)
+    c = cfg("enforce")
+    c["detectors"]["repetition"]["mode"] = "observe"
+    v = evaluate(s, c, candidate=cand(s, arg="a"))
+    assert v.action == NUDGE
+    assert v.would_block is True
+
+
+def test_enforced_block_beats_observe_would_block():
+    s = "mixed-mode-tie"
+    seed(s, 3, arg="a", status=ERROR)  # repetition block + error_streak nudge/block context
+    c = cfg("observe")
+    c["detectors"]["repetition"]["mode"] = "observe"
+    c["detectors"]["error_streak"]["mode"] = "enforce"
+    c["detectors"]["error_streak"]["block_at"] = 3
+    v = evaluate(s, c, candidate=cand(s, arg="a"))
+    assert v.action == BLOCK
+    assert v.detector == "error_streak"
+    assert v.would_block is False
+
+
+def test_detector_off_skips_even_when_global_enforce():
+    s = "detector-off"
+    seed(s, 3, arg="a", status=ERROR)
+    c = cfg("enforce")
+    c["detectors"] = {
+        "repetition": {"enabled": True, "mode": "off", "nudge_at": 3, "block_at": 4},
+        "error_streak": {"enabled": True, "nudge_at": 6, "block_at": 7},
+    }
+    v = evaluate(s, c, candidate=cand(s, arg="a"))
+    assert v.action == ALLOW
 
 
 def test_off_mode_always_allows():

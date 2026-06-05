@@ -63,7 +63,7 @@ def _cmd_report(args: argparse.Namespace) -> int:
     print(f"agent-rails report  ({s['total']} verdicts across {s['sessions']} session(s))")
     print()
     print(f"  nudges:        {s['nudges']}")
-    print(f"  would-block:   {s['would_blocks']}   (these become BLOCKS under enforce)")
+    print(f"  would-block:   {s['would_blocks']}   (become BLOCKS when the relevant mode is enforce)")
     print(f"  blocks:        {s['blocks']}   (already enforced)")
     print()
     print(f"  {'detector':<16} {'nudge':>7} {'would-block':>13} {'block':>7}")
