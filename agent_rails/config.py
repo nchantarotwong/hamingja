@@ -4,6 +4,9 @@ Trust model (this is the security boundary):
 
   * The DEFAULTS below and the packaged config/config.default.json are TRUSTED
     — they ship with agent-rails / are set by the operator who installed it.
+  * User-level config under ~/.agent-rails/ is TRUSTED operator state. It may
+    tighten (add protected patterns, lower thresholds, set enforce), because it
+    lives outside any repo the agent is editing.
   * A per-project .agent-rails.json is read from the agent's CURRENT WORKING
     DIRECTORY, i.e. from whatever repo the agent happens to be operating in.
     That is UNTRUSTED input. It may only RELAX the guard (raise thresholds,
@@ -17,9 +20,11 @@ Trust model (this is the security boundary):
 Resolution order:
   1. built-in defaults
   2. packaged config.default.json            (trusted)        -> sanitized baseline
-  3. per-project .agent-rails.json (cwd)      (untrusted)      -> relax-only overlay
-  4. .agent-rails-off marker (cwd)            -> mode "off"
-  5. AGENT_RAILS_MODE env var                 (trusted)        -> any valid mode
+  3. ~/.agent-rails/config.json               (trusted)        -> may tighten
+  4. ~/.agent-rails/policies/*.json (matched) (trusted)        -> may tighten
+  5. per-project .agent-rails.json (cwd)      (untrusted)      -> relax-only overlay
+  6. .agent-rails-off marker (cwd)            -> mode "off"
+  7. AGENT_RAILS_MODE env var                 (trusted)        -> any valid mode
 
 Everything is sanitized: modes are canonicalized to {off,observe,enforce};
 window/block_at/nudge_at are coerced to ints with safe floors (so a typo'd or
@@ -176,6 +181,7 @@ def _restrict_merge(baseline: dict, project) -> dict:
 
 
 _PROJECT_BOUNDARY = (".git", ".hg", ".svn")
+_TRUSTED_HOME_ENV = "AGENT_RAILS_HOME"
 
 
 def _search_dirs(start: str):
@@ -215,6 +221,160 @@ def _find_upwards(start: str, name: str) -> Optional[Path]:
     return None
 
 
+def _repo_root(start: str) -> Optional[Path]:
+    for d in _search_dirs(start):
+        try:
+            if any((d / b).exists() for b in _PROJECT_BOUNDARY):
+                return d
+        except Exception:
+            continue
+    return None
+
+
+def _trusted_home() -> Path:
+    override = os.environ.get(_TRUSTED_HOME_ENV)
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".agent-rails"
+
+
+def _read_json(path: Path):
+    try:
+        if path.exists() and path.is_file():
+            return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return None
+
+
+def _git_dir(repo: Path) -> Optional[Path]:
+    git = repo / ".git"
+    try:
+        if git.is_dir():
+            return git
+        if git.is_file():
+            text = git.read_text(encoding="utf-8", errors="ignore")
+            for line in text.splitlines():
+                if line.lower().startswith("gitdir:"):
+                    raw = line.split(":", 1)[1].strip()
+                    p = Path(raw)
+                    if not p.is_absolute():
+                        p = repo / p
+                    return p.resolve()
+    except Exception:
+        return None
+    return None
+
+
+def _normalize_remote(url: str) -> str:
+    s = str(url or "").strip().lower()
+    if s.endswith(".git"):
+        s = s[:-4]
+    return s
+
+
+def _repo_remotes(repo: Optional[Path]) -> set[str]:
+    if repo is None:
+        return set()
+    gd = _git_dir(repo)
+    if gd is None:
+        return set()
+    config = gd / "config"
+    out: set[str] = set()
+    try:
+        for line in config.read_text(encoding="utf-8", errors="ignore").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("url ="):
+                raw = stripped.split("=", 1)[1].strip()
+                if raw:
+                    out.add(raw)
+                    out.add(_normalize_remote(raw))
+    except Exception:
+        return set()
+    return out
+
+
+def _path_matches(repo: Optional[Path], configured: list[str]) -> bool:
+    if repo is None:
+        return False
+    try:
+        repo_resolved = repo.resolve()
+    except Exception:
+        repo_resolved = repo
+    for raw in configured:
+        try:
+            p = Path(raw).expanduser().resolve()
+        except Exception:
+            continue
+        if p == repo_resolved:
+            return True
+    return False
+
+
+def _remote_matches(remotes: set[str], configured: list[str]) -> bool:
+    normalized = set(remotes)
+    normalized.update(_normalize_remote(r) for r in remotes)
+    for raw in configured:
+        if raw in remotes or _normalize_remote(raw) in normalized:
+            return True
+    return False
+
+
+def _policy_matches(policy, repo: Optional[Path], remotes: set[str]) -> bool:
+    if not isinstance(policy, dict):
+        return False
+    match = policy.get("match")
+    if not isinstance(match, dict):
+        return False
+    repo_paths = _to_str_list(match.get("repo_paths"))
+    repo_remotes = _to_str_list(match.get("repo_remotes"))
+    if repo_paths and _path_matches(repo, repo_paths):
+        return True
+    if repo_remotes and _remote_matches(remotes, repo_remotes):
+        return True
+    return False
+
+
+def _apply_trusted_config(cfg: dict, start: str) -> dict:
+    """Apply trusted user/global config and matched policy files.
+
+    Unlike repo-local .agent-rails.json, this layer is operator-owned and may
+    tighten. It never raises; unreadable or malformed files simply do not apply.
+    """
+    out = deepcopy(cfg)
+    home = _trusted_home()
+
+    global_cfg = _read_json(home / "config.json")
+    if isinstance(global_cfg, dict):
+        out = _deep_merge(out, global_cfg)
+        out = _sanitize_baseline(out)
+
+    repo = _repo_root(start)
+    remotes = _repo_remotes(repo)
+    policies_dir = home / "policies"
+    try:
+        policy_paths = sorted(policies_dir.glob("*.json"))
+    except Exception:
+        policy_paths = []
+    matched: list[str] = []
+    for path in policy_paths:
+        policy = _read_json(path)
+        if not _policy_matches(policy, repo, remotes):
+            continue
+        payload = {
+            k: v for k, v in policy.items()
+            if k not in {"id", "match"}
+        }
+        out = _deep_merge(out, payload)
+        matched.append(str(policy.get("id") or path.stem))
+        out = _sanitize_baseline(out)
+    if matched:
+        meta = out.setdefault("_meta", {})
+        if isinstance(meta, dict):
+            meta["trusted_policies"] = matched
+    return out
+
+
 def load_config(project_dir: Optional[str] = None) -> dict:
     baseline = deepcopy(_DEFAULT)
 
@@ -229,7 +389,13 @@ def load_config(project_dir: Optional[str] = None) -> dict:
 
     start = project_dir or os.getcwd()
 
-    # 3. untrusted per-project overlay — relax only. Searched from cwd up to the
+    # 3/4. trusted user config + matched policy registry — may tighten.
+    try:
+        baseline = _apply_trusted_config(baseline, start)
+    except Exception:
+        pass
+
+    # 5. untrusted per-project overlay — relax only. Searched from cwd up to the
     #    repo root, so a repo-root config applies in any subdirectory.
     try:
         ov = _find_upwards(start, ".agent-rails.json")
@@ -238,14 +404,14 @@ def load_config(project_dir: Optional[str] = None) -> dict:
     except Exception:
         pass
 
-    # 4. opt-out marker (a relaxation), same upward search.
+    # 6. opt-out marker (a relaxation), same upward search.
     try:
         if _find_upwards(start, ".agent-rails-off") is not None:
             baseline["mode"] = "off"
     except Exception:
         pass
 
-    # 5. trusted env override (operator-controlled; may tighten)
+    # 7. trusted env override (operator-controlled; may tighten)
     env = _canon_mode(os.environ.get("AGENT_RAILS_MODE"))
     if env is not None:
         baseline["mode"] = env
