@@ -72,6 +72,14 @@ def test_default_includes_sub_agent_escalation_guidance():
         assert "use the day-to-day model when the packet is narrow" in out
 
 
+def test_default_includes_wrapper_usage_guidance():
+    with tempfile.TemporaryDirectory() as d:
+        rc, out, _ = _run(["init", "--dry-run"], cwd=d)
+        assert rc == 0
+        assert "when project wrappers exist for PR merge/cleanup" in out
+        assert "use them instead of manually polling GitHub, CI, or logs" in out
+
+
 def test_default_writes_claude_md_and_symlinks_agents_md():
     with tempfile.TemporaryDirectory() as d:
         rc, out, _ = _run(["init"], cwd=d)

@@ -6,6 +6,9 @@ A thin operator-facing CLI over the same core the hooks use. Subcommands:
     agent-rails status [DIR]       resolved config for DIR (default: cwd)
     agent-rails install [HARNESS]  install hooks; no arg = all detected harnesses
     agent-rails init [...]         compose a CLAUDE.md + AGENTS.md symlink from profiles
+    agent-rails pr-merge PR        merge + poll + local cleanup
+    agent-rails ci-failures        summarize failed CI logs
+    agent-rails test-summary LOG   summarize saved pytest output
     agent-rails version
 
 `report` is the other half of `observe` mode: observe logs every non-ALLOW
@@ -41,6 +44,7 @@ from .profiles import (
     read_profile,
 )
 from .templates import ROOT_TEMPLATE, read_template
+from .workflows import ci_failures, ci_status, cleanup_after_merge, merge_pr, test_summary, timed_runner
 
 
 def _cmd_report(args: argparse.Namespace) -> int:
@@ -150,6 +154,44 @@ def _cmd_install(args: argparse.Namespace) -> int:
         return _run_installs(list(_KNOWN_HARNESSES))
     actual = _HARNESS_ALIASES.get(harness, harness)
     return _run_installs([actual])
+
+
+def _cmd_pr_merge(args: argparse.Namespace) -> int:
+    runner = timed_runner(args.command_timeout)
+    return merge_pr(
+        args.pr,
+        method=args.method,
+        cleanup=not args.no_cleanup,
+        main_branch=args.main,
+        remote=args.remote,
+        timeout_s=args.timeout,
+        poll_s=args.poll,
+        runner=runner,
+    )
+
+
+def _cmd_post_merge_cleanup(args: argparse.Namespace) -> int:
+    runner = timed_runner(args.command_timeout)
+    return cleanup_after_merge(
+        args.branch,
+        main_branch=args.main,
+        remote=args.remote,
+        dry_run=args.dry_run,
+        force_delete=args.force_delete,
+        runner=runner,
+    )
+
+
+def _cmd_ci_status(args: argparse.Namespace) -> int:
+    return ci_status(args.pr, runner=timed_runner(args.command_timeout))
+
+
+def _cmd_ci_failures(args: argparse.Namespace) -> int:
+    return ci_failures(pr=args.pr, run_id=args.run, runner=timed_runner(args.command_timeout))
+
+
+def _cmd_test_summary(args: argparse.Namespace) -> int:
+    return test_summary(Path(args.log))
 
 
 def _split_profile_args(values) -> list[str]:
@@ -650,6 +692,76 @@ def build_parser() -> argparse.ArgumentParser:
         help="harness to install for; omit to auto-detect ~/.claude and ~/.codex",
     )
     ins.set_defaults(func=_cmd_install)
+
+    prm = sub.add_parser(
+        "pr-merge",
+        help="merge a GitHub PR, wait for MERGED, then clean up the local branch",
+    )
+    prm.add_argument("pr", help="PR number, URL, or branch accepted by `gh pr merge`")
+    prm.add_argument(
+        "--method",
+        choices=["squash", "merge", "rebase"],
+        default="squash",
+        help="merge method (default: squash)",
+    )
+    prm.add_argument("--no-cleanup", action="store_true", help="skip local post-merge cleanup")
+    prm.add_argument("--main", default="main", help="main branch name (default: main)")
+    prm.add_argument("--remote", default="origin", help="remote for fast-forward pull (default: origin)")
+    prm.add_argument("--timeout", type=int, default=120, help="seconds to wait for MERGED (default: 120)")
+    prm.add_argument("--poll", type=float, default=5, help="seconds between PR state polls (default: 5)")
+    prm.add_argument(
+        "--command-timeout",
+        type=float,
+        default=30,
+        help="seconds before one gh/git call times out (default: 30)",
+    )
+    prm.set_defaults(func=_cmd_pr_merge)
+
+    pmc = sub.add_parser(
+        "post-merge-cleanup",
+        help="checkout main, fast-forward pull, and delete a merged local branch",
+    )
+    pmc.add_argument("branch", nargs="?", help="merged branch to delete (default: current branch)")
+    pmc.add_argument("--main", default="main", help="main branch name (default: main)")
+    pmc.add_argument("--remote", default="origin", help="remote for fast-forward pull (default: origin)")
+    pmc.add_argument("--dry-run", action="store_true", help="print commands without running them")
+    pmc.add_argument(
+        "--force-delete",
+        action="store_true",
+        help="use git branch -D for squash/rebase-merged branches",
+    )
+    pmc.add_argument(
+        "--command-timeout",
+        type=float,
+        default=30,
+        help="seconds before one git call times out (default: 30)",
+    )
+    pmc.set_defaults(func=_cmd_post_merge_cleanup)
+
+    cis = sub.add_parser("ci-status", help="summarize GitHub PR checks")
+    cis.add_argument("pr", nargs="?", help="PR number, URL, or branch for `gh pr checks`")
+    cis.add_argument(
+        "--command-timeout",
+        type=float,
+        default=30,
+        help="seconds before one gh call times out (default: 30)",
+    )
+    cis.set_defaults(func=_cmd_ci_status)
+
+    cif = sub.add_parser("ci-failures", help="extract pytest-style failures from a failed GitHub run")
+    cif.add_argument("--run", help="GitHub Actions run id (default: latest run)")
+    cif.add_argument("--pr", help="find the latest run for this PR's head branch")
+    cif.add_argument(
+        "--command-timeout",
+        type=float,
+        default=30,
+        help="seconds before one gh call times out (default: 30)",
+    )
+    cif.set_defaults(func=_cmd_ci_failures)
+
+    ts = sub.add_parser("test-summary", help="summarize pytest failures from a saved log")
+    ts.add_argument("log", help="path to a pytest output log")
+    ts.set_defaults(func=_cmd_test_summary)
 
     init = sub.add_parser(
         "init",

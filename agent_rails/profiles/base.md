@@ -25,5 +25,6 @@ Default working shape:
 - if you have run several read/search commands against the same target without narrowing to a bounded region, stop and state the symbol, file, or invariant you are trying to locate before searching again
 - after a file/path-missing error, verify the path once with a directory listing or targeted find; do not retry the same missing target through cat, sed, head, or another spelling
 - repeated batch commands need an explicit cursor, budget, and checkpoint condition; report progress against that budget before continuing another lap
+- when project wrappers exist for PR merge/cleanup, CI status/failure extraction, or saved test-log summaries, use them instead of manually polling GitHub, CI, or logs
 
 If you cannot articulate what new information the next action will produce, do not take it.

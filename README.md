@@ -251,7 +251,7 @@ trusted policy root.
 
 ```
 agent_rails/
-  cli.py       agent-rails report / status / install / init — operator-facing CLI
+  cli.py       report / status / install / init / workflow wrappers
   core/        events.py   normalized ToolEvent (the harness-neutral schema)
                state.py    session-keyed rolling log (locked, fail-open)
                engine.py   run enabled detectors -> aggregate -> verdict
@@ -266,6 +266,7 @@ agent_rails/
                generic/      observe()/check() for any custom agent loop
   profiles/    base / non_convergence / debugging / ...   <-- SOFT layer (advisory)
   templates/   AGENTS.md / codex/AGENTS.md   installable header used by `init`
+  workflows.py deterministic PR / CI / test-log wrappers
 tests/         synthetic-sequence unit tests
 ```
 
@@ -317,6 +318,30 @@ time, don't get parsed by detectors, and can't affect the fail-open trust
 model. They're advisory, not enforced. The blocking still comes from the
 detectors; this layer is documentation that ships with the package so projects
 have one less thing to write from scratch.
+
+---
+
+## Workflow wrappers
+
+Some agent waste is not a guardrail problem; it is deterministic workflow glue.
+An LLM should not spend repeated tool calls polling GitHub, re-checking branch
+state, or scanning a pytest log for the same failure header. `agent-rails`
+therefore ships small local wrappers that produce one clean artifact for the
+agent to reason over:
+
+```bash
+agent-rails pr-merge 123              # gh merge + wait for MERGED + local cleanup
+agent-rails post-merge-cleanup topic  # checkout main, pull --ff-only, branch -d topic
+agent-rails post-merge-cleanup topic --force-delete  # for squash/rebase-cleaned branches
+agent-rails ci-status 123             # compact PR check summary
+agent-rails ci-failures --pr 123      # failed-run log summary for the PR branch
+agent-rails ci-failures --run 456     # failed-run log summary for a run id
+agent-rails test-summary .pytest_output.log
+```
+
+The rule for project instructions is simple: do not manually poll GitHub, CI,
+or saved test logs when a project wrapper exists. Use the wrapper, then spend
+judgment on the summarized result.
 
 ### Use from another repo
 
