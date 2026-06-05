@@ -175,19 +175,49 @@ Configuration resolves in this order, and the trust boundary matters:
 
 1. built-in defaults
 2. packaged `agent_rails/config.default.json` — **trusted** (ships with the install)
-3. per-project `.agent-rails.json`, searched from the agent's cwd up to the
+3. user-level `~/.agent-rails/config.json` — **trusted** (operator-owned; may tighten)
+4. matched user-level `~/.agent-rails/policies/*.json` — **trusted** (operator-owned; may tighten)
+5. per-project `.agent-rails.json`, searched from the agent's cwd up to the
    repo root — **untrusted**: it may only *relax* the guard (raise thresholds,
    disable detectors, lower the window, downgrade mode toward `off`, or *extend*
    the read-only `exempt_tools` allowlist). It can **never** escalate to
    `enforce`, lower a threshold, or *remove* an exemption, so a hostile or
    careless repo cannot brick the agent by forcing its first tool call to be
    denied.
-4. `.agent-rails-off` marker (same upward search) → `off`
-5. `AGENT_RAILS_MODE` env var — **trusted** (your shell); may set any mode.
+6. `.agent-rails-off` marker (same upward search) → `off`
+7. `AGENT_RAILS_MODE` env var — **trusted** (your shell); may set any mode.
 
 All values are sanitized: modes are canonicalized, and `window`/`block_at`/
 `nudge_at` are coerced to ints with safe floors, so a typo or out-of-range
 value can neither crash a detector nor cause a spurious block.
+
+The user-level policy registry is how private or project-specific guardrails
+stay out of the public package while still becoming real hard protections. A
+policy file matches by repo path or git remote and then contributes trusted
+config:
+
+```json
+{
+  "id": "compiler-tools",
+  "match": {
+    "repo_paths": ["/Users/me/src/compiler-project"],
+    "repo_remotes": ["git@example.com:org/compiler-project"]
+  },
+  "detectors": {
+    "leverage_fallback": {
+      "required_patterns": ["semantic-nav", "schema-check"],
+      "protected_targets": ["src/compiler/main.lang", "generated/schema.json"]
+    }
+  }
+}
+```
+
+Put that file at `~/.agent-rails/policies/compiler-tools.json`. It can tighten
+because it is trusted local operator state. The repo's own `.agent-rails.json`
+still cannot add those strict patterns; it can only relax thresholds or opt out.
+
+For tests or isolated installs, set `AGENT_RAILS_HOME` to point at an alternate
+trusted policy root.
 
 ---
 
@@ -203,7 +233,7 @@ agent_rails/
                audit.py    verdict audit log behind observe mode (the report source)
   detectors/   base.py     Detector interface + Verdict   <-- HARD layer (can block)
                repetition.py, oscillation.py, error_streak.py
-  config.py    config loading, trust model, sanitization
+  config.py    config loading, trusted policy registry, trust model, sanitization
   config.default.json      packaged trusted defaults (ships in the wheel)
   adapters/    claude_code/  PreToolUse tripwire + PostToolUse recorder + install.sh
                codex/        PreToolUse tripwire + PostToolUse recorder + install.sh
@@ -317,6 +347,11 @@ Use `.agent-rails.json` only for the hard guardrail runtime config. Project
 config is untrusted and may only relax the installed baseline: raise thresholds,
 disable detectors, lower `window`, downgrade `mode` toward `off`, or extend the
 read-only exemption list. It cannot force `enforce` or lower thresholds.
+
+Use `~/.agent-rails/policies/*.json` for repo-specific strict rules, such as
+"if this semantic tool fails, do not fall back to broad text search over that
+protected file." Those policies are trusted local operator state and can tighten
+detectors without putting private repo names or paths in this public package.
 
 Example repo-local config:
 

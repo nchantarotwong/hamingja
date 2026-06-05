@@ -24,13 +24,30 @@ def _proj(files):
 
 
 def _no_env(fn):
-    """Run fn with AGENT_RAILS_MODE unset, restoring it after."""
+    """Run fn with trusted env overrides unset, restoring them after."""
     old = os.environ.pop("AGENT_RAILS_MODE", None)
+    old_home = os.environ.pop("AGENT_RAILS_HOME", None)
     try:
         fn()
     finally:
         if old is not None:
             os.environ["AGENT_RAILS_MODE"] = old
+        else:
+            os.environ.pop("AGENT_RAILS_MODE", None)
+        if old_home is not None:
+            os.environ["AGENT_RAILS_HOME"] = old_home
+        else:
+            os.environ.pop("AGENT_RAILS_HOME", None)
+
+
+def _trusted_home(files):
+    d = tempfile.mkdtemp(prefix="agent-rails-home-")
+    for name, content in files.items():
+        path = os.path.join(d, name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+    return d
 
 
 # --- trust model: project config may only relax -------------------------
@@ -107,6 +124,111 @@ def test_project_cannot_shrink_exempt_tools():
             {"detectors": {"repetition": {"exempt_tools": []}}})})
         ex = load_config(d)["detectors"]["repetition"]["exempt_tools"]
         assert "Read" in ex and "Grep" in ex
+    _no_env(body)
+
+
+# --- trusted user policy registry --------------------------------------
+
+def test_trusted_user_config_can_tighten():
+    def body():
+        home = _trusted_home({
+            "config.json": json.dumps({
+                "mode": "enforce",
+                "detectors": {
+                    "repetition": {"block_at": 2},
+                    "leverage_fallback": {
+                        "required_patterns": ["semantic-nav"],
+                        "protected_targets": ["src/compiler/main.lang"],
+                    },
+                },
+            })
+        })
+        os.environ["AGENT_RAILS_HOME"] = home
+        cfg = load_config(_proj({}))
+        assert cfg["mode"] == "enforce"
+        assert cfg["detectors"]["repetition"]["block_at"] == 2
+        lf = cfg["detectors"]["leverage_fallback"]
+        assert lf["required_patterns"] == ["semantic-nav"]
+        assert lf["protected_targets"] == ["src/compiler/main.lang"]
+    _no_env(body)
+
+
+def test_trusted_policy_matches_repo_path_and_adds_metadata():
+    def body():
+        root = tempfile.mkdtemp(prefix="agent-rails-policy-repo-")
+        os.mkdir(os.path.join(root, ".git"))
+        sub = os.path.join(root, "src")
+        os.mkdir(sub)
+        home = _trusted_home({
+            "policies/compiler.json": json.dumps({
+                "id": "compiler-policy",
+                "match": {"repo_paths": [root]},
+                "detectors": {
+                    "leverage_fallback": {
+                        "required_patterns": ["semantic-nav"],
+                        "protected_targets": ["src/compiler/main.lang"],
+                    }
+                },
+            })
+        })
+        os.environ["AGENT_RAILS_HOME"] = home
+        cfg = load_config(sub)
+        assert cfg["_meta"]["trusted_policies"] == ["compiler-policy"]
+        assert "id" not in cfg and "match" not in cfg
+        assert cfg["detectors"]["leverage_fallback"]["required_patterns"] == ["semantic-nav"]
+    _no_env(body)
+
+
+def test_trusted_policy_matches_repo_remote():
+    def body():
+        root = tempfile.mkdtemp(prefix="agent-rails-policy-remote-")
+        git = os.path.join(root, ".git")
+        os.mkdir(git)
+        with open(os.path.join(git, "config"), "w", encoding="utf-8") as f:
+            f.write('[remote "origin"]\n\turl = git@example.com:org/project.git\n')
+        home = _trusted_home({
+            "policies/remote.json": json.dumps({
+                "id": "remote-policy",
+                "match": {"repo_remotes": ["git@example.com:org/project"]},
+                "detectors": {
+                    "leverage_fallback": {
+                        "required_patterns": ["schema-check"],
+                        "protected_targets": ["generated/schema.json"],
+                    }
+                },
+            })
+        })
+        os.environ["AGENT_RAILS_HOME"] = home
+        cfg = load_config(root)
+        assert cfg["_meta"]["trusted_policies"] == ["remote-policy"]
+        assert cfg["detectors"]["leverage_fallback"]["required_patterns"] == ["schema-check"]
+    _no_env(body)
+
+
+def test_untrusted_project_cannot_add_strict_leverage_patterns():
+    def body():
+        home = _trusted_home({
+            "config.json": json.dumps({
+                "detectors": {
+                    "leverage_fallback": {
+                        "required_patterns": ["semantic-nav"],
+                        "protected_targets": ["src/compiler/main.lang"],
+                    }
+                }
+            })
+        })
+        os.environ["AGENT_RAILS_HOME"] = home
+        d = _proj({".agent-rails.json": json.dumps({
+            "detectors": {
+                "leverage_fallback": {
+                    "required_patterns": ["repo-controlled-tool"],
+                    "protected_targets": ["repo-controlled-target"],
+                }
+            }
+        })})
+        lf = load_config(d)["detectors"]["leverage_fallback"]
+        assert lf["required_patterns"] == ["semantic-nav"]
+        assert lf["protected_targets"] == ["src/compiler/main.lang"]
     _no_env(body)
 
 
