@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _TMP = tempfile.mkdtemp(prefix="agent-rails-cli-")
 os.environ["AGENT_RAILS_STATE_DIR"] = _TMP
 
-from agent_rails.cli import main  # noqa: E402
+from agent_rails.cli import build_parser, main  # noqa: E402
 from agent_rails.core.audit import clear_audit, log_verdict  # noqa: E402
 from agent_rails.detectors.base import BLOCK, NUDGE, Verdict  # noqa: E402
 
@@ -54,6 +54,21 @@ def test_report_json():
     log_verdict("s", "Bash", Verdict(NUDGE, "repetition", "r"))
     out = _run(["report", "--json"])
     assert '"by_detector"' in out and '"repetition"' in out
+
+
+def test_workflow_subcommands_parse():
+    parser = build_parser()
+    cases = [
+        ["pr-merge", "12", "--method", "squash", "--command-timeout", "10"],
+        ["post-merge-cleanup", "topic", "--force-delete", "--dry-run"],
+        ["ci-status", "12", "--command-timeout", "10"],
+        ["ci-failures", "--run", "456", "--command-timeout", "10"],
+        ["test-summary", ".pytest_output.log"],
+    ]
+    for argv in cases:
+        args = parser.parse_args(argv)
+        assert args.command == argv[0]
+        assert callable(args.func)
 
 
 if __name__ == "__main__":
