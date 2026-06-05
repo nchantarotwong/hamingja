@@ -5,15 +5,15 @@ Trust model (this is the security boundary):
   * The DEFAULTS below and the packaged config/config.default.json are TRUSTED
     — they ship with agent-rails / are set by the operator who installed it.
   * User-level config under ~/.agent-rails/ is TRUSTED operator state. It may
-    tighten (add protected patterns, lower thresholds, set enforce), because it
-    lives outside any repo the agent is editing.
+    tighten (add protected patterns, lower thresholds, set global or detector
+    modes to enforce), because it lives outside any repo the agent is editing.
   * A per-project .agent-rails.json is read from the agent's CURRENT WORKING
     DIRECTORY, i.e. from whatever repo the agent happens to be operating in.
     That is UNTRUSTED input. It may only RELAX the guard (raise thresholds,
-    disable detectors, lower the window, downgrade the mode toward "off"). It
-    can NEVER tighten — it cannot escalate mode to "enforce" or lower a
-    threshold — so a hostile or careless repo cannot brick the agent by
-    forcing its first tool call to be denied.
+    disable detectors, lower the window, downgrade global or detector modes
+    toward "off"). It can NEVER tighten — it cannot escalate a mode to
+    "enforce" or lower a threshold — so a hostile or careless repo cannot
+    brick the agent by forcing its first tool call to be denied.
   * The AGENT_RAILS_MODE env var is operator-controlled (the human's shell),
     so it IS trusted and may set any valid mode, including "enforce".
 
@@ -104,6 +104,12 @@ def _canon_mode(v) -> Optional[str]:
     return None
 
 
+def _effective_detector_mode(cfg: dict, name: str, det_cfg: Optional[dict] = None) -> str:
+    if det_cfg is None:
+        det_cfg = (cfg.get("detectors", {}) or {}).get(name, {}) or {}
+    return _canon_mode(det_cfg.get("mode")) or _canon_mode(cfg.get("mode")) or "observe"
+
+
 def _deep_merge(base: dict, over: dict) -> dict:
     out = dict(base)
     for k, v in (over or {}).items():
@@ -123,6 +129,11 @@ def _clamp_floors(cfg: dict) -> dict:
     for d in dets.values():
         if not isinstance(d, dict):
             continue
+        dm = _canon_mode(d.get("mode"))
+        if dm is not None:
+            d["mode"] = dm
+        elif "mode" in d:
+            d.pop("mode", None)
         d["enabled"] = bool(d.get("enabled", True))
         d["block_at"] = max(_BLOCK_MIN, _to_int(d.get("block_at"), 4))
         d["nudge_at"] = max(_NUDGE_MIN, _to_int(d.get("nudge_at"), 3))
@@ -166,6 +177,11 @@ def _restrict_merge(baseline: dict, project) -> dict:
                 continue
             if "enabled" in pd:
                 d["enabled"] = bool(d.get("enabled", True)) and bool(pd.get("enabled"))
+            if "mode" in pd:
+                pm = _canon_mode(pd.get("mode"))
+                current = _effective_detector_mode(out, name, d)
+                if pm is not None and _MODE_RANK[pm] < _MODE_RANK[current]:
+                    d["mode"] = pm  # only toward less-aggressive
             if "block_at" in pd:  # raise only
                 d["block_at"] = max(d["block_at"], _to_int(pd.get("block_at"), d["block_at"]))
             if "nudge_at" in pd:  # raise only

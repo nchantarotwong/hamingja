@@ -103,7 +103,8 @@ def summarize(entries: list[dict]) -> dict:
     """Aggregate raw audit entries into per-detector fire counts.
 
     Returns counts that answer the one question observe mode exists to answer:
-    "if I flip to enforce, how many blocks will I get, and from which detector?"
+    "if I flip global or detector mode to enforce, how many blocks will I get,
+    and from which detector?"
     A would_block is a nudge-now/block-in-enforce; a real block only appears
     here when already running enforce.
     """

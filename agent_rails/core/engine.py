@@ -1,17 +1,20 @@
 """The engine: run all ENABLED detectors over a session's recent events.
 
-Highest-severity verdict wins (BLOCK > NUDGE > ALLOW). Three global behaviors
+Highest-severity verdict wins (BLOCK > NUDGE > ALLOW). Four central behaviors
 live here:
 
   * mode "off"      -> always ALLOW (per-project opt-out / kill switch).
   * enable/disable  -> a detector whose config has enabled:false is skipped
     HERE, centrally, so a detector author can't forget the check and have it
     silently run anyway.
+  * detector mode   -> a detector can override the global mode, so narrow
+    high-signal rails can enforce while broad rails stay observe.
   * mode != enforce -> a BLOCK is returned as a NUDGE with would_block=True.
     The verdict carries the downgrade as DATA (would_block), not as a magic
     string in `reason`, so the transcript-tail supervisor and telemetry can
     count would-blocks without parsing prose. This is the safe rollout path:
-    run observe first, watch would_block, tune, then flip to enforce.
+    run observe first, watch would_block, tune, then enforce globally or for
+    one detector at a time.
 
 Fail-open is enforced here: a broken detector is skipped, an unreadable store
 yields no events, and any unexpected error returns ALLOW.
@@ -48,13 +51,25 @@ def _enabled(config: dict, name: str) -> bool:
     return bool(dc.get("enabled", True))
 
 
+def _mode(config: dict, name: Optional[str] = None) -> str:
+    if name is not None:
+        dc = (config.get("detectors", {}) or {}).get(name, {}) or {}
+        dm = dc.get("mode")
+        if dm in {"off", "observe", "enforce"}:
+            return dm
+    gm = config.get("mode")
+    if gm in {"off", "observe", "enforce"}:
+        return gm
+    return "observe"
+
+
 def evaluate(
     session_id: str,
     config: dict,
     candidate: Optional[ToolEvent] = None,
 ) -> Verdict:
     try:
-        mode = config.get("mode")
+        mode = _mode(config)
         if mode == "off":
             return _allow()
 
@@ -69,18 +84,22 @@ def evaluate(
 
         best = _allow()
         for det in DETECTORS:
+            det_mode = _mode(config, det.name)
+            if det_mode == "off":
+                continue
             if not _enabled(config, det.name):  # central enable gate
                 continue
             try:
                 v = det.evaluate(events, candidate, config)
             except Exception:
                 continue  # a broken detector never blocks a call
-            if v and v.rank > best.rank:
+            if not v:
+                continue
+            if det_mode != "enforce" and v.action == BLOCK:
+                v = Verdict(NUDGE, v.detector, v.reason, would_block=True)
+            if v.rank > best.rank:
                 best = v
 
-        if mode != "enforce" and best.action == BLOCK:
-            # observe mode: do not block; carry the downgrade as structured data.
-            return Verdict(NUDGE, best.detector, best.reason, would_block=True)
         return best
     except Exception:
         return _allow()

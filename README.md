@@ -136,10 +136,35 @@ diagnosis), while an identical *retry* still matches and stays blocked under
 
 ## Modes (safe rollout)
 
-* `observe` *(default)* — never blocks; emits a nudge carrying `would_block`, so
-  you can tune thresholds against your real workflow before enforcing.
+* `observe` *(default)* — never blocks globally; emits a nudge carrying
+  `would_block`, so you can tune thresholds against your real workflow before
+  enforcing.
 * `enforce` — blocks for real.
 * `off` — disabled.
+
+Detector-level `mode` overrides the global mode. That lets you keep broad,
+behavioral detectors in `observe` while enforcing a narrow, high-signal local
+policy:
+
+```json
+{
+  "mode": "observe",
+  "detectors": {
+    "leverage_fallback": {
+      "mode": "enforce",
+      "required_patterns": ["semantic-nav"],
+      "protected_targets": ["src/compiler/main.lang"]
+    },
+    "repetition": {
+      "mode": "observe"
+    }
+  }
+}
+```
+
+As with thresholds, detector-level modes only tighten from trusted config. A
+repo-local `.agent-rails.json` can downgrade a detector toward `observe` or
+`off`, but cannot escalate it to `enforce`.
 
 Observe mode only earns its keep if the would-blocks are visible, so every
 non-allow verdict is appended to an audit log and `agent-rails report` turns it
@@ -150,7 +175,7 @@ $ agent-rails report
 agent-rails report  (37 verdicts across 4 session(s))
 
   nudges:        21
-  would-block:   14   (these become BLOCKS under enforce)
+  would-block:   14   (become BLOCKS when the relevant mode is enforce)
   blocks:         2   (already enforced)
 
   detector           nudge   would-block   block
@@ -206,6 +231,7 @@ config:
   "detectors": {
     "leverage_fallback": {
       "required_patterns": ["semantic-nav", "schema-check"],
+      "mode": "enforce",
       "protected_targets": ["src/compiler/main.lang", "generated/schema.json"]
     }
   }
@@ -351,7 +377,8 @@ read-only exemption list. It cannot force `enforce` or lower thresholds.
 Use `~/.agent-rails/policies/*.json` for repo-specific strict rules, such as
 "if this semantic tool fails, do not fall back to broad text search over that
 protected file." Those policies are trusted local operator state and can tighten
-detectors without putting private repo names or paths in this public package.
+detectors, including setting only that detector to `enforce`, without putting
+private repo names or paths in this public package.
 
 Example repo-local config:
 
