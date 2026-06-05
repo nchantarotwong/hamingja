@@ -65,7 +65,7 @@ mislabeled, not a scope cut. Fix it, or make it loud, before shipping.
 Before committing a coherent slice:
 
 1. Finish the implementation and run `python -m pytest`.
-2. Re-read the diff adversarially. Try to falsify the design, not defend it.
+2. Re-read the diff adversarially. Actively construct counterexamples; try to falsify the design, not defend it.
    The questions that matter here: does it fail open on every error path? Can
    an untrusted project config exploit it to escalate or remove an exemption?
    Does a denied call wedge the session? Are read-only / idempotent tools still
@@ -76,6 +76,24 @@ Before committing a coherent slice:
 Cap the loop at 5 passes. If findings remain or a finding forks the design,
 stop and ask before continuing. When a finding names a class ("this detector
 mis-handles X"), audit the whole class, not just the named instance.
+
+### Automatic staged review
+
+The review stage is a code review, not an implementation summary. Lead with
+findings ranked by severity, using file/line references and concrete failure
+scenarios. If there are no blocking findings, say so and name any residual
+hardening gaps.
+
+The review must check for fail-closed regressions, generated artifacts or
+state records that callers could ignore, contradictory verdict/session records,
+malformed or unsupported inputs, unsafe config escalation, denied calls that
+wedge the session, detector exceptions, trust-boundary drift, weak audit
+metadata, and missing fixtures or tests for new detectors, modes, config keys,
+or failure modes.
+
+If a finding exposes fail-closed behavior or an unsafe missed tripwire, fix it
+before commit, re-run validation, and repeat the staged review within the
+5-pass cap.
 
 After committing a coherent change, **hold for review before opening a PR**
 unless the user explicitly directs otherwise.
