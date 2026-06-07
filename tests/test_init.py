@@ -77,7 +77,8 @@ def test_default_includes_wrapper_usage_guidance():
         rc, out, _ = _run(["init", "--dry-run"], cwd=d)
         assert rc == 0
         assert "when project wrappers exist for PR merge/cleanup" in out
-        assert "use them instead of manually polling GitHub, CI, or logs" in out
+        assert "use them before any manual recipe in project instructions" in out
+        assert "fallback behavior only when the wrapper is unavailable or fails loudly" in out
 
 
 def test_default_writes_claude_md_and_symlinks_agents_md():
