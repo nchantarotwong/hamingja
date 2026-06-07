@@ -15,9 +15,13 @@ def run_module_tests(namespace: dict) -> int:
         k: v for k, v in sorted(namespace.items())
         if k.startswith("test_") and callable(v)
     }
+    setup = namespace.get("setup_function")
+    teardown = namespace.get("teardown_function")
     failed = 0
     for name, fn in fns.items():
         try:
+            if callable(setup):
+                setup(fn)
             fn()
             print(f"PASS {name}")
         except AssertionError as e:
@@ -27,5 +31,13 @@ def run_module_tests(namespace: dict) -> int:
             failed += 1
             print(f"ERROR {name}: {type(e).__name__}: {e}")
             traceback.print_exc()
+        finally:
+            if callable(teardown):
+                try:
+                    teardown(fn)
+                except Exception as e:
+                    failed += 1
+                    print(f"ERROR {name} teardown: {type(e).__name__}: {e}")
+                    traceback.print_exc()
     print(f"\n{len(fns) - failed}/{len(fns)} passed")
     return 1 if failed else 0

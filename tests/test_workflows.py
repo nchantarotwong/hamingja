@@ -147,9 +147,9 @@ def test_cleanup_dry_run_does_not_probe_branch_existence_when_branch_given():
 def test_ci_status_summarizes_failing_checks():
     runner = FakeRunner([
         RunResult(
-            ["gh", "pr", "checks", "--json", "name,state,conclusion,link"],
+            ["gh", "pr", "checks", "--json", "name,state,link"],
             0,
-            '[{"name":"test-python","state":"COMPLETED","conclusion":"FAILURE","link":"https://ci/job"}]',
+            '[{"name":"test-python","state":"FAILURE","link":"https://ci/job"}]',
             "",
         )
     ])
@@ -163,12 +163,12 @@ def test_ci_status_summarizes_failing_checks():
 def test_ci_status_counts_pending_without_double_counting_failures():
     runner = FakeRunner([
         RunResult(
-            ["gh", "pr", "checks", "--json", "name,state,conclusion,link"],
+            ["gh", "pr", "checks", "--json", "name,state,link"],
             0,
             '['
-            '{"name":"queued","state":"PENDING","conclusion":"","link":""},'
-            '{"name":"failed","state":"FAILURE","conclusion":"","link":""},'
-            '{"name":"ok","state":"SUCCESS","conclusion":"","link":""}'
+            '{"name":"queued","state":"PENDING","link":""},'
+            '{"name":"failed","state":"FAILURE","link":""},'
+            '{"name":"ok","state":"SUCCESS","link":""}'
             ']',
             "",
         )

@@ -21,6 +21,11 @@
       "nudge_at": 3,
       "block_at": 6
     },
+    "workflow_wrapper": {
+      "enabled": true,
+      "nudge_at": 1,
+      "block_at": 2
+    },
     "leverage_fallback": {
       "enabled": true,
       "block_at": 2,

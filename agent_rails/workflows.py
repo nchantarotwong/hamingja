@@ -227,7 +227,7 @@ def ci_status(pr: Optional[str] = None, *, runner: Runner = default_runner) -> i
     cmd = ["gh", "pr", "checks"]
     if pr:
         cmd.append(pr)
-    cmd.extend(["--json", "name,state,conclusion,link"])
+    cmd.extend(["--json", "name,state,link"])
     res = runner(cmd)
     if res.returncode != 0:
         print("ci status")
@@ -253,7 +253,8 @@ def ci_status(pr: Optional[str] = None, *, runner: Runner = default_runner) -> i
     for c in failing[:20]:
         link = c.get("link") or ""
         suffix = f" ({link})" if link else ""
-        print(f"- failed: {c.get('name', '?')} [{c.get('conclusion', '?')}]" + suffix)
+        status = c.get("conclusion") or c.get("state") or "?"
+        print(f"- failed: {c.get('name', '?')} [{status}]" + suffix)
     return 1 if failing else 0
 
 
