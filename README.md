@@ -340,8 +340,10 @@ agent-rails test-summary .pytest_output.log
 ```
 
 The rule for project instructions is simple: do not manually poll GitHub, CI,
-or saved test logs when a project wrapper exists. Use the wrapper, then spend
-judgment on the summarized result.
+or saved test logs when a project wrapper exists. Use the wrapper before any
+manual recipe in project instructions, then spend judgment on the summarized
+result. Manual `gh`/`git` polling and cleanup steps are fallback behavior only
+when the wrapper is unavailable or fails loudly.
 
 ### Use from another repo
 
