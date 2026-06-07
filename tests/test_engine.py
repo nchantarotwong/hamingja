@@ -126,6 +126,21 @@ def test_clean_session_allows():
     assert v.action == ALLOW
 
 
+def test_workflow_wrapper_observe_mode_nudges_raw_gh_checks():
+    s = "workflow-wrapper-observe"
+    v = evaluate(
+        s,
+        cfg("observe"),
+        candidate=ToolEvent(
+            s, "Bash", "gh", PENDING, 0.0,
+            arg_preview="gh pr checks 193 --json name,state,link",
+        ),
+    )
+    assert v.action == NUDGE
+    assert v.detector == "workflow_wrapper"
+    assert v.would_block is True
+
+
 def test_central_enable_gate_disables_detector():
     # repetition disabled in config -> engine skips it even though it would fire
     s = "gated"

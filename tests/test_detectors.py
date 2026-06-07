@@ -14,6 +14,7 @@ from agent_rails.detectors.base import ALLOW, BLOCK, NUDGE  # noqa: E402
 from agent_rails.detectors.error_streak import ErrorStreakDetector  # noqa: E402
 from agent_rails.detectors.leverage_fallback import LeverageFallbackDetector  # noqa: E402
 from agent_rails.detectors.repetition import RepetitionDetector  # noqa: E402
+from agent_rails.detectors.workflow_wrapper import WorkflowWrapperDetector  # noqa: E402
 
 CFG = {
     "detectors": {
@@ -28,6 +29,7 @@ CFG = {
             "fallback_patterns": ["grep ", "rg ", "sed ", "awk "],
             "protected_targets": ["src/compiler/main.lang"],
         },
+        "workflow_wrapper": {"enabled": True, "nudge_at": 1, "block_at": 2},
     }
 }
 
@@ -211,6 +213,57 @@ def test_leverage_fallback_blocks_inline_or_grep_bypass():
     )
     v = LeverageFallbackDetector().evaluate([], cand, CFG)
     assert v is not None and v.action == BLOCK
+
+
+# --- workflow wrapper ---------------------------------------------------
+
+def test_workflow_wrapper_blocks_raw_gh_pr_checks():
+    cand = ToolEvent(
+        "s", "Bash", "gh", PENDING, 0.0,
+        arg_preview="gh pr checks 193 --json name,state,link",
+    )
+    v = WorkflowWrapperDetector().evaluate([], cand, CFG)
+    assert v is not None and v.action == BLOCK
+    assert "agent-rails ci-status" in v.reason
+
+
+def test_workflow_wrapper_blocks_timeout_prefixed_raw_gh_pr_checks():
+    cand = ToolEvent(
+        "s", "Bash", "gh", PENDING, 0.0,
+        arg_preview="timeout 30s gh pr checks 193 --json name,state,link",
+    )
+    v = WorkflowWrapperDetector().evaluate([], cand, CFG)
+    assert v is not None and v.action == BLOCK
+    assert "agent-rails ci-status" in v.reason
+
+
+def test_workflow_wrapper_allows_quoted_pr_body_mentions():
+    cand = ToolEvent(
+        "s", "Bash", "gh", PENDING, 0.0,
+        arg_preview=(
+            "gh pr create --body "
+            "'Validation: use gh pr checks through agent-rails ci-status'"
+        ),
+    )
+    assert WorkflowWrapperDetector().evaluate([], cand, CFG) is None
+
+
+def test_workflow_wrapper_blocks_raw_gh_pr_merge():
+    cand = ToolEvent(
+        "s", "Bash", "gh", PENDING, 0.0,
+        arg_preview="gh pr merge 193 --squash",
+    )
+    v = WorkflowWrapperDetector().evaluate([], cand, CFG)
+    assert v is not None and v.action == BLOCK
+    assert "agent-rails pr-merge" in v.reason
+
+
+def test_workflow_wrapper_allows_agent_rails_wrapper():
+    cand = ToolEvent(
+        "s", "Bash", "rails", PENDING, 0.0,
+        arg_preview="agent-rails ci-status 193",
+    )
+    assert WorkflowWrapperDetector().evaluate([], cand, CFG) is None
 
 
 if __name__ == "__main__":
