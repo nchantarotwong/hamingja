@@ -76,6 +76,59 @@ def _print_lines(lines: list[str]) -> None:
     print("\n".join(lines))
 
 
+def create_pr(
+    *,
+    title: str,
+    body_file: Path,
+    base: str = "main",
+    head: Optional[str] = None,
+    draft: bool = False,
+    runner: Runner = default_runner,
+) -> int:
+    """Create a PR using --body-file so shell quoting cannot mangle the body."""
+    lines = ["pr create"]
+    if not title.strip():
+        lines.append("- error: --title cannot be empty")
+        _print_lines(lines)
+        return 2
+    try:
+        if not body_file.is_file():
+            lines.append(f"- error: body file not found: {body_file}")
+            _print_lines(lines)
+            return 1
+    except OSError as e:
+        lines.append(f"- error: could not inspect body file {body_file}: {e}")
+        _print_lines(lines)
+        return 1
+
+    cmd = [
+        "gh",
+        "pr",
+        "create",
+        "--title",
+        title,
+        "--body-file",
+        str(body_file),
+        "--base",
+        base,
+    ]
+    if head:
+        cmd.extend(["--head", head])
+    if draft:
+        cmd.append("--draft")
+    res = runner(cmd)
+    if res.returncode != 0:
+        lines.append(f"- error: {_err(res)}")
+        _print_lines(lines)
+        return res.returncode or 1
+    url = (res.stdout or "").strip()
+    lines.append("- ok: gh pr create --body-file")
+    if url:
+        lines.append(f"- url: {url}")
+    _print_lines(lines)
+    return 0
+
+
 def _git_current_branch(runner: Runner) -> Optional[str]:
     res = runner(["git", "branch", "--show-current"])
     if res.returncode != 0:

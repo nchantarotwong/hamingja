@@ -330,6 +330,8 @@ therefore ships small local wrappers that produce one clean artifact for the
 agent to reason over:
 
 ```bash
+agent-rails commands                  # discover global + repo-local wrappers first
+agent-rails pr-create --title "..." --body-file pr.md
 agent-rails pr-merge 123              # gh merge + wait for MERGED + local cleanup
 agent-rails post-merge-cleanup topic  # checkout main, pull --ff-only, branch -d topic
 agent-rails post-merge-cleanup topic --force-delete  # for squash/rebase-cleaned branches
@@ -339,11 +341,17 @@ agent-rails ci-failures --run 456     # failed-run log summary for a run id
 agent-rails test-summary .pytest_output.log
 ```
 
-The rule for project instructions is simple: do not manually poll GitHub, CI,
-or saved test logs when a project wrapper exists. Use the wrapper before any
-manual recipe in project instructions, then spend judgment on the summarized
-result. Manual `gh`/`git` polling and cleanup steps are fallback behavior only
-when the wrapper is unavailable or fails loudly.
+The rule for project instructions is simple: run `agent-rails commands` before
+PR creation/merge/cleanup, CI status/failure extraction, or saved test-log
+summary tasks. Use the listed wrapper before any manual recipe, then spend
+judgment on the summarized result. Manual `gh`/`git` polling and cleanup steps
+are fallback behavior only when the wrapper is unavailable or fails loudly. If
+you use a raw fallback, say which wrapper was unavailable or failed.
+
+Codex sandbox note: GitHub wrappers usually need network and cleanup wrappers
+may need `.git` writes. The Codex hook cannot upgrade sandbox permissions from
+inside a subprocess, so it nudges before these wrappers run; rerun the wrapper
+with sandbox escalation instead of first letting it fail in the sandbox.
 
 ### Use from another repo
 

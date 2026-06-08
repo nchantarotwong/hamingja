@@ -237,15 +237,25 @@ def test_workflow_wrapper_blocks_timeout_prefixed_raw_gh_pr_checks():
     assert "agent-rails ci-status" in v.reason
 
 
-def test_workflow_wrapper_allows_quoted_pr_body_mentions():
+def test_workflow_wrapper_allows_quoted_mentions_in_non_gh_command():
     cand = ToolEvent(
-        "s", "Bash", "gh", PENDING, 0.0,
+        "s", "Bash", "printf", PENDING, 0.0,
         arg_preview=(
-            "gh pr create --body "
+            "printf %s "
             "'Validation: use gh pr checks through agent-rails ci-status'"
         ),
     )
     assert WorkflowWrapperDetector().evaluate([], cand, CFG) is None
+
+
+def test_workflow_wrapper_blocks_raw_gh_pr_create():
+    cand = ToolEvent(
+        "s", "Bash", "gh", PENDING, 0.0,
+        arg_preview="gh pr create --title T --body \"Summary\"",
+    )
+    v = WorkflowWrapperDetector().evaluate([], cand, CFG)
+    assert v is not None and v.action == BLOCK
+    assert "agent-rails pr-create" in v.reason
 
 
 def test_workflow_wrapper_blocks_raw_gh_pr_merge():
@@ -256,6 +266,52 @@ def test_workflow_wrapper_blocks_raw_gh_pr_merge():
     v = WorkflowWrapperDetector().evaluate([], cand, CFG)
     assert v is not None and v.action == BLOCK
     assert "agent-rails pr-merge" in v.reason
+
+
+def test_workflow_wrapper_blocks_raw_gh_run_watch():
+    cand = ToolEvent(
+        "s", "Bash", "gh", PENDING, 0.0,
+        arg_preview="gh run watch 456",
+    )
+    v = WorkflowWrapperDetector().evaluate([], cand, CFG)
+    assert v is not None and v.action == BLOCK
+    assert "agent-rails ci-failures" in v.reason
+
+
+def test_workflow_wrapper_blocks_manual_post_merge_cleanup():
+    cand = ToolEvent(
+        "s", "Bash", "git", PENDING, 0.0,
+        arg_preview="git checkout main && git pull --ff-only && git branch -d topic",
+    )
+    v = WorkflowWrapperDetector().evaluate([], cand, CFG)
+    assert v is not None and v.action == BLOCK
+    assert "agent-rails post-merge-cleanup" in v.reason
+
+
+def test_workflow_wrapper_allows_standalone_checkout_main():
+    cand = ToolEvent(
+        "s", "Bash", "git", PENDING, 0.0,
+        arg_preview="git checkout main",
+    )
+    assert WorkflowWrapperDetector().evaluate([], cand, CFG) is None
+
+
+def test_workflow_wrapper_blocks_branch_delete_cleanup():
+    cand = ToolEvent(
+        "s", "Bash", "git", PENDING, 0.0,
+        arg_preview="git branch -d topic",
+    )
+    v = WorkflowWrapperDetector().evaluate([], cand, CFG)
+    assert v is not None and v.action == BLOCK
+    assert "agent-rails post-merge-cleanup" in v.reason
+
+
+def test_workflow_wrapper_allows_explicit_raw_fallback_prefix():
+    cand = ToolEvent(
+        "s", "Bash", "gh", PENDING, 0.0,
+        arg_preview="AGENT_RAILS_ALLOW_RAW=1 gh pr checks 193 --json name,state,link",
+    )
+    assert WorkflowWrapperDetector().evaluate([], cand, CFG) is None
 
 
 def test_workflow_wrapper_allows_agent_rails_wrapper():

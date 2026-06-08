@@ -76,8 +76,8 @@ def test_default_includes_wrapper_usage_guidance():
     with tempfile.TemporaryDirectory() as d:
         rc, out, _ = _run(["init", "--dry-run"], cwd=d)
         assert rc == 0
-        assert "when project wrappers exist for PR merge/cleanup" in out
-        assert "use them before any manual recipe in project instructions" in out
+        assert "run `agent-rails commands`" in out
+        assert "use the listed wrapper if one exists" in out
         assert "fallback behavior only when the wrapper is unavailable or fails loudly" in out
 
 

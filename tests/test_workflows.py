@@ -19,6 +19,7 @@ from agent_rails.workflows import (  # noqa: E402
     ci_status,
     ci_failures,
     cleanup_after_merge,
+    create_pr,
     default_runner,
     merge_pr,
     summarize_pytest_log,
@@ -46,6 +47,47 @@ def _capture(fn, *args, **kwargs):
     with redirect_stdout(buf):
         rc = fn(*args, **kwargs)
     return rc, buf.getvalue()
+
+
+def test_create_pr_uses_body_file_and_prints_url():
+    with tempfile.TemporaryDirectory() as raw:
+        body = Path(raw) / "body.md"
+        body.write_text("Summary\n", encoding="utf-8")
+        runner = FakeRunner([
+            RunResult(["gh", "pr", "create"], 0, "https://github.test/pull/1\n", ""),
+        ])
+
+        rc, out = _capture(
+            create_pr,
+            title="Add wrapper",
+            body_file=body,
+            base="main",
+            head="topic",
+            draft=True,
+            runner=runner,
+        )
+
+    assert rc == 0
+    assert runner.calls == [[
+        "gh", "pr", "create",
+        "--title", "Add wrapper",
+        "--body-file", str(body),
+        "--base", "main",
+        "--head", "topic",
+        "--draft",
+    ]]
+    assert "ok: gh pr create --body-file" in out
+    assert "https://github.test/pull/1" in out
+
+
+def test_create_pr_requires_body_file():
+    rc, out = _capture(
+        create_pr,
+        title="Add wrapper",
+        body_file=Path("/definitely/missing/pr-body.md"),
+    )
+    assert rc == 1
+    assert "body file not found" in out
 
 
 def test_cleanup_after_merge_runs_checkout_pull_delete():
