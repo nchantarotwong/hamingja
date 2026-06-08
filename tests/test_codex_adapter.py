@@ -131,6 +131,44 @@ def test_codex_tripwire_observe_downgrades_block_to_context():
     assert "WOULD BE BLOCKED" in hso["additionalContext"]
 
 
+def test_codex_tripwire_nudges_agent_rails_wrapper_to_escalate():
+    _reset_state_env()
+    d = _proj()
+    payload = {
+        "hook_event_name": "PreToolUse",
+        "session_id": "codex-escalate-wrapper",
+        "cwd": d,
+        "tool_name": "Bash",
+        "tool_input": {"command": "agent-rails ci-status 12"},
+    }
+    p = _run_script(TRIPWIRE, payload)
+    assert p.returncode == 0
+    out = json.loads(p.stdout)
+    hso = out["hookSpecificOutput"]
+    assert hso["hookEventName"] == "PreToolUse"
+    assert "permissionDecision" not in hso
+    assert "sandbox_permissions" in hso["additionalContext"]
+    assert "agent-rails ci-status" in hso["additionalContext"]
+
+
+def test_codex_tripwire_skips_escalation_nudge_when_already_escalated():
+    _reset_state_env()
+    d = _proj()
+    payload = {
+        "hook_event_name": "PreToolUse",
+        "session_id": "codex-escalated-wrapper",
+        "cwd": d,
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": "agent-rails ci-status 12",
+            "sandbox_permissions": "require_escalated",
+        },
+    }
+    p = _run_script(TRIPWIRE, payload)
+    assert p.returncode == 0
+    assert p.stdout == ""
+
+
 def test_codex_bash_payload_variants_hash_distinct_commands():
     _reset_state_env()
     a = ToolEvent.record("codex-normalize", "Bash", {"parameters": {"cmd": "rg foo"}}, True)

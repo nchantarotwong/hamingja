@@ -4,8 +4,10 @@ A thin operator-facing CLI over the same core the hooks use. Subcommands:
 
     agent-rails report [--reset]   tuning summary: what fired, would-block rates
     agent-rails status [DIR]       resolved config for DIR (default: cwd)
+    agent-rails commands           list workflow wrappers available here
     agent-rails install [HARNESS]  install hooks; no arg = all detected harnesses
     agent-rails init [...]         compose a CLAUDE.md + AGENTS.md symlink from profiles
+    agent-rails pr-create ...      create a PR with a body file
     agent-rails pr-merge PR        merge + poll + local cleanup
     agent-rails ci-failures        summarize failed CI logs
     agent-rails test-summary LOG   summarize saved pytest output
@@ -44,7 +46,7 @@ from .profiles import (
     read_profile,
 )
 from .templates import ROOT_TEMPLATE, read_template
-from .workflows import ci_failures, ci_status, cleanup_after_merge, merge_pr, test_summary, timed_runner
+from .workflows import ci_failures, ci_status, cleanup_after_merge, create_pr, merge_pr, test_summary, timed_runner
 
 
 def _cmd_report(args: argparse.Namespace) -> int:
@@ -85,6 +87,69 @@ def _cmd_status(args: argparse.Namespace) -> int:
     env = os.environ.get("AGENT_RAILS_MODE")
     if env:
         print(f"\n(AGENT_RAILS_MODE={env} is set in your shell and overrides mode)")
+    return 0
+
+
+_GLOBAL_WRAPPERS = [
+    ("PR", "agent-rails pr-create --title <title> --body-file <path>"),
+    ("PR", "agent-rails pr-merge <pr>"),
+    ("PR", "agent-rails post-merge-cleanup [branch]"),
+    ("CI", "agent-rails ci-status [pr]"),
+    ("CI", "agent-rails ci-failures --pr <pr>"),
+    ("CI", "agent-rails ci-failures --run <run-id>"),
+    ("Tests", "agent-rails test-summary .pytest_output.log"),
+]
+
+_REPO_WRAPPER_NAMES = {
+    "pr-create": "PR",
+    "pr-merge": "PR",
+    "post-merge-cleanup": "PR",
+    "ci-status": "CI",
+    "ci-failures": "CI",
+    "test-summary": "Tests",
+}
+
+
+def _repo_wrapper_commands(root: Path) -> list[tuple[str, str]]:
+    """Return repo-local scripts/agent wrappers, if this repo provides any."""
+    out: list[tuple[str, str]] = []
+    scripts_dir = root / "scripts" / "agent"
+    try:
+        children = sorted(scripts_dir.iterdir())
+    except OSError:
+        return out
+    for path in children:
+        try:
+            if not path.is_file():
+                continue
+        except OSError:
+            continue
+        category = _REPO_WRAPPER_NAMES.get(path.name)
+        if category is None:
+            continue
+        out.append((category, f"scripts/agent/{path.name}"))
+    return out
+
+
+def _cmd_commands(args: argparse.Namespace) -> int:
+    wrappers = list(_GLOBAL_WRAPPERS)
+    wrappers.extend(_repo_wrapper_commands(Path.cwd()))
+    by_category: dict[str, list[str]] = {"PR": [], "CI": [], "Tests": []}
+    for category, command in wrappers:
+        by_category.setdefault(category, []).append(command)
+
+    print("Available agent-rails wrappers for this repo:")
+    for category in ("PR", "CI", "Tests"):
+        commands = by_category.get(category) or []
+        if not commands:
+            continue
+        print()
+        print(f"{category}:")
+        for command in commands:
+            print(f"  {command}")
+    print()
+    print("Use these before raw gh/git polling, PR cleanup, CI log scraping, or manual test-log parsing.")
+    print("Codex: if a wrapper fails because of sandboxed network or .git writes, rerun that wrapper with sandbox escalation.")
     return 0
 
 
@@ -154,6 +219,18 @@ def _cmd_install(args: argparse.Namespace) -> int:
         return _run_installs(list(_KNOWN_HARNESSES))
     actual = _HARNESS_ALIASES.get(harness, harness)
     return _run_installs([actual])
+
+
+def _cmd_pr_create(args: argparse.Namespace) -> int:
+    runner = timed_runner(args.command_timeout)
+    return create_pr(
+        title=args.title,
+        body_file=Path(args.body_file),
+        base=args.base,
+        head=args.head,
+        draft=args.draft,
+        runner=runner,
+    )
 
 
 def _cmd_pr_merge(args: argparse.Namespace) -> int:
@@ -681,6 +758,9 @@ def build_parser() -> argparse.ArgumentParser:
     st.add_argument("dir", nargs="?", help="directory to resolve (default: cwd)")
     st.set_defaults(func=_cmd_status)
 
+    cmds = sub.add_parser("commands", help="list workflow wrappers available in this repo")
+    cmds.set_defaults(func=_cmd_commands)
+
     ins = sub.add_parser(
         "install",
         help="install hooks for a harness (no arg = all detected; 'all' = both known)",
@@ -692,6 +772,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="harness to install for; omit to auto-detect ~/.claude and ~/.codex",
     )
     ins.set_defaults(func=_cmd_install)
+
+    prc = sub.add_parser(
+        "pr-create",
+        help="create a GitHub PR using --body-file to avoid shell quoting hazards",
+    )
+    prc.add_argument("--title", required=True, help="PR title")
+    prc.add_argument("--body-file", required=True, help="path to the PR body markdown file")
+    prc.add_argument("--base", default="main", help="base branch name (default: main)")
+    prc.add_argument("--head", help="head branch name (default: current branch per gh)")
+    prc.add_argument("--draft", action="store_true", help="create the PR as a draft")
+    prc.add_argument(
+        "--command-timeout",
+        type=float,
+        default=30,
+        help="seconds before one gh call times out (default: 30)",
+    )
+    prc.set_defaults(func=_cmd_pr_create)
 
     prm = sub.add_parser(
         "pr-merge",

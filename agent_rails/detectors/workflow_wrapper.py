@@ -7,6 +7,7 @@ high-signal raw commands that those wrappers replace.
 """
 from __future__ import annotations
 
+import os
 import shlex
 from typing import Optional
 
@@ -38,43 +39,78 @@ def _contains_sequence(tokens: list[str], sequence: tuple[str, ...]) -> bool:
     return False
 
 
+def _contains_git_cleanup(tokens: list[str]) -> bool:
+    deletes_branch = _contains_sequence(tokens, ("git", "branch", "-d"))
+    checkout_main = _contains_sequence(tokens, ("git", "checkout", "main"))
+    ff_pull = _contains_sequence(tokens, ("git", "pull", "--ff-only"))
+    return deletes_branch or (checkout_main and ff_pull)
+
+
+def _has_inline_allow(tokens: list[str]) -> bool:
+    return any(tok == "agent_rails_allow_raw=1" for tok in tokens[:3])
+
+
+def _wrapper_reason(wrapper: str, raw: str, cmd: str) -> str:
+    return (
+        f"Wrapper exists: use `{wrapper}` before raw `{raw}`. "
+        "If the wrapper is unavailable or fails loudly, rerun the raw fallback "
+        "with AGENT_RAILS_ALLOW_RAW=1 and say why. "
+        f"Candidate command: {cmd}"
+    )
+
+
 class WorkflowWrapperDetector(Detector):
     name = "workflow_wrapper"
 
     def evaluate(self, events, candidate, config) -> Optional[Verdict]:
         if not _is_bash(candidate):
             return None
+        if os.environ.get("AGENT_RAILS_ALLOW_RAW") == "1":
+            return None
 
         cmd = _preview(candidate)
         tokens = _tokens(cmd)
         if not tokens:
             return None
+        if _has_inline_allow(tokens):
+            return None
 
+        if _contains_sequence(tokens, ("gh", "pr", "create")):
+            return Verdict(
+                BLOCK,
+                self.name,
+                _wrapper_reason("agent-rails pr-create --title <title> --body-file <path>", "gh pr create", cmd),
+            )
         if _contains_sequence(tokens, ("gh", "pr", "checks")):
             return Verdict(
                 BLOCK,
                 self.name,
-                "Use `agent-rails ci-status <pr>` before raw `gh pr checks`; "
-                "the wrapper tracks the supported gh JSON schema and reports "
-                f"a concise status. Candidate command: {cmd}",
+                _wrapper_reason("agent-rails ci-status <pr>", "gh pr checks", cmd),
             )
         if _contains_sequence(tokens, ("gh", "pr", "merge")):
             return Verdict(
                 BLOCK,
                 self.name,
-                "Use `agent-rails pr-merge <pr>` before raw `gh pr merge`; "
-                "the wrapper polls merge state and runs post-merge cleanup. "
-                f"Candidate command: {cmd}",
+                _wrapper_reason("agent-rails pr-merge <pr>", "gh pr merge", cmd),
             )
         if (
             _contains_sequence(tokens, ("gh", "run", "list"))
             or _contains_sequence(tokens, ("gh", "run", "view"))
+            or _contains_sequence(tokens, ("gh", "run", "watch"))
         ):
             return Verdict(
                 BLOCK,
                 self.name,
-                "Use `agent-rails ci-failures --pr <pr>` or "
-                "`agent-rails ci-failures --run-id <id>` before raw `gh run` "
-                f"failure spelunking. Candidate command: {cmd}",
+                _wrapper_reason(
+                    "agent-rails ci-failures --pr <pr> or agent-rails ci-failures --run <run-id>",
+                    "gh run",
+                    cmd,
+                ),
+            )
+        if _contains_git_cleanup(tokens):
+            return Verdict(
+                BLOCK,
+                self.name,
+                _wrapper_reason("agent-rails post-merge-cleanup [branch]", "manual git cleanup", cmd),
             )
         return None
