@@ -81,6 +81,22 @@ def test_default_includes_wrapper_usage_guidance():
         assert "fallback behavior only when the wrapper is unavailable or fails loudly" in out
 
 
+def test_default_preserves_compaction_safety_invariants():
+    with tempfile.TemporaryDirectory() as d:
+        rc, out, _ = _run(["init", "--dry-run"], cwd=d)
+        assert rc == 0
+        assert "enter **review mode** immediately" in out
+        assert "No new tool calls that mutate files" in out
+        assert "**Original goal**" in out
+        assert "**Proposed next step**" in out
+        assert "**Hypothesis:**" in out
+        assert "**Evidence:**" in out
+        assert "**Falsification:**" in out
+        assert "Do **not** dump full session history" in out
+        assert "**Main agent**: implements" in out
+        assert "specific findings or honestly say \"No findings.\"" in out
+
+
 def test_default_writes_claude_md_and_symlinks_agents_md():
     with tempfile.TemporaryDirectory() as d:
         rc, out, _ = _run(["init"], cwd=d)
