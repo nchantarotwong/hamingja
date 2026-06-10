@@ -146,6 +146,128 @@ def test_merge_pr_polls_until_merged_then_cleans_up():
     assert ["git", "branch", "-D", "topic"] in runner.calls
 
 
+def test_merge_pr_retries_transient_initial_view_failure():
+    runner = FakeRunner([
+        RunResult(
+            ["gh", "pr", "view", "12", "--json", "headRefName,state,url"],
+            1,
+            "",
+            "HTTP 503 Service Unavailable",
+        ),
+        RunResult(
+            ["gh", "pr", "view", "12", "--json", "headRefName,state,url"],
+            0,
+            '{"headRefName":"topic","state":"OPEN"}',
+            "",
+        ),
+        RunResult(["gh", "pr", "merge", "12", "--squash", "--delete-branch"], 0, "", ""),
+        RunResult(["gh", "pr", "view", "12", "--json", "state,url"], 0, '{"state":"MERGED"}', ""),
+        RunResult(["git", "branch", "--show-current"], 0, "topic\n", ""),
+        RunResult(["git", "rev-parse", "--verify", "topic"], 0, "abc\n", ""),
+        RunResult(["git", "checkout", "main"], 0, "", ""),
+        RunResult(["git", "pull", "--ff-only", "origin", "main"], 0, "", ""),
+        RunResult(["git", "branch", "-D", "topic"], 0, "", ""),
+    ])
+
+    rc, out = _capture(merge_pr, "12", runner=runner, sleeper=lambda _s: None, poll_s=0)
+
+    assert rc == 0
+    assert runner.calls.count(["gh", "pr", "view", "12", "--json", "headRefName,state,url"]) == 2
+    assert "state: MERGED" in out
+
+
+def test_merge_pr_recovers_when_merge_command_fails_after_pr_merged():
+    runner = FakeRunner([
+        RunResult(
+            ["gh", "pr", "view", "12", "--json", "headRefName,state,url"],
+            0,
+            '{"headRefName":"topic","state":"OPEN"}',
+            "",
+        ),
+        RunResult(["gh", "pr", "merge", "12", "--squash", "--delete-branch"], 1, "", "HTTP 401 Unauthorized"),
+        RunResult(["gh", "pr", "view", "12", "--json", "state,url"], 0, '{"state":"MERGED"}', ""),
+        RunResult(["git", "branch", "--show-current"], 0, "topic\n", ""),
+        RunResult(["git", "rev-parse", "--verify", "topic"], 0, "abc\n", ""),
+        RunResult(["git", "checkout", "main"], 0, "", ""),
+        RunResult(["git", "pull", "--ff-only", "origin", "main"], 0, "", ""),
+        RunResult(["git", "branch", "-D", "topic"], 0, "", ""),
+    ])
+
+    rc, out = _capture(merge_pr, "12", runner=runner, sleeper=lambda _s: None, poll_s=0)
+
+    assert rc == 0
+    assert "merge command failed" in out
+    assert "recovered: PR is already MERGED" in out
+    assert "post-merge cleanup" in out
+    assert runner.calls.count(["gh", "pr", "view", "12", "--json", "state,url"]) == 1
+
+
+def test_merge_pr_fails_when_merge_command_error_did_not_merge_pr():
+    runner = FakeRunner([
+        RunResult(
+            ["gh", "pr", "view", "12", "--json", "headRefName,state,url"],
+            0,
+            '{"headRefName":"topic","state":"OPEN"}',
+            "",
+        ),
+        RunResult(["gh", "pr", "merge", "12", "--squash", "--delete-branch"], 1, "", "HTTP 401 Unauthorized"),
+        RunResult(["gh", "pr", "view", "12", "--json", "state,url"], 0, '{"state":"OPEN"}', ""),
+    ])
+
+    rc, out = _capture(merge_pr, "12", runner=runner, sleeper=lambda _s: None, poll_s=0)
+
+    assert rc == 1
+    assert "PR state after merge failure is OPEN" in out
+    assert "post-merge cleanup" not in out
+
+
+def test_merge_pr_retries_transient_poll_failure():
+    runner = FakeRunner([
+        RunResult(
+            ["gh", "pr", "view", "12", "--json", "headRefName,state,url"],
+            0,
+            '{"headRefName":"topic","state":"OPEN"}',
+            "",
+        ),
+        RunResult(["gh", "pr", "merge", "12", "--squash", "--delete-branch"], 0, "", ""),
+        RunResult(["gh", "pr", "view", "12", "--json", "state,url"], 1, "", "HTTP 502 Bad Gateway"),
+        RunResult(["gh", "pr", "view", "12", "--json", "state,url"], 0, '{"state":"MERGED"}', ""),
+        RunResult(["git", "branch", "--show-current"], 0, "topic\n", ""),
+        RunResult(["git", "rev-parse", "--verify", "topic"], 0, "abc\n", ""),
+        RunResult(["git", "checkout", "main"], 0, "", ""),
+        RunResult(["git", "pull", "--ff-only", "origin", "main"], 0, "", ""),
+        RunResult(["git", "branch", "-D", "topic"], 0, "", ""),
+    ])
+
+    rc, out = _capture(merge_pr, "12", runner=runner, sleeper=lambda _s: None, poll_s=0)
+
+    assert rc == 0
+    assert runner.calls.count(["gh", "pr", "view", "12", "--json", "state,url"]) == 2
+    assert "state: MERGED" in out
+
+
+def test_merge_pr_fails_when_post_merge_poll_never_confirms_state():
+    runner = FakeRunner([
+        RunResult(
+            ["gh", "pr", "view", "12", "--json", "headRefName,state,url"],
+            0,
+            '{"headRefName":"topic","state":"OPEN"}',
+            "",
+        ),
+        RunResult(["gh", "pr", "merge", "12", "--squash", "--delete-branch"], 0, "", ""),
+        RunResult(["gh", "pr", "view", "12", "--json", "state,url"], 1, "", "HTTP 502 Bad Gateway"),
+        RunResult(["gh", "pr", "view", "12", "--json", "state,url"], 1, "", "HTTP 502 Bad Gateway"),
+        RunResult(["gh", "pr", "view", "12", "--json", "state,url"], 1, "", "HTTP 502 Bad Gateway"),
+    ])
+
+    rc, out = _capture(merge_pr, "12", runner=runner, sleeper=lambda _s: None, poll_s=0)
+
+    assert rc == 1
+    assert runner.calls.count(["gh", "pr", "view", "12", "--json", "state,url"]) == 3
+    assert "could not poll PR state" in out
+    assert "post-merge cleanup" not in out
+
+
 def test_cleanup_after_squash_uses_force_delete_to_avoid_not_merged_failure():
     runner = FakeRunner([
         RunResult(["git", "branch", "--show-current"], 0, "topic\n", ""),
