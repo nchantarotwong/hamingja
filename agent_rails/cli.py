@@ -33,6 +33,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -92,9 +93,12 @@ def _cmd_status(args: argparse.Namespace) -> int:
 
 _GLOBAL_WRAPPERS = [
     ("PR", "agent-rails pr-create --title <title> --body-file <path>"),
+    ("PR", "agent-rails pr-create --title <title> --body -"),
     ("PR", "agent-rails pr-merge <pr>"),
+    ("PR", "agent-rails pr-merge <pr> --skip-ci-reason <reason>"),
     ("PR", "agent-rails post-merge-cleanup [branch]"),
     ("CI", "agent-rails ci-status [pr]"),
+    ("CI", "agent-rails ci-failures <pr>"),
     ("CI", "agent-rails ci-failures --pr <pr>"),
     ("CI", "agent-rails ci-failures --run <run-id>"),
     ("Tests", "agent-rails test-summary .pytest_output.log"),
@@ -154,6 +158,8 @@ def _cmd_commands(args: argparse.Namespace) -> int:
 
 
 _HARNESS_ALIASES = {"claude": "claude_code"}
+MAX_STDIN_BODY_BYTES = 1_000_000
+STDIN_BODY_CHUNK_CHARS = 64_000
 # All harnesses agent-rails knows how to install for. Order matters: when
 # installing multiple, we run them in this order so output is predictable.
 _KNOWN_HARNESSES = ["claude_code", "codex"]
@@ -223,6 +229,36 @@ def _cmd_install(args: argparse.Namespace) -> int:
 
 def _cmd_pr_create(args: argparse.Namespace) -> int:
     runner = timed_runner(args.command_timeout)
+    if args.body is not None and args.body != "-":
+        print("pr create")
+        print("- error: --body only supports '-' for stdin; use --body-file for saved content")
+        return 2
+    if args.body == "-":
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as body_file:
+            read_error = _copy_stdin_to_body_file(body_file)
+            body_path = Path(body_file.name)
+        if read_error is not None:
+            try:
+                body_path.unlink()
+            except OSError:
+                pass
+            print("pr create")
+            print(read_error)
+            return 2
+        try:
+            return create_pr(
+                title=args.title,
+                body_file=body_path,
+                base=args.base,
+                head=args.head,
+                draft=args.draft,
+                runner=runner,
+            )
+        finally:
+            try:
+                body_path.unlink()
+            except OSError:
+                pass
     return create_pr(
         title=args.title,
         body_file=Path(args.body_file),
@@ -243,6 +279,7 @@ def _cmd_pr_merge(args: argparse.Namespace) -> int:
         remote=args.remote,
         timeout_s=args.timeout,
         poll_s=args.poll,
+        skip_ci_reason=args.skip_ci_reason,
         runner=runner,
     )
 
@@ -264,7 +301,36 @@ def _cmd_ci_status(args: argparse.Namespace) -> int:
 
 
 def _cmd_ci_failures(args: argparse.Namespace) -> int:
-    return ci_failures(pr=args.pr, run_id=args.run, runner=timed_runner(args.command_timeout))
+    if _blank(args.pr) or _blank(args.pr_arg) or _blank(args.run):
+        print("ci failures")
+        print("- error: PR and run identifiers must not be empty")
+        return 2
+    source_count = len([value for value in (args.pr, args.pr_arg, args.run) if value is not None])
+    if source_count > 1:
+        print("ci failures")
+        print("- error: pass exactly one of positional PR, --pr, or --run")
+        return 2
+    return ci_failures(pr=args.pr or args.pr_arg, run_id=args.run, runner=timed_runner(args.command_timeout))
+
+
+def _blank(value) -> bool:
+    return isinstance(value, str) and not value.strip()
+
+
+def _copy_stdin_to_body_file(body_file) -> str | None:
+    total = 0
+    while True:
+        chunk = sys.stdin.read(STDIN_BODY_CHUNK_CHARS)
+        if chunk == "":
+            return None
+        try:
+            encoded = chunk.encode("utf-8")
+        except UnicodeEncodeError:
+            return "- error: stdin PR body must be valid UTF-8 text; use --body-file for binary or invalid text"
+        total += len(encoded)
+        if total > MAX_STDIN_BODY_BYTES:
+            return f"- error: stdin PR body exceeds {MAX_STDIN_BODY_BYTES} bytes; use --body-file for larger content"
+        body_file.write(chunk)
 
 
 def _cmd_test_summary(args: argparse.Namespace) -> int:
@@ -778,7 +844,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="create a GitHub PR using --body-file to avoid shell quoting hazards",
     )
     prc.add_argument("--title", required=True, help="PR title")
-    prc.add_argument("--body-file", required=True, help="path to the PR body markdown file")
+    pr_body = prc.add_mutually_exclusive_group(required=True)
+    pr_body.add_argument("--body-file", help="path to the PR body markdown file")
+    pr_body.add_argument("--body", help="PR body source; pass '-' to read from stdin")
     prc.add_argument("--base", default="main", help="base branch name (default: main)")
     prc.add_argument("--head", help="head branch name (default: current branch per gh)")
     prc.add_argument("--draft", action="store_true", help="create the PR as a draft")
@@ -802,6 +870,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="merge method (default: squash)",
     )
     prm.add_argument("--no-cleanup", action="store_true", help="skip local post-merge cleanup")
+    prm.add_argument("--skip-ci-reason", help="auditable reason for a local-validation-only merge")
     prm.add_argument("--main", default="main", help="main branch name (default: main)")
     prm.add_argument("--remote", default="origin", help="remote for fast-forward pull (default: origin)")
     prm.add_argument("--timeout", type=int, default=120, help="seconds to wait for MERGED (default: 120)")
@@ -846,6 +915,7 @@ def build_parser() -> argparse.ArgumentParser:
     cis.set_defaults(func=_cmd_ci_status)
 
     cif = sub.add_parser("ci-failures", help="extract pytest-style failures from a failed GitHub run")
+    cif.add_argument("pr_arg", nargs="?", help="PR number, URL, or branch shorthand for --pr")
     cif.add_argument("--run", help="GitHub Actions run id (default: latest run)")
     cif.add_argument("--pr", help="find the latest run for this PR's head branch")
     cif.add_argument(

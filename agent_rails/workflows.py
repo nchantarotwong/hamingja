@@ -40,6 +40,12 @@ TRANSIENT_GH_FAILURE_MARKERS = (
     "connection refused",
     "tls handshake timeout",
 )
+CI_BUDGET_EXHAUSTED_PATTERNS = (
+    re.compile(r"github actions (budget|quota|minutes|billing) (is |has been |was )?(exhausted|exceeded)", re.I),
+    re.compile(r"github actions .{0,80}(spending limit|included minutes) .{0,80}(reached|exhausted|exceeded)", re.I),
+    re.compile(r"(actions|workflow) minutes (are |have been |were )?(exhausted|exceeded)", re.I),
+    re.compile(r"(spending limit|included minutes) .{0,80}(reached|exhausted|exceeded) .{0,80}(github actions|actions)", re.I),
+)
 
 
 def default_runner(args: Sequence[str], *, timeout_s: float = DEFAULT_COMMAND_TIMEOUT_S) -> RunResult:
@@ -78,6 +84,11 @@ def _json_from(result: RunResult):
         return json.loads(result.stdout or "null")
     except Exception:
         return None
+
+
+def _json_object_from(result: RunResult) -> Optional[dict]:
+    value = _json_from(result)
+    return value if isinstance(value, dict) else None
 
 
 def _err(result: RunResult) -> str:
@@ -259,17 +270,24 @@ def merge_pr(
     remote: str = "origin",
     timeout_s: int = 120,
     poll_s: float = 5,
+    skip_ci_reason: Optional[str] = None,
     runner: Runner = default_runner,
     sleeper: Callable[[float], None] = time.sleep,
 ) -> int:
     """Merge a PR via gh, wait for MERGED, then optionally clean local state."""
     lines = [f"pr merge {pr}"]
+    if skip_ci_reason:
+        lines.append(f"- local validation override: {skip_ci_reason}")
     view = _gh_pr_view(pr, "headRefName,state,url", runner=runner, sleeper=sleeper, poll_s=poll_s)
     if view.returncode != 0:
         lines.append(f"- error: {_err(view)}")
         _print_lines(lines)
         return view.returncode or 1
-    info = _json_from(view) or {}
+    info = _json_object_from(view)
+    if not _valid_pr_view(info, require_state=True, require_head=True):
+        lines.append("- error: gh returned malformed PR data")
+        _print_lines(lines)
+        return 1
     branch = info.get("headRefName")
 
     flag = {"squash": "--squash", "merge": "--merge", "rebase": "--rebase"}.get(method)
@@ -283,7 +301,15 @@ def merge_pr(
     if merge.returncode != 0:
         lines.append(f"- warning: merge command failed: {_err(merge)}")
         recovered = _gh_pr_view(pr, "state,url", runner=runner, sleeper=sleeper, poll_s=poll_s)
-        state = (_json_from(recovered) or {}).get("state") if recovered.returncode == 0 else None
+        if recovered.returncode == 0:
+            recovered_info = _json_object_from(recovered)
+            if not _valid_pr_view(recovered_info, require_state=True):
+                lines.append("- error: gh returned malformed PR data")
+                _print_lines(lines)
+                return 1
+            state = recovered_info.get("state")
+        else:
+            state = None
         if state != "MERGED":
             lines.append(f"- error: PR state after merge failure is {state or 'unknown'}")
             _print_lines(lines)
@@ -302,7 +328,12 @@ def merge_pr(
             lines.append(f"- error: could not poll PR state: {_err(poll)}")
             _print_lines(lines)
             return poll.returncode or 1
-        state = (_json_from(poll) or {}).get("state")
+        poll_info = _json_object_from(poll)
+        if not _valid_pr_view(poll_info, require_state=True):
+            lines.append("- error: gh returned malformed PR data")
+            _print_lines(lines)
+            return 1
+        state = poll_info.get("state")
         if state == "MERGED":
             lines.append("- state: MERGED")
             break
@@ -343,6 +374,10 @@ def ci_status(pr: Optional[str] = None, *, runner: Runner = default_runner) -> i
         print("ci status")
         print("- error: gh returned unparseable check data")
         return 1
+    if not all(_valid_check_shape(check) for check in checks):
+        print("ci status")
+        print("- error: gh returned malformed check data")
+        return 1
     failing_states = {"FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"}
     terminal_states = {"SUCCESS", "FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "SKIPPED"}
     failing = [
@@ -353,14 +388,100 @@ def ci_status(pr: Optional[str] = None, *, runner: Runner = default_runner) -> i
         c for c in checks
         if c not in failing and (c.get("state") or "").upper() not in terminal_states
     ]
+    budget_blocked = _ci_budget_blocked(failing, runner=runner)
     print("ci status")
     print(f"- checks: {len(checks)} total, {len(failing)} failing, {len(pending)} pending")
+    if budget_blocked:
+        print("- blocked: actions_budget_exhausted")
     for c in failing[:20]:
         link = c.get("link") or ""
         suffix = f" ({link})" if link else ""
         status = c.get("conclusion") or c.get("state") or "?"
         print(f"- failed: {c.get('name', '?')} [{status}]" + suffix)
+    if budget_blocked:
+        return 2
     return 1 if failing else 0
+
+
+def _ci_budget_blocked(failing_checks: list[dict], *, runner: Runner) -> bool:
+    run_ids: list[str] = []
+    for check in failing_checks:
+        link = check.get("link")
+        if not isinstance(link, str):
+            continue
+        match = re.search(r"/actions/runs/(\d+)", link)
+        if match and match.group(1) not in run_ids:
+            run_ids.append(match.group(1))
+    for run_id in run_ids:
+        log = runner(["gh", "run", "view", run_id, "--log-failed"])
+        if log.returncode != 0:
+            continue
+        lines = f"{log.stdout}\n{log.stderr}".splitlines()
+        if any(_ci_budget_line_blocked(line) for line in lines):
+            return True
+    return False
+
+
+def _ci_budget_line_blocked(line: str) -> bool:
+    text = _log_message(line).strip()
+    if not text or text.startswith(("FAILED ", "ERROR ", "E   ")):
+        return False
+    return any(pattern.search(text) for pattern in CI_BUDGET_EXHAUSTED_PATTERNS)
+
+
+def _valid_check_shape(value) -> bool:
+    if not isinstance(value, dict):
+        return False
+    if not _non_empty_string(value.get("name")):
+        return False
+    if not _non_empty_string(value.get("state")):
+        return False
+    for field in ("name", "state", "conclusion", "link"):
+        item = value.get(field)
+        if item is not None and not isinstance(item, str):
+            return False
+    return True
+
+
+def _string_or_none(value) -> bool:
+    return value is None or isinstance(value, str)
+
+
+def _non_empty_string(value) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _valid_run_id(value) -> bool:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value > 0
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip()) > 0
+    return False
+
+
+def _valid_pr_view(
+    value: Optional[dict],
+    *,
+    require_state: bool = False,
+    require_head: bool = False,
+) -> bool:
+    if value is None:
+        return False
+    head = value.get("headRefName")
+    if require_head:
+        if not _non_empty_string(head):
+            return False
+    elif not _string_or_none(head):
+        return False
+    state = value.get("state")
+    if require_state:
+        if not _non_empty_string(state):
+            return False
+    elif not _string_or_none(state):
+        return False
+    if not _string_or_none(value.get("url")):
+        return False
+    return True
 
 
 def ci_failures(
@@ -377,7 +498,16 @@ def ci_failures(
                 print("ci failures")
                 print(f"- error: {_err(view)}")
                 return view.returncode or 1
-            branch = (_json_from(view) or {}).get("headRefName")
+            view_info = _json_object_from(view)
+            if view_info is None:
+                print("ci failures")
+                print("- error: gh returned malformed PR data")
+                return 1
+            branch = view_info.get("headRefName")
+            if not _non_empty_string(branch):
+                print("ci failures")
+                print("- error: gh returned malformed PR data")
+                return 1
         cmd = ["gh", "run", "list", "--limit", "1", "--json", "databaseId,conclusion,status,workflowName,url"]
         if branch:
             cmd.extend(["--branch", branch])
@@ -391,14 +521,34 @@ def ci_failures(
             print("ci failures")
             print("- no workflow runs found")
             return 0
-        run_id = str(runs[0].get("databaseId") or "")
-        title = runs[0].get("workflowName") or "workflow"
-        url = runs[0].get("url") or ""
+        run = runs[0]
+        if not isinstance(run, dict) or not _valid_run_id(run.get("databaseId")):
+            print("ci failures")
+            print("- error: gh returned malformed run data")
+            return 1
+        if not _string_or_none(run.get("workflowName")) or not _string_or_none(run.get("url")):
+            print("ci failures")
+            print("- error: gh returned malformed run data")
+            return 1
+        run_id = str(run.get("databaseId") or "")
+        title = run.get("workflowName") or "workflow"
+        url = run.get("url") or ""
         if branch:
             title = f"{title} ({branch})"
     else:
         meta = runner(["gh", "run", "view", run_id, "--json", "workflowName,url"])
-        info = _json_from(meta) if meta.returncode == 0 else {}
+        if meta.returncode == 0:
+            info = _json_object_from(meta)
+            if info is None:
+                print("ci failures")
+                print("- error: gh returned malformed run data")
+                return 1
+        else:
+            info = {}
+        if not _string_or_none(info.get("workflowName")) or not _string_or_none(info.get("url")):
+            print("ci failures")
+            print("- error: gh returned malformed run data")
+            return 1
         title = (info or {}).get("workflowName") or "workflow"
         url = (info or {}).get("url") or ""
 
