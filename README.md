@@ -351,6 +351,11 @@ judgment on the summarized result. Manual `gh`/`git` polling and cleanup steps
 are fallback behavior only when the wrapper is unavailable or fails loudly. If
 you use a raw fallback, say which wrapper was unavailable or failed.
 
+Wrappers treat external CLI output as untrusted even when the command exits 0.
+Malformed JSON shape, missing required fields, ambiguous PR/run selectors, and
+oversized stdin bodies produce concise wrapper errors instead of tracebacks or
+unscoped fallback behavior.
+
 Codex sandbox note: GitHub wrappers usually need network and cleanup wrappers
 may need `.git` writes. The Codex hook cannot upgrade sandbox permissions from
 inside a subprocess, so it nudges before these wrappers run; rerun the wrapper
