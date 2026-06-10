@@ -26,6 +26,20 @@ class RunResult:
 
 Runner = Callable[[Sequence[str]], RunResult]
 DEFAULT_COMMAND_TIMEOUT_S = 30.0
+TRANSIENT_GH_FAILURE_MARKERS = (
+    "http 401",
+    "http 502",
+    "http 503",
+    "http 504",
+    "bad gateway",
+    "service unavailable",
+    "gateway timeout",
+    "timed out",
+    "timeout",
+    "connection reset",
+    "connection refused",
+    "tls handshake timeout",
+)
 
 
 def default_runner(args: Sequence[str], *, timeout_s: float = DEFAULT_COMMAND_TIMEOUT_S) -> RunResult:
@@ -70,6 +84,34 @@ def _err(result: RunResult) -> str:
     msg = (result.stderr or result.stdout or "").strip()
     cmd = " ".join(result.args)
     return f"{cmd} failed ({result.returncode})" + (f": {msg}" if msg else "")
+
+
+def _is_transient_gh_failure(result: RunResult) -> bool:
+    if result.returncode == 124:
+        return True
+    text = f"{result.stderr}\n{result.stdout}".lower()
+    return any(marker in text for marker in TRANSIENT_GH_FAILURE_MARKERS)
+
+
+def _gh_pr_view(
+    pr: str,
+    fields: str,
+    *,
+    runner: Runner,
+    sleeper: Callable[[float], None],
+    poll_s: float,
+    attempts: int = 3,
+) -> RunResult:
+    attempts = max(1, attempts)
+    result = RunResult(["gh", "pr", "view", pr, "--json", fields], 1, "", "not run")
+    for index in range(attempts):
+        result = runner(["gh", "pr", "view", pr, "--json", fields])
+        if result.returncode == 0:
+            return result
+        if index == attempts - 1 or not _is_transient_gh_failure(result):
+            return result
+        sleeper(min(max(poll_s, 0), 1.0))
+    return result
 
 
 def _print_lines(lines: list[str]) -> None:
@@ -222,7 +264,7 @@ def merge_pr(
 ) -> int:
     """Merge a PR via gh, wait for MERGED, then optionally clean local state."""
     lines = [f"pr merge {pr}"]
-    view = runner(["gh", "pr", "view", pr, "--json", "headRefName,state,url"])
+    view = _gh_pr_view(pr, "headRefName,state,url", runner=runner, sleeper=sleeper, poll_s=poll_s)
     if view.returncode != 0:
         lines.append(f"- error: {_err(view)}")
         _print_lines(lines)
@@ -236,20 +278,30 @@ def merge_pr(
         _print_lines(lines)
         return 2
 
+    state = None
     merge = runner(["gh", "pr", "merge", pr, flag, "--delete-branch"])
     if merge.returncode != 0:
-        lines.append(f"- error: {_err(merge)}")
-        _print_lines(lines)
-        return merge.returncode or 1
-    lines.append("- merge command accepted")
+        lines.append(f"- warning: merge command failed: {_err(merge)}")
+        recovered = _gh_pr_view(pr, "state,url", runner=runner, sleeper=sleeper, poll_s=poll_s)
+        state = (_json_from(recovered) or {}).get("state") if recovered.returncode == 0 else None
+        if state != "MERGED":
+            lines.append(f"- error: PR state after merge failure is {state or 'unknown'}")
+            _print_lines(lines)
+            return merge.returncode or 1
+        lines.append("- recovered: PR is already MERGED")
+    else:
+        lines.append("- merge command accepted")
 
     deadline = time.monotonic() + max(0, timeout_s)
-    state = None
     while True:
-        poll = runner(["gh", "pr", "view", pr, "--json", "state,url"])
-        if poll.returncode != 0:
-            lines.append(f"- warning: could not poll PR state: {_err(poll)}")
+        if state == "MERGED":
+            lines.append("- state: MERGED")
             break
+        poll = _gh_pr_view(pr, "state,url", runner=runner, sleeper=sleeper, poll_s=poll_s)
+        if poll.returncode != 0:
+            lines.append(f"- error: could not poll PR state: {_err(poll)}")
+            _print_lines(lines)
+            return poll.returncode or 1
         state = (_json_from(poll) or {}).get("state")
         if state == "MERGED":
             lines.append("- state: MERGED")
