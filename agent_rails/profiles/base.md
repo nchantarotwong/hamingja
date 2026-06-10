@@ -26,5 +26,6 @@ Default working shape:
 - after a file/path-missing error, verify the path once with a directory listing or targeted find; do not retry the same missing target through cat, sed, head, or another spelling
 - repeated batch commands need an explicit cursor, budget, and checkpoint condition; report progress against that budget before continuing another lap
 - before PR creation/merge/cleanup, CI status/failure extraction, or saved test-log summary tasks, run `agent-rails commands`; use the listed wrapper if one exists. Raw `gh`, `git`, CI polling, or manual log parsing is fallback behavior only when the wrapper is unavailable or fails loudly. If you use a raw fallback, say which wrapper was unavailable or failed
+- when changing wrappers around external CLIs (`gh`, `git`, CI tools, package managers, test-log parsers), treat command output as untrusted even on exit 0: validate parsed JSON shape before use, including top-level type, item type, required fields, scalar field types, and missing-field behavior. Prefer concise wrapper errors over tracebacks. Add negative tests for classifier false positives, and keep direct test-file execution working when the repo supports it
 
 If you cannot articulate what new information the next action will produce, do not take it.

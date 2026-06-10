@@ -146,6 +146,33 @@ def test_merge_pr_polls_until_merged_then_cleans_up():
     assert ["git", "branch", "-D", "topic"] in runner.calls
 
 
+def test_merge_pr_prints_local_validation_override_reason():
+    runner = FakeRunner([
+        RunResult(
+            ["gh", "pr", "view", "12", "--json", "headRefName,state,url"],
+            0,
+            '{"headRefName":"topic","state":"OPEN"}',
+            "",
+        ),
+        RunResult(["gh", "pr", "merge", "12", "--squash", "--delete-branch"], 0, "", ""),
+        RunResult(["gh", "pr", "view", "12", "--json", "state,url"], 0, '{"state":"MERGED"}', ""),
+    ])
+
+    rc, out = _capture(
+        merge_pr,
+        "12",
+        cleanup=False,
+        skip_ci_reason="GHA budget exhausted; local suite passed.",
+        runner=runner,
+        sleeper=lambda _s: None,
+        poll_s=0,
+    )
+
+    assert rc == 0
+    assert "local validation override: GHA budget exhausted; local suite passed." in out
+    assert "state: MERGED" in out
+
+
 def test_merge_pr_retries_transient_initial_view_failure():
     runner = FakeRunner([
         RunResult(
@@ -176,6 +203,70 @@ def test_merge_pr_retries_transient_initial_view_failure():
     assert "state: MERGED" in out
 
 
+def test_merge_pr_rejects_malformed_initial_pr_view_without_crashing():
+    runner = FakeRunner([
+        RunResult(
+            ["gh", "pr", "view", "12", "--json", "headRefName,state,url"],
+            0,
+            "[]",
+            "",
+        ),
+    ])
+
+    rc, out = _capture(merge_pr, "12", runner=runner, sleeper=lambda _s: None, poll_s=0)
+
+    assert rc == 1
+    assert "malformed PR data" in out
+
+
+def test_merge_pr_rejects_non_string_head_ref_without_crashing():
+    runner = FakeRunner([
+        RunResult(
+            ["gh", "pr", "view", "12", "--json", "headRefName,state,url"],
+            0,
+            '{"headRefName":["topic"],"state":"OPEN","url":"https://pr"}',
+            "",
+        ),
+    ])
+
+    rc, out = _capture(merge_pr, "12", runner=runner, sleeper=lambda _s: None, poll_s=0)
+
+    assert rc == 1
+    assert "malformed PR data" in out
+
+
+def test_merge_pr_rejects_missing_head_ref_without_crashing():
+    runner = FakeRunner([
+        RunResult(
+            ["gh", "pr", "view", "12", "--json", "headRefName,state,url"],
+            0,
+            '{"state":"OPEN","url":"https://pr"}',
+            "",
+        ),
+    ])
+
+    rc, out = _capture(merge_pr, "12", runner=runner, sleeper=lambda _s: None, poll_s=0)
+
+    assert rc == 1
+    assert "malformed PR data" in out
+
+
+def test_merge_pr_rejects_missing_initial_state_without_crashing():
+    runner = FakeRunner([
+        RunResult(
+            ["gh", "pr", "view", "12", "--json", "headRefName,state,url"],
+            0,
+            '{"headRefName":"topic","url":"https://pr"}',
+            "",
+        ),
+    ])
+
+    rc, out = _capture(merge_pr, "12", runner=runner, sleeper=lambda _s: None, poll_s=0)
+
+    assert rc == 1
+    assert "malformed PR data" in out
+
+
 def test_merge_pr_recovers_when_merge_command_fails_after_pr_merged():
     runner = FakeRunner([
         RunResult(
@@ -200,6 +291,24 @@ def test_merge_pr_recovers_when_merge_command_fails_after_pr_merged():
     assert "recovered: PR is already MERGED" in out
     assert "post-merge cleanup" in out
     assert runner.calls.count(["gh", "pr", "view", "12", "--json", "state,url"]) == 1
+
+
+def test_merge_pr_rejects_malformed_recovery_pr_view_without_crashing():
+    runner = FakeRunner([
+        RunResult(
+            ["gh", "pr", "view", "12", "--json", "headRefName,state,url"],
+            0,
+            '{"headRefName":"topic","state":"OPEN"}',
+            "",
+        ),
+        RunResult(["gh", "pr", "merge", "12", "--squash", "--delete-branch"], 1, "", "HTTP 401 Unauthorized"),
+        RunResult(["gh", "pr", "view", "12", "--json", "state,url"], 0, "[]", ""),
+    ])
+
+    rc, out = _capture(merge_pr, "12", runner=runner, sleeper=lambda _s: None, poll_s=0)
+
+    assert rc == 1
+    assert "malformed PR data" in out
 
 
 def test_merge_pr_fails_when_merge_command_error_did_not_merge_pr():
@@ -244,6 +353,24 @@ def test_merge_pr_retries_transient_poll_failure():
     assert rc == 0
     assert runner.calls.count(["gh", "pr", "view", "12", "--json", "state,url"]) == 2
     assert "state: MERGED" in out
+
+
+def test_merge_pr_rejects_malformed_poll_pr_view_without_crashing():
+    runner = FakeRunner([
+        RunResult(
+            ["gh", "pr", "view", "12", "--json", "headRefName,state,url"],
+            0,
+            '{"headRefName":"topic","state":"OPEN"}',
+            "",
+        ),
+        RunResult(["gh", "pr", "merge", "12", "--squash", "--delete-branch"], 0, "", ""),
+        RunResult(["gh", "pr", "view", "12", "--json", "state,url"], 0, "[]", ""),
+    ])
+
+    rc, out = _capture(merge_pr, "12", runner=runner, sleeper=lambda _s: None, poll_s=0)
+
+    assert rc == 1
+    assert "malformed PR data" in out
 
 
 def test_merge_pr_fails_when_post_merge_poll_never_confirms_state():
@@ -324,6 +451,212 @@ def test_ci_status_summarizes_failing_checks():
     assert "https://ci/job" in out
 
 
+def test_ci_status_rejects_malformed_check_items_without_crashing():
+    runner = FakeRunner([
+        RunResult(
+            ["gh", "pr", "checks", "--json", "name,state,link"],
+            0,
+            "[null]",
+            "",
+        )
+    ])
+
+    rc, out = _capture(ci_status, runner=runner)
+
+    assert rc == 1
+    assert "malformed check data" in out
+
+
+def test_ci_status_rejects_malformed_check_field_types_without_crashing():
+    runner = FakeRunner([
+        RunResult(
+            ["gh", "pr", "checks", "--json", "name,state,link"],
+            0,
+            '[{"name":"test-python","state":1,"link":""}]',
+            "",
+        )
+    ])
+
+    rc, out = _capture(ci_status, runner=runner)
+
+    assert rc == 1
+    assert "malformed check data" in out
+
+
+def test_ci_status_rejects_missing_required_check_fields_without_crashing():
+    runner = FakeRunner([
+        RunResult(
+            ["gh", "pr", "checks", "--json", "name,state,link"],
+            0,
+            "[{}]",
+            "",
+        )
+    ])
+
+    rc, out = _capture(ci_status, runner=runner)
+
+    assert rc == 1
+    assert "malformed check data" in out
+
+
+def test_ci_status_classifies_actions_budget_exhaustion_from_failed_run_log():
+    runner = FakeRunner([
+        RunResult(
+            ["gh", "pr", "checks", "--json", "name,state,link"],
+            0,
+            '[{"name":"test-python","state":"FAILURE","link":"https://github.test/actions/runs/456/job/789"}]',
+            "",
+        ),
+        RunResult(
+            ["gh", "run", "view", "456", "--log-failed"],
+            0,
+            "GitHub Actions budget exhausted for this account.\n",
+            "",
+        ),
+    ])
+
+    rc, out = _capture(ci_status, runner=runner)
+
+    assert rc == 2
+    assert "blocked: actions_budget_exhausted" in out
+    assert runner.calls[-1] == ["gh", "run", "view", "456", "--log-failed"]
+
+
+def test_ci_status_scans_all_failed_action_runs_for_budget_exhaustion():
+    checks = ",".join(
+        f'{{"name":"test-{run_id}","state":"FAILURE","link":"https://github.test/actions/runs/{run_id}"}}'
+        for run_id in (101, 102, 103, 104)
+    )
+    runner = FakeRunner([
+        RunResult(
+            ["gh", "pr", "checks", "--json", "name,state,link"],
+            0,
+            f"[{checks}]",
+            "",
+        ),
+        RunResult(["gh", "run", "view", "101", "--log-failed"], 0, "FAILED tests/a.py::test_a\n", ""),
+        RunResult(["gh", "run", "view", "102", "--log-failed"], 0, "FAILED tests/b.py::test_b\n", ""),
+        RunResult(["gh", "run", "view", "103", "--log-failed"], 0, "FAILED tests/c.py::test_c\n", ""),
+        RunResult(
+            ["gh", "run", "view", "104", "--log-failed"],
+            0,
+            "GitHub Actions quota has been exhausted.\n",
+            "",
+        ),
+    ])
+
+    rc, out = _capture(ci_status, runner=runner)
+
+    assert rc == 2
+    assert "blocked: actions_budget_exhausted" in out
+    assert runner.calls[-1] == ["gh", "run", "view", "104", "--log-failed"]
+
+
+def test_ci_status_ignores_failed_log_fetch_when_classifying_budget_exhaustion():
+    runner = FakeRunner([
+        RunResult(
+            ["gh", "pr", "checks", "--json", "name,state,link"],
+            0,
+            '[{"name":"test-python","state":"FAILURE","link":"https://github.test/actions/runs/456/job/789"}]',
+            "",
+        ),
+        RunResult(["gh", "run", "view", "456", "--log-failed"], 1, "", "not found"),
+    ])
+
+    rc, out = _capture(ci_status, runner=runner)
+
+    assert rc == 1
+    assert "blocked: actions_budget_exhausted" not in out
+
+
+def test_ci_status_does_not_classify_generic_budget_test_failure_as_actions_budget_exhaustion():
+    runner = FakeRunner([
+        RunResult(
+            ["gh", "pr", "checks", "--json", "name,state,link"],
+            0,
+            '[{"name":"test-python","state":"FAILURE","link":"https://github.test/actions/runs/456/job/789"}]',
+            "",
+        ),
+        RunResult(
+            ["gh", "run", "view", "456", "--log-failed"],
+            0,
+            "FAILED tests/test_budget.py::test_retry_budget - AssertionError: retry budget exhausted\n",
+            "",
+        ),
+    ])
+
+    rc, out = _capture(ci_status, runner=runner)
+
+    assert rc == 1
+    assert "blocked: actions_budget_exhausted" not in out
+
+
+def test_ci_status_does_not_classify_included_minutes_phrase_without_blocking_verb():
+    runner = FakeRunner([
+        RunResult(
+            ["gh", "pr", "checks", "--json", "name,state,link"],
+            0,
+            '[{"name":"test-python","state":"FAILURE","link":"https://github.test/actions/runs/456/job/789"}]',
+            "",
+        ),
+        RunResult(
+            ["gh", "run", "view", "456", "--log-failed"],
+            0,
+            "FAILED tests/test_copy.py::test_text - AssertionError: included minutes for GitHub Actions docs changed\n",
+            "",
+        ),
+    ])
+
+    rc, out = _capture(ci_status, runner=runner)
+
+    assert rc == 1
+    assert "blocked: actions_budget_exhausted" not in out
+
+
+def test_ci_status_does_not_classify_pytest_copy_failure_as_actions_budget_exhaustion():
+    runner = FakeRunner([
+        RunResult(
+            ["gh", "pr", "checks", "--json", "name,state,link"],
+            0,
+            '[{"name":"test-python","state":"FAILURE","link":"https://github.test/actions/runs/456/job/789"}]',
+            "",
+        ),
+        RunResult(
+            ["gh", "run", "view", "456", "--log-failed"],
+            0,
+            "FAILED tests/test_docs.py::test_copy - AssertionError: GitHub Actions budget exhausted copy changed\n",
+            "",
+        ),
+    ])
+
+    rc, out = _capture(ci_status, runner=runner)
+
+    assert rc == 1
+    assert "blocked: actions_budget_exhausted" not in out
+
+
+def test_ci_status_does_not_classify_retry_budget_limit_text_as_actions_budget_exhaustion():
+    runner = FakeRunner([
+        RunResult(
+            ["gh", "pr", "checks", "--json", "name,state,link"],
+            0,
+            '[{"name":"test-python","state":"FAILURE","link":"https://github.test/actions/runs/456/job/789"}]',
+            "",
+        ),
+        RunResult(
+            ["gh", "run", "view", "456", "--log-failed"],
+            0,
+            "FAILED tests/test_policy.py::test_copy - AssertionError: retry budget limit for GitHub Actions changed\n",
+            "",
+        ),
+    ])
+
+    rc, out = _capture(ci_status, runner=runner)
+
+    assert rc == 1
+    assert "blocked: actions_budget_exhausted" not in out
+
+
 def test_ci_status_counts_pending_without_double_counting_failures():
     runner = FakeRunner([
         RunResult(
@@ -371,6 +704,128 @@ def test_ci_failures_pr_scopes_to_head_branch():
     assert "failing test: tests/foo_test.py::test_bar" in out
 
 
+def test_ci_failures_rejects_malformed_pr_view_without_crashing():
+    runner = FakeRunner([
+        RunResult(["gh", "pr", "view", "12", "--json", "headRefName"], 0, "[]", ""),
+    ])
+
+    rc, out = _capture(ci_failures, pr="12", runner=runner)
+
+    assert rc == 1
+    assert "malformed PR data" in out
+
+
+def test_ci_failures_rejects_non_string_head_ref_without_crashing():
+    runner = FakeRunner([
+        RunResult(["gh", "pr", "view", "12", "--json", "headRefName"], 0, '{"headRefName":[]}', ""),
+    ])
+
+    rc, out = _capture(ci_failures, pr="12", runner=runner)
+
+    assert rc == 1
+    assert "malformed PR data" in out
+
+
+def test_ci_failures_rejects_missing_head_ref_without_unscoped_run_lookup():
+    runner = FakeRunner([
+        RunResult(["gh", "pr", "view", "12", "--json", "headRefName"], 0, "{}", ""),
+    ])
+
+    rc, out = _capture(ci_failures, pr="12", runner=runner)
+
+    assert rc == 1
+    assert "malformed PR data" in out
+    assert len(runner.calls) == 1
+
+
+def test_ci_failures_rejects_empty_head_ref_without_unscoped_run_lookup():
+    runner = FakeRunner([
+        RunResult(["gh", "pr", "view", "12", "--json", "headRefName"], 0, '{"headRefName":""}', ""),
+    ])
+
+    rc, out = _capture(ci_failures, pr="12", runner=runner)
+
+    assert rc == 1
+    assert "malformed PR data" in out
+    assert len(runner.calls) == 1
+
+
+def test_ci_failures_rejects_malformed_run_list_without_crashing():
+    runner = FakeRunner([
+        RunResult(
+            [
+                "gh", "run", "list", "--limit", "1", "--json",
+                "databaseId,conclusion,status,workflowName,url",
+            ],
+            0,
+            "[null]",
+            "",
+        ),
+    ])
+
+    rc, out = _capture(ci_failures, runner=runner)
+
+    assert rc == 1
+    assert "malformed run data" in out
+
+
+def test_ci_failures_rejects_missing_run_id_without_crashing():
+    runner = FakeRunner([
+        RunResult(
+            [
+                "gh", "run", "list", "--limit", "1", "--json",
+                "databaseId,conclusion,status,workflowName,url",
+            ],
+            0,
+            '[{"workflowName":"tests","url":"https://ci/run"}]',
+            "",
+        ),
+    ])
+
+    rc, out = _capture(ci_failures, runner=runner)
+
+    assert rc == 1
+    assert "malformed run data" in out
+
+
+def test_ci_failures_rejects_non_numeric_run_id_without_crashing():
+    runner = FakeRunner([
+        RunResult(
+            [
+                "gh", "run", "list", "--limit", "1", "--json",
+                "databaseId,conclusion,status,workflowName,url",
+            ],
+            0,
+            '[{"databaseId":"not-a-run-id","workflowName":"tests","url":"https://ci/run"}]',
+            "",
+        ),
+    ])
+
+    rc, out = _capture(ci_failures, runner=runner)
+
+    assert rc == 1
+    assert "malformed run data" in out
+
+
+def test_ci_failures_rejects_non_scalar_run_fields_without_crashing():
+    runner = FakeRunner([
+        RunResult(
+            [
+                "gh", "run", "list", "--limit", "1", "--json",
+                "databaseId,conclusion,status,workflowName,url",
+            ],
+            0,
+            '[{"databaseId":456,"workflowName":[],"url":"https://ci/run"}]',
+            "",
+        ),
+    ])
+
+    rc, out = _capture(ci_failures, runner=runner)
+
+    assert rc == 1
+    assert "malformed run data" in out
+
+
 def test_ci_failures_run_id_fetches_workflow_context():
     runner = FakeRunner([
         RunResult(
@@ -389,6 +844,38 @@ def test_ci_failures_run_id_fetches_workflow_context():
     rc, out = _capture(ci_failures, run_id="456", runner=runner)
     assert rc == 1
     assert "tests #456 (https://ci/run)" in out
+
+
+def test_ci_failures_run_id_rejects_malformed_metadata_without_crashing():
+    runner = FakeRunner([
+        RunResult(
+            ["gh", "run", "view", "456", "--json", "workflowName,url"],
+            0,
+            '{"workflowName":[],"url":[]}',
+            "",
+        ),
+    ])
+
+    rc, out = _capture(ci_failures, run_id="456", runner=runner)
+
+    assert rc == 1
+    assert "malformed run data" in out
+
+
+def test_ci_failures_run_id_rejects_non_object_metadata_without_crashing():
+    runner = FakeRunner([
+        RunResult(
+            ["gh", "run", "view", "456", "--json", "workflowName,url"],
+            0,
+            "[]",
+            "",
+        ),
+    ])
+
+    rc, out = _capture(ci_failures, run_id="456", runner=runner)
+
+    assert rc == 1
+    assert "malformed run data" in out
 
 
 def test_default_runner_times_out():

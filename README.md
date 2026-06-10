@@ -332,10 +332,13 @@ agent to reason over:
 ```bash
 agent-rails commands                  # discover global + repo-local wrappers first
 agent-rails pr-create --title "..." --body-file pr.md
+agent-rails pr-create --title "..." --body - < pr.md  # stdin body, temp file, then gh --body-file
 agent-rails pr-merge 123              # gh merge + wait for MERGED + local cleanup
+agent-rails pr-merge 123 --skip-ci-reason "GHA budget exhausted; local suite passed"
 agent-rails post-merge-cleanup topic  # checkout main, pull --ff-only, branch -d topic
 agent-rails post-merge-cleanup topic --force-delete  # for squash/rebase-cleaned branches
-agent-rails ci-status 123             # compact PR check summary
+agent-rails ci-status 123             # compact PR check summary; flags Actions budget/quota blocks
+agent-rails ci-failures 123           # shorthand for --pr 123
 agent-rails ci-failures --pr 123      # failed-run log summary for the PR branch
 agent-rails ci-failures --run 456     # failed-run log summary for a run id
 agent-rails test-summary .pytest_output.log
@@ -347,6 +350,11 @@ summary tasks. Use the listed wrapper before any manual recipe, then spend
 judgment on the summarized result. Manual `gh`/`git` polling and cleanup steps
 are fallback behavior only when the wrapper is unavailable or fails loudly. If
 you use a raw fallback, say which wrapper was unavailable or failed.
+
+Wrappers treat external CLI output as untrusted even when the command exits 0.
+Malformed JSON shape, missing required fields, ambiguous PR/run selectors, and
+oversized stdin bodies produce concise wrapper errors instead of tracebacks or
+unscoped fallback behavior.
 
 Codex sandbox note: GitHub wrappers usually need network and cleanup wrappers
 may need `.git` writes. The Codex hook cannot upgrade sandbox permissions from
