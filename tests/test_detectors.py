@@ -258,6 +258,17 @@ def test_workflow_wrapper_blocks_raw_gh_pr_create():
     assert "agent-rails pr-create" in v.reason
 
 
+def test_workflow_wrapper_blocks_codex_exec_command_raw_gh_pr_create():
+    cand = ToolEvent.candidate(
+        "s",
+        "functions.exec_command",
+        {"cmd": "gh pr create --title T --body-file /tmp/body.md"},
+    )
+    v = WorkflowWrapperDetector().evaluate([], cand, CFG)
+    assert v is not None and v.action == BLOCK
+    assert "agent-rails pr-create" in v.reason
+
+
 def test_workflow_wrapper_blocks_raw_gh_pr_merge():
     cand = ToolEvent(
         "s", "Bash", "gh", PENDING, 0.0,

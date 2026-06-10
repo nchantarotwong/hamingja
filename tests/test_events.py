@@ -21,6 +21,18 @@ def test_bash_payload_variants_normalize_to_command_identity():
     assert b.arg_preview == "rg bar"
 
 
+def test_codex_exec_command_normalizes_to_shell_identity():
+    event = ToolEvent.candidate(
+        "s",
+        "functions.exec_command",
+        {"cmd": "gh pr create --title T --body-file /tmp/body.md"},
+    )
+
+    assert event.args_complete is True
+    assert event.arg_kind == "shell"
+    assert event.arg_preview == "gh pr create --title T --body-file /tmp/body.md"
+
+
 def test_missing_bash_command_is_incomplete():
     e = ToolEvent.candidate("s", "Bash", {})
     assert e.args_complete is False

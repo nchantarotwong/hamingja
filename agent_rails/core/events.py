@@ -103,6 +103,11 @@ def _tool_lower(tool: str) -> str:
     return str(tool or "").strip().lower()
 
 
+def _is_shell_tool(tool: str) -> bool:
+    tl = _tool_lower(tool)
+    return tl in {"bash", "functions.exec_command", "exec_command"}
+
+
 def _dig_path(obj: Any, path: tuple[str, ...]) -> Any:
     cur = obj
     for key in path:
@@ -142,7 +147,7 @@ def normalize_tool_args(tool: str, args: Any) -> NormalizedArgs:
     call to the same `{}` hash and become enforceable repetition.
     """
     tl = _tool_lower(tool)
-    if tl == "bash":
+    if _is_shell_tool(tool):
         command = _first_str(args, (
             ("command",), ("cmd",),
             ("parameters", "command"), ("parameters", "cmd"),
