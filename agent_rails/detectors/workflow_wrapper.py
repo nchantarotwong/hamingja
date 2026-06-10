@@ -18,8 +18,13 @@ def _preview(candidate) -> str:
     return (getattr(candidate, "arg_preview", "") or "").strip()
 
 
-def _is_bash(candidate) -> bool:
-    return bool(candidate is not None and getattr(candidate, "tool", "") == "Bash")
+def _is_shell(candidate) -> bool:
+    if candidate is None:
+        return False
+    return (
+        str(getattr(candidate, "arg_kind", "")).startswith("shell")
+        or getattr(candidate, "tool", "") == "Bash"
+    )
 
 
 def _tokens(cmd: str) -> list[str]:
@@ -63,7 +68,7 @@ class WorkflowWrapperDetector(Detector):
     name = "workflow_wrapper"
 
     def evaluate(self, events, candidate, config) -> Optional[Verdict]:
-        if not _is_bash(candidate):
+        if not _is_shell(candidate):
             return None
         if os.environ.get("AGENT_RAILS_ALLOW_RAW") == "1":
             return None
