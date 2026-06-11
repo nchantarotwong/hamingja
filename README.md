@@ -344,6 +344,12 @@ agent-rails ci-failures --run 456     # failed-run log summary for a run id
 agent-rails test-summary .pytest_output.log
 ```
 
+`pr-create` checks the current branch when `--head` is omitted. If the branch
+has no upstream, it runs `git push -u origin HEAD:refs/heads/<branch>` before
+calling `gh pr create`; use `--remote <name>` to push somewhere other than
+`origin`. It refuses detached HEAD and the base branch so a PR is not
+accidentally opened from `main`.
+
 The rule for project instructions is simple: run `agent-rails commands` before
 PR creation/merge/cleanup, CI status/failure extraction, or saved test-log
 summary tasks. Use the listed wrapper before any manual recipe, then spend

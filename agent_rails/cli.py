@@ -251,6 +251,7 @@ def _cmd_pr_create(args: argparse.Namespace) -> int:
                 body_file=body_path,
                 base=args.base,
                 head=args.head,
+                remote=args.remote,
                 draft=args.draft,
                 runner=runner,
             )
@@ -264,6 +265,7 @@ def _cmd_pr_create(args: argparse.Namespace) -> int:
         body_file=Path(args.body_file),
         base=args.base,
         head=args.head,
+        remote=args.remote,
         draft=args.draft,
         runner=runner,
     )
@@ -849,6 +851,7 @@ def build_parser() -> argparse.ArgumentParser:
     pr_body.add_argument("--body", help="PR body source; pass '-' to read from stdin")
     prc.add_argument("--base", default="main", help="base branch name (default: main)")
     prc.add_argument("--head", help="head branch name (default: current branch per gh)")
+    prc.add_argument("--remote", default="origin", help="remote to push the current branch when no upstream exists (default: origin)")
     prc.add_argument("--draft", action="store_true", help="create the PR as a draft")
     prc.add_argument(
         "--command-timeout",

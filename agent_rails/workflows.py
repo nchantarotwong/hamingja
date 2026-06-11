@@ -135,6 +135,7 @@ def create_pr(
     body_file: Path,
     base: str = "main",
     head: Optional[str] = None,
+    remote: str = "origin",
     draft: bool = False,
     runner: Runner = default_runner,
 ) -> int:
@@ -153,6 +154,30 @@ def create_pr(
         lines.append(f"- error: could not inspect body file {body_file}: {e}")
         _print_lines(lines)
         return 1
+
+    if not head:
+        branch = _git_current_branch(runner)
+        if not branch:
+            lines.append("- error: could not determine current branch; pass --head")
+            _print_lines(lines)
+            return 1
+        if branch == base:
+            lines.append(f"- error: refusing to create a PR from base branch {base}; checkout a topic branch or pass --head")
+            _print_lines(lines)
+            return 1
+        if not _valid_remote_name(remote):
+            lines.append("- error: --remote must be a non-option remote name")
+            _print_lines(lines)
+            return 2
+        upstream = runner(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
+        if upstream.returncode != 0:
+            refspec = f"HEAD:refs/heads/{branch}"
+            pushed = runner(["git", "push", "-u", remote, refspec])
+            if pushed.returncode != 0:
+                lines.append(f"- error: {_err(pushed)}")
+                _print_lines(lines)
+                return pushed.returncode or 1
+            lines.append(f"- ok: git push -u {remote} {refspec}")
 
     cmd = [
         "gh",
@@ -188,6 +213,10 @@ def _git_current_branch(runner: Runner) -> Optional[str]:
         return None
     branch = res.stdout.strip()
     return branch or None
+
+
+def _valid_remote_name(remote: str) -> bool:
+    return bool(remote.strip()) and not remote.startswith("-")
 
 
 def _git_branch_exists(branch: str, runner: Runner) -> bool:
