@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Optional
 
 from .base import BLOCK, NUDGE, Detector, Verdict
-from ..core.events import ERROR
+from ..core.events import BLOCKED, ERROR
 
 
 def _ordinal(n: int) -> str:
@@ -27,8 +27,18 @@ def _output_hashes(events) -> list[str]:
     return [e.output_hash for e in events if getattr(e, "output_hash", "")]
 
 
-def _all_failures(events) -> bool:
-    return bool(events) and all(e.status == ERROR for e in events)
+def _failure_or_blocked_evidence(events, min_errors: int) -> bool:
+    trailing_run = []
+    for event in reversed(events):
+        if event.status not in {ERROR, BLOCKED}:
+            break
+        trailing_run.append(event)
+    blocked_count = len([e for e in trailing_run if e.status == BLOCKED])
+    error_count = len([e for e in trailing_run if e.status == ERROR])
+    return (
+        bool(trailing_run)
+        and (error_count >= min_errors or blocked_count > 0)
+    )
 
 
 def _is_read_only_shell(event) -> bool:
@@ -83,11 +93,24 @@ class RepetitionDetector(Detector):
         output_hashes = _output_hashes(matches)
         min_evidence = max(2, nudge_at - 1)
         repeated_output = len(output_hashes) >= min_evidence and len(set(output_hashes)) == 1
-        repeated_failures = _all_failures(matches)
+        repeated_failures = _failure_or_blocked_evidence(matches, min_evidence)
         strong_evidence = repeated_output or repeated_failures
+
+        if not strong_evidence and _is_read_only_shell(target):
+            return None
 
         if not strong_evidence and _is_low_noise_shell(target) and count < block_at:
             return None
+
+        if count >= block_at and repeated_output and _is_read_only_shell(target):
+            return Verdict(
+                NUDGE,
+                self.name,
+                f"This is the {nth} repeated read-only shell command: {preview}, "
+                f"with identical arguments and the same output. If you are "
+                f"still learning something new, continue; if the output is "
+                f"unchanged, switch to a different diagnostic.",
+            )
 
         if count >= block_at and strong_evidence:
             reason = "the same output" if repeated_output else "the same failure"
@@ -99,15 +122,6 @@ class RepetitionDetector(Detector):
                 f"that call is the signature of a stuck loop, not progress. "
                 f"Stop. State the one symptom you're seeing and your single "
                 f"current hypothesis, then make ONE different move.",
-            )
-
-        if count >= block_at and _is_read_only_shell(target):
-            return Verdict(
-                NUDGE,
-                self.name,
-                f"This is the {nth} repeated read-only shell command: {preview}. "
-                f"If you are still learning something new, continue; if the "
-                f"output is unchanged, switch to a different diagnostic.",
             )
 
         if count >= block_at:
