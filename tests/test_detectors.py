@@ -134,11 +134,63 @@ def test_repetition_build_repeat_is_quiet_before_block_threshold():
     assert RepetitionDetector().evaluate(hist, cand, CFG) is None
 
 
-def test_repetition_read_only_shell_repeat_nudges_not_blocks_without_output_evidence():
+def test_repetition_read_only_shell_repeat_is_quiet_without_output_evidence():
     hist = [ToolEvent("s", "Bash", "a", OK, 0.0, arg_kind="shell:read-only", arg_preview="rg foo") for _ in range(3)]
     cand = ToolEvent("s", "Bash", "a", PENDING, 0.0, arg_kind="shell:read-only", arg_preview="rg foo")
+    assert RepetitionDetector().evaluate(hist, cand, CFG) is None
+
+
+def test_repetition_git_status_repeat_is_quiet_without_output_evidence():
+    hist = [
+        ToolEvent("s", "Bash", "git-status", OK, 0.0, arg_kind="shell:read-only", arg_preview="git status -sb")
+        for _ in range(3)
+    ]
+    cand = ToolEvent("s", "Bash", "git-status", PENDING, 0.0, arg_kind="shell:read-only", arg_preview="git status -sb")
+    assert RepetitionDetector().evaluate(hist, cand, CFG) is None
+
+
+def test_repetition_read_only_shell_repeat_with_identical_output_still_nudges():
+    hist = [
+        ToolEvent("s", "Bash", "git-status", OK, 0.0, arg_kind="shell:read-only", arg_preview="git status -sb", output_hash="same")
+        for _ in range(3)
+    ]
+    cand = ToolEvent("s", "Bash", "git-status", PENDING, 0.0, arg_kind="shell:read-only", arg_preview="git status -sb")
     v = RepetitionDetector().evaluate(hist, cand, CFG)
     assert v is not None and v.action == NUDGE
+
+
+def test_repetition_read_only_shell_repeat_with_failures_still_blocks():
+    hist = [
+        ToolEvent("s", "Bash", "git-status", ERROR, 0.0, arg_kind="shell:read-only", arg_preview="git status -sb")
+        for _ in range(3)
+    ]
+    cand = ToolEvent("s", "Bash", "git-status", PENDING, 0.0, arg_kind="shell:read-only", arg_preview="git status -sb")
+    v = RepetitionDetector().evaluate(hist, cand, CFG)
+    assert v is not None and v.action == BLOCK
+
+
+def test_repetition_read_only_shell_recent_failures_not_masked_by_older_success():
+    hist = [
+        ToolEvent("s", "Bash", "git-status", OK, 0.0, arg_kind="shell:read-only", arg_preview="git status -sb"),
+        ToolEvent("s", "Bash", "git-status", ERROR, 1.0, arg_kind="shell:read-only", arg_preview="git status -sb"),
+        ToolEvent("s", "Bash", "git-status", ERROR, 2.0, arg_kind="shell:read-only", arg_preview="git status -sb"),
+        ToolEvent("s", "Bash", "git-status", ERROR, 3.0, arg_kind="shell:read-only", arg_preview="git status -sb"),
+    ]
+    cand = ToolEvent("s", "Bash", "git-status", PENDING, 4.0, arg_kind="shell:read-only", arg_preview="git status -sb")
+    v = RepetitionDetector().evaluate(hist, cand, CFG)
+    assert v is not None and v.action == BLOCK
+
+
+def test_repetition_shell_recent_failures_not_masked_by_older_success():
+    hist = [
+        ToolEvent("s", "Bash", "npm-test", OK, 0.0, arg_kind="shell", arg_preview="npm test"),
+        ToolEvent("s", "Bash", "npm-test", ERROR, 1.0, arg_kind="shell", arg_preview="npm test"),
+        ToolEvent("s", "Bash", "npm-test", ERROR, 2.0, arg_kind="shell", arg_preview="npm test"),
+        ToolEvent("s", "Bash", "npm-test", ERROR, 3.0, arg_kind="shell", arg_preview="npm test"),
+    ]
+    cand = ToolEvent("s", "Bash", "npm-test", PENDING, 4.0, arg_kind="shell", arg_preview="npm test")
+    v = RepetitionDetector().evaluate(hist, cand, CFG)
+    assert v is not None and v.action == BLOCK
 
 
 def test_repetition_respects_disabled():

@@ -68,6 +68,44 @@ def test_enforced_block_records_marker_and_breaks_streak():
             os.environ["AGENT_RAILS_MODE"] = old
 
 
+def test_enforced_repetition_block_marker_keeps_identical_retry_blocked():
+    old = os.environ.get("AGENT_RAILS_MODE")
+    try:
+        os.environ["AGENT_RAILS_MODE"] = "enforce"
+        d = _proj({})
+        args = {"command": "rg foo"}
+        for _ in range(3):
+            record("repeat-marker", "Bash", args, ok=False, project_dir=d)
+
+        assert check("repeat-marker", "Bash", args, project_dir=d).action == "block"
+        assert check("repeat-marker", "Bash", args, project_dir=d).action == "block"
+        assert check("repeat-marker", "Bash", {"command": "git status -sb"}, project_dir=d).action == "allow"
+    finally:
+        if old is None:
+            os.environ.pop("AGENT_RAILS_MODE", None)
+        else:
+            os.environ["AGENT_RAILS_MODE"] = old
+
+
+def test_enforced_repetition_block_marker_survives_window_rollover():
+    old = os.environ.get("AGENT_RAILS_MODE")
+    try:
+        os.environ["AGENT_RAILS_MODE"] = "enforce"
+        d = _proj({})
+        args = {"command": "rg foo"}
+        for _ in range(3):
+            record("repeat-rollover", "Bash", args, ok=False, project_dir=d)
+
+        for _ in range(20):
+            assert check("repeat-rollover", "Bash", args, project_dir=d).action == "block"
+        assert check("repeat-rollover", "Bash", {"command": "git status -sb"}, project_dir=d).action == "allow"
+    finally:
+        if old is None:
+            os.environ.pop("AGENT_RAILS_MODE", None)
+        else:
+            os.environ["AGENT_RAILS_MODE"] = old
+
+
 def test_observe_block_does_not_record_marker():
     """observe mode downgrades a block to a nudge — the call PROCEEDS and will
     record its own outcome, so check() must NOT inject a phantom BLOCKED marker."""
