@@ -70,7 +70,7 @@ def test_workflow_subcommands_parse():
     parser = build_parser()
     cases = [
         ["pr-merge", "12", "--method", "squash", "--skip-ci-reason", "local only", "--command-timeout", "10"],
-        ["pr-create", "--title", "T", "--body-file", "body.md", "--head", "topic"],
+        ["pr-create", "--title", "T", "--body-file", "body.md", "--head", "topic", "--remote", "upstream"],
         ["pr-create", "--title", "T", "--body", "-", "--head", "topic"],
         ["post-merge-cleanup", "topic", "--force-delete", "--dry-run"],
         ["ci-status", "12", "--command-timeout", "10"],

@@ -80,6 +80,248 @@ def test_create_pr_uses_body_file_and_prints_url():
     assert "https://github.test/pull/1" in out
 
 
+def test_create_pr_pushes_current_branch_when_no_upstream():
+    with tempfile.TemporaryDirectory() as raw:
+        body = Path(raw) / "body.md"
+        body.write_text("Summary\n", encoding="utf-8")
+        runner = FakeRunner([
+            RunResult(["git", "branch", "--show-current"], 0, "topic\n", ""),
+            RunResult(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], 128, "", "no upstream"),
+            RunResult(["git", "push", "-u", "origin", "HEAD:refs/heads/topic"], 0, "", ""),
+            RunResult(["gh", "pr", "create"], 0, "https://github.test/pull/2\n", ""),
+        ])
+
+        rc, out = _capture(
+            create_pr,
+            title="Add wrapper",
+            body_file=body,
+            base="main",
+            runner=runner,
+        )
+
+    assert rc == 0
+    assert runner.calls == [
+        ["git", "branch", "--show-current"],
+        ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+        ["git", "push", "-u", "origin", "HEAD:refs/heads/topic"],
+        [
+            "gh", "pr", "create",
+            "--title", "Add wrapper",
+            "--body-file", str(body),
+            "--base", "main",
+        ],
+    ]
+    assert "ok: git push -u origin HEAD:refs/heads/topic" in out
+    assert "https://github.test/pull/2" in out
+
+
+def test_create_pr_uses_existing_upstream_without_push():
+    with tempfile.TemporaryDirectory() as raw:
+        body = Path(raw) / "body.md"
+        body.write_text("Summary\n", encoding="utf-8")
+        runner = FakeRunner([
+            RunResult(["git", "branch", "--show-current"], 0, "topic\n", ""),
+            RunResult(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], 0, "origin/topic\n", ""),
+            RunResult(["gh", "pr", "create"], 0, "https://github.test/pull/3\n", ""),
+        ])
+
+        rc, out = _capture(
+            create_pr,
+            title="Add wrapper",
+            body_file=body,
+            base="main",
+            runner=runner,
+        )
+
+    assert rc == 0
+    assert runner.calls == [
+        ["git", "branch", "--show-current"],
+        ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+        [
+            "gh", "pr", "create",
+            "--title", "Add wrapper",
+            "--body-file", str(body),
+            "--base", "main",
+        ],
+    ]
+    assert "git push" not in out
+
+
+def test_create_pr_head_skips_auto_push():
+    with tempfile.TemporaryDirectory() as raw:
+        body = Path(raw) / "body.md"
+        body.write_text("Summary\n", encoding="utf-8")
+        runner = FakeRunner([
+            RunResult(["gh", "pr", "create"], 0, "https://github.test/pull/4\n", ""),
+        ])
+
+        rc, _out = _capture(
+            create_pr,
+            title="Add wrapper",
+            body_file=body,
+            base="main",
+            head="fork:topic",
+            runner=runner,
+        )
+
+    assert rc == 0
+    assert runner.calls == [[
+        "gh", "pr", "create",
+        "--title", "Add wrapper",
+        "--body-file", str(body),
+        "--base", "main",
+        "--head", "fork:topic",
+    ]]
+
+
+def test_create_pr_refuses_detached_branch_without_head():
+    with tempfile.TemporaryDirectory() as raw:
+        body = Path(raw) / "body.md"
+        body.write_text("Summary\n", encoding="utf-8")
+        runner = FakeRunner([
+            RunResult(["git", "branch", "--show-current"], 0, "", ""),
+        ])
+
+        rc, out = _capture(
+            create_pr,
+            title="Add wrapper",
+            body_file=body,
+            base="main",
+            runner=runner,
+        )
+
+    assert rc == 1
+    assert "could not determine current branch" in out
+    assert runner.calls == [["git", "branch", "--show-current"]]
+
+
+def test_create_pr_refuses_base_branch_without_head():
+    with tempfile.TemporaryDirectory() as raw:
+        body = Path(raw) / "body.md"
+        body.write_text("Summary\n", encoding="utf-8")
+        runner = FakeRunner([
+            RunResult(["git", "branch", "--show-current"], 0, "main\n", ""),
+        ])
+
+        rc, out = _capture(
+            create_pr,
+            title="Add wrapper",
+            body_file=body,
+            base="main",
+            runner=runner,
+        )
+
+    assert rc == 1
+    assert "refusing to create a PR from base branch main" in out
+    assert runner.calls == [["git", "branch", "--show-current"]]
+
+
+def test_create_pr_reports_push_failure():
+    with tempfile.TemporaryDirectory() as raw:
+        body = Path(raw) / "body.md"
+        body.write_text("Summary\n", encoding="utf-8")
+        runner = FakeRunner([
+            RunResult(["git", "branch", "--show-current"], 0, "topic\n", ""),
+            RunResult(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], 128, "", "no upstream"),
+            RunResult(["git", "push", "-u", "origin", "HEAD:refs/heads/topic"], 1, "", "denied"),
+        ])
+
+        rc, out = _capture(
+            create_pr,
+            title="Add wrapper",
+            body_file=body,
+            base="main",
+            runner=runner,
+        )
+
+    assert rc == 1
+    assert "git push -u origin HEAD:refs/heads/topic failed" in out
+    assert "denied" in out
+    assert runner.calls == [
+        ["git", "branch", "--show-current"],
+        ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+        ["git", "push", "-u", "origin", "HEAD:refs/heads/topic"],
+    ]
+
+
+def test_create_pr_pushes_option_like_branch_as_refspec_data():
+    with tempfile.TemporaryDirectory() as raw:
+        body = Path(raw) / "body.md"
+        body.write_text("Summary\n", encoding="utf-8")
+        runner = FakeRunner([
+            RunResult(["git", "branch", "--show-current"], 0, "--delete\n", ""),
+            RunResult(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], 128, "", "no upstream"),
+            RunResult(["git", "push", "-u", "origin", "HEAD:refs/heads/--delete"], 0, "", ""),
+            RunResult(["gh", "pr", "create"], 0, "https://github.test/pull/5\n", ""),
+        ])
+
+        rc, out = _capture(
+            create_pr,
+            title="Add wrapper",
+            body_file=body,
+            base="main",
+            runner=runner,
+        )
+
+    assert rc == 0
+    assert runner.calls == [
+        ["git", "branch", "--show-current"],
+        ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+        ["git", "push", "-u", "origin", "HEAD:refs/heads/--delete"],
+        [
+            "gh", "pr", "create",
+            "--title", "Add wrapper",
+            "--body-file", str(body),
+            "--base", "main",
+        ],
+    ]
+    assert "ok: git push -u origin HEAD:refs/heads/--delete" in out
+
+
+def test_create_pr_rejects_option_like_remote_without_head():
+    with tempfile.TemporaryDirectory() as raw:
+        body = Path(raw) / "body.md"
+        body.write_text("Summary\n", encoding="utf-8")
+        runner = FakeRunner([
+            RunResult(["git", "branch", "--show-current"], 0, "topic\n", ""),
+        ])
+
+        rc, out = _capture(
+            create_pr,
+            title="Add wrapper",
+            body_file=body,
+            base="main",
+            remote="--mirror",
+            runner=runner,
+        )
+
+    assert rc == 2
+    assert "--remote must be a non-option remote name" in out
+    assert runner.calls == [["git", "branch", "--show-current"]]
+
+
+def test_create_pr_rejects_empty_remote_without_head():
+    with tempfile.TemporaryDirectory() as raw:
+        body = Path(raw) / "body.md"
+        body.write_text("Summary\n", encoding="utf-8")
+        runner = FakeRunner([
+            RunResult(["git", "branch", "--show-current"], 0, "topic\n", ""),
+        ])
+
+        rc, out = _capture(
+            create_pr,
+            title="Add wrapper",
+            body_file=body,
+            base="main",
+            remote=" ",
+            runner=runner,
+        )
+
+    assert rc == 2
+    assert "--remote must be a non-option remote name" in out
+    assert runner.calls == [["git", "branch", "--show-current"]]
+
+
 def test_create_pr_requires_body_file():
     rc, out = _capture(
         create_pr,
