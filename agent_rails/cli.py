@@ -8,7 +8,7 @@ A thin operator-facing CLI over the same core the hooks use. Subcommands:
     agent-rails install [HARNESS]  install hooks; no arg = all detected harnesses
     agent-rails init [...]         compose a CLAUDE.md + AGENTS.md symlink from profiles
     agent-rails pr-create ...      create a PR with a body file
-    agent-rails pr-merge PR        merge + poll + local cleanup
+    agent-rails pr-merge PR        wait for CI checks, merge + poll + local cleanup
     agent-rails ci-failures        summarize failed CI logs
     agent-rails test-summary LOG   summarize saved pytest output
     agent-rails version
@@ -281,6 +281,8 @@ def _cmd_pr_merge(args: argparse.Namespace) -> int:
         remote=args.remote,
         timeout_s=args.timeout,
         poll_s=args.poll,
+        ci_timeout_s=args.ci_timeout,
+        ci_poll_s=args.ci_poll,
         skip_ci_reason=args.skip_ci_reason,
         runner=runner,
     )
@@ -863,7 +865,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     prm = sub.add_parser(
         "pr-merge",
-        help="merge a GitHub PR, wait for MERGED, then clean up the local branch",
+        help="wait for CI checks to pass, merge a GitHub PR, wait for MERGED, then clean up the local branch",
     )
     prm.add_argument("pr", help="PR number, URL, or branch accepted by `gh pr merge`")
     prm.add_argument(
@@ -873,11 +875,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="merge method (default: squash)",
     )
     prm.add_argument("--no-cleanup", action="store_true", help="skip local post-merge cleanup")
-    prm.add_argument("--skip-ci-reason", help="auditable reason for a local-validation-only merge")
+    prm.add_argument(
+        "--skip-ci-reason",
+        help="bypass the CI gate; auditable reason for a local-validation-only merge",
+    )
     prm.add_argument("--main", default="main", help="main branch name (default: main)")
     prm.add_argument("--remote", default="origin", help="remote for fast-forward pull (default: origin)")
     prm.add_argument("--timeout", type=int, default=120, help="seconds to wait for MERGED (default: 120)")
     prm.add_argument("--poll", type=float, default=5, help="seconds between PR state polls (default: 5)")
+    prm.add_argument(
+        "--ci-timeout",
+        type=int,
+        default=1800,
+        help="seconds to wait for CI checks to pass before refusing to merge (default: 1800)",
+    )
+    prm.add_argument(
+        "--ci-poll",
+        type=float,
+        default=30,
+        help="seconds between CI check polls (default: 30)",
+    )
     prm.add_argument(
         "--command-timeout",
         type=float,
