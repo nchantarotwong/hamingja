@@ -299,14 +299,14 @@ def merge_pr(
     remote: str = "origin",
     timeout_s: int = 120,
     poll_s: float = 5,
+    ci_timeout_s: int = 1800,
+    ci_poll_s: float = 30,
     skip_ci_reason: Optional[str] = None,
     runner: Runner = default_runner,
     sleeper: Callable[[float], None] = time.sleep,
 ) -> int:
-    """Merge a PR via gh, wait for MERGED, then optionally clean local state."""
+    """Gate on CI, merge a PR via gh, wait for MERGED, then clean local state."""
     lines = [f"pr merge {pr}"]
-    if skip_ci_reason:
-        lines.append(f"- local validation override: {skip_ci_reason}")
     view = _gh_pr_view(pr, "headRefName,state,url", runner=runner, sleeper=sleeper, poll_s=poll_s)
     if view.returncode != 0:
         lines.append(f"- error: {_err(view)}")
@@ -324,6 +324,22 @@ def merge_pr(
         lines.append(f"- error: unknown merge method {method!r}")
         _print_lines(lines)
         return 2
+
+    if skip_ci_reason:
+        lines.append("- ci gate SKIPPED")
+        lines.append(f"- local validation override: {skip_ci_reason}")
+    else:
+        gate_rc = _ci_gate(
+            pr,
+            lines,
+            ci_timeout_s=ci_timeout_s,
+            ci_poll_s=ci_poll_s,
+            runner=runner,
+            sleeper=sleeper,
+        )
+        if gate_rc != 0:
+            _print_lines(lines)
+            return gate_rc
 
     state = None
     merge = runner(["gh", "pr", "merge", pr, flag, "--delete-branch"])
@@ -388,48 +404,130 @@ def merge_pr(
     return 0
 
 
-def ci_status(pr: Optional[str] = None, *, runner: Runner = default_runner) -> int:
+FAILING_CHECK_STATES = {"FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"}
+# NEUTRAL is terminal and counts as passing, matching GitHub's own
+# required-check semantics (neutral/skipped do not block a merge).
+TERMINAL_CHECK_STATES = {"SUCCESS", "FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "SKIPPED", "NEUTRAL"}
+
+
+def _fetch_checks(pr: Optional[str], *, runner: Runner):
+    """Fetch PR checks via gh. Returns (checks, error) — exactly one is None.
+
+    gh exits 0 with --json even when checks are failing/pending, so a
+    nonzero exit here means gh itself failed, not that checks failed.
+    """
     cmd = ["gh", "pr", "checks"]
     if pr:
         cmd.append(pr)
     cmd.extend(["--json", "name,state,link"])
     res = runner(cmd)
     if res.returncode != 0:
-        print("ci status")
-        print(f"- error: {_err(res)}")
-        return res.returncode or 1
+        return None, _err(res)
     checks = _json_from(res)
     if not isinstance(checks, list):
-        print("ci status")
-        print("- error: gh returned unparseable check data")
-        return 1
+        return None, "gh returned unparseable check data"
     if not all(_valid_check_shape(check) for check in checks):
-        print("ci status")
-        print("- error: gh returned malformed check data")
-        return 1
-    failing_states = {"FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"}
-    terminal_states = {"SUCCESS", "FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "SKIPPED"}
+        return None, "gh returned malformed check data"
+    return checks, None
+
+
+def _classify_checks(checks: list[dict]):
+    """Split checks into (failing, pending); the rest are terminal successes/skips."""
     failing = [
         c for c in checks
-        if ((c.get("conclusion") or c.get("state") or "").upper() in failing_states)
+        if ((c.get("conclusion") or c.get("state") or "").upper() in FAILING_CHECK_STATES)
     ]
     pending = [
         c for c in checks
-        if c not in failing and (c.get("state") or "").upper() not in terminal_states
+        if c not in failing and (c.get("state") or "").upper() not in TERMINAL_CHECK_STATES
     ]
+    return failing, pending
+
+
+def _check_line(prefix: str, check: dict) -> str:
+    link = check.get("link") or ""
+    suffix = f" ({link})" if link else ""
+    status = check.get("conclusion") or check.get("state") or "?"
+    return f"- {prefix}: {check.get('name', '?')} [{status}]" + suffix
+
+
+def ci_status(pr: Optional[str] = None, *, runner: Runner = default_runner) -> int:
+    checks, error = _fetch_checks(pr, runner=runner)
+    if error is not None:
+        print("ci status")
+        print(f"- error: {error}")
+        return 1
+    failing, pending = _classify_checks(checks)
     budget_blocked = _ci_budget_blocked(failing, runner=runner)
     print("ci status")
     print(f"- checks: {len(checks)} total, {len(failing)} failing, {len(pending)} pending")
     if budget_blocked:
         print("- blocked: actions_budget_exhausted")
     for c in failing[:20]:
-        link = c.get("link") or ""
-        suffix = f" ({link})" if link else ""
-        status = c.get("conclusion") or c.get("state") or "?"
-        print(f"- failed: {c.get('name', '?')} [{status}]" + suffix)
+        print(_check_line("failed", c))
     if budget_blocked:
         return 2
     return 1 if failing else 0
+
+
+def _ci_gate(
+    pr: str,
+    lines: list[str],
+    *,
+    ci_timeout_s: int,
+    ci_poll_s: float,
+    runner: Runner,
+    sleeper: Callable[[float], None],
+) -> int:
+    """Refuse to merge until every CI check on the PR has passed.
+
+    Returns 0 to proceed with the merge, nonzero to refuse. Fail-closed:
+    unknown CI state (gh failure, malformed data, no checks reported,
+    still pending at the deadline) refuses rather than merges.
+    """
+    deadline = time.monotonic() + max(0, ci_timeout_s)
+    # A PR whose checks haven't been reported yet looks identical to a repo
+    # with no CI at all; give the former a short window to appear, then
+    # refuse so the latter gets a fast, explicit answer instead of a
+    # ci_timeout_s-long hang.
+    no_checks_deadline = time.monotonic() + min(max(0, ci_timeout_s), 60)
+    waiting_logged = False
+    while True:
+        checks, error = _fetch_checks(pr, runner=runner)
+        if error is not None:
+            # gh exits 1 with this message instead of returning [] when a PR
+            # has no checks — same situation as an empty list, so give it the
+            # same grace window (checks may simply not be reported yet).
+            if "no checks reported" in error:
+                checks = []
+            else:
+                lines.append(f"- error: {error}")
+                lines.append("- refusing to merge: CI state unknown; retry, or pass --skip-ci-reason with local validation")
+                return 1
+        failing, pending = _classify_checks(checks)
+        if failing:
+            lines.append(f"- ci: {len(checks)} checks, {len(failing)} failing, {len(pending)} pending")
+            for c in failing[:20]:
+                lines.append(_check_line("failed", c))
+            lines.append("- refusing to merge: CI checks are failing; fix CI, or pass --skip-ci-reason with local validation")
+            return 1
+        if checks and not pending:
+            lines.append(f"- ci: all {len(checks)} checks passed")
+            return 0
+        now = time.monotonic()
+        if not checks and now >= no_checks_deadline:
+            lines.append("- refusing to merge: no CI checks reported for this PR; if this repo has no CI, pass --skip-ci-reason")
+            return 1
+        if now >= deadline:
+            lines.append(f"- ci: {len(pending)} check(s) still pending after {ci_timeout_s}s")
+            for c in pending[:20]:
+                lines.append(_check_line("pending", c))
+            lines.append("- refusing to merge: CI did not finish in time; raise --ci-timeout or rerun later")
+            return 1
+        if not waiting_logged and pending:
+            lines.append(f"- ci: waiting for {len(pending)} pending check(s)")
+            waiting_logged = True
+        sleeper(ci_poll_s)
 
 
 def _ci_budget_blocked(failing_checks: list[dict], *, runner: Runner) -> bool:

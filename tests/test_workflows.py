@@ -363,6 +363,10 @@ def test_cleanup_after_merge_refuses_to_delete_main():
     assert runner.calls == [["git", "branch", "--show-current"]]
 
 
+CHECKS_CMD = ["gh", "pr", "checks", "12", "--json", "name,state,link"]
+CHECKS_PASSING = RunResult(CHECKS_CMD, 0, '[{"name":"ci","state":"SUCCESS"}]', "")
+
+
 def test_merge_pr_polls_until_merged_then_cleans_up():
     runner = FakeRunner([
         RunResult(
@@ -371,6 +375,7 @@ def test_merge_pr_polls_until_merged_then_cleans_up():
             '{"headRefName":"topic","state":"OPEN"}',
             "",
         ),
+        CHECKS_PASSING,
         RunResult(["gh", "pr", "merge", "12", "--squash", "--delete-branch"], 0, "", ""),
         RunResult(["gh", "pr", "view", "12", "--json", "state,url"], 0, '{"state":"OPEN"}', ""),
         RunResult(["gh", "pr", "view", "12", "--json", "state,url"], 0, '{"state":"MERGED"}', ""),
@@ -382,7 +387,9 @@ def test_merge_pr_polls_until_merged_then_cleans_up():
     ])
     rc, out = _capture(merge_pr, "12", runner=runner, sleeper=lambda _s: None, poll_s=0)
     assert rc == 0
+    assert CHECKS_CMD in runner.calls
     assert ["gh", "pr", "merge", "12", "--squash", "--delete-branch"] in runner.calls
+    assert "ci: all 1 checks passed" in out
     assert "state: MERGED" in out
     assert "post-merge cleanup" in out
     assert ["git", "branch", "-D", "topic"] in runner.calls
@@ -411,8 +418,10 @@ def test_merge_pr_prints_local_validation_override_reason():
     )
 
     assert rc == 0
+    assert "ci gate SKIPPED" in out
     assert "local validation override: GHA budget exhausted; local suite passed." in out
     assert "state: MERGED" in out
+    assert CHECKS_CMD not in runner.calls
 
 
 def test_merge_pr_retries_transient_initial_view_failure():
@@ -429,6 +438,7 @@ def test_merge_pr_retries_transient_initial_view_failure():
             '{"headRefName":"topic","state":"OPEN"}',
             "",
         ),
+        CHECKS_PASSING,
         RunResult(["gh", "pr", "merge", "12", "--squash", "--delete-branch"], 0, "", ""),
         RunResult(["gh", "pr", "view", "12", "--json", "state,url"], 0, '{"state":"MERGED"}', ""),
         RunResult(["git", "branch", "--show-current"], 0, "topic\n", ""),
@@ -517,6 +527,7 @@ def test_merge_pr_recovers_when_merge_command_fails_after_pr_merged():
             '{"headRefName":"topic","state":"OPEN"}',
             "",
         ),
+        CHECKS_PASSING,
         RunResult(["gh", "pr", "merge", "12", "--squash", "--delete-branch"], 1, "", "HTTP 401 Unauthorized"),
         RunResult(["gh", "pr", "view", "12", "--json", "state,url"], 0, '{"state":"MERGED"}', ""),
         RunResult(["git", "branch", "--show-current"], 0, "topic\n", ""),
@@ -543,6 +554,7 @@ def test_merge_pr_rejects_malformed_recovery_pr_view_without_crashing():
             '{"headRefName":"topic","state":"OPEN"}',
             "",
         ),
+        CHECKS_PASSING,
         RunResult(["gh", "pr", "merge", "12", "--squash", "--delete-branch"], 1, "", "HTTP 401 Unauthorized"),
         RunResult(["gh", "pr", "view", "12", "--json", "state,url"], 0, "[]", ""),
     ])
@@ -561,6 +573,7 @@ def test_merge_pr_fails_when_merge_command_error_did_not_merge_pr():
             '{"headRefName":"topic","state":"OPEN"}',
             "",
         ),
+        CHECKS_PASSING,
         RunResult(["gh", "pr", "merge", "12", "--squash", "--delete-branch"], 1, "", "HTTP 401 Unauthorized"),
         RunResult(["gh", "pr", "view", "12", "--json", "state,url"], 0, '{"state":"OPEN"}', ""),
     ])
@@ -580,6 +593,7 @@ def test_merge_pr_retries_transient_poll_failure():
             '{"headRefName":"topic","state":"OPEN"}',
             "",
         ),
+        CHECKS_PASSING,
         RunResult(["gh", "pr", "merge", "12", "--squash", "--delete-branch"], 0, "", ""),
         RunResult(["gh", "pr", "view", "12", "--json", "state,url"], 1, "", "HTTP 502 Bad Gateway"),
         RunResult(["gh", "pr", "view", "12", "--json", "state,url"], 0, '{"state":"MERGED"}', ""),
@@ -605,6 +619,7 @@ def test_merge_pr_rejects_malformed_poll_pr_view_without_crashing():
             '{"headRefName":"topic","state":"OPEN"}',
             "",
         ),
+        CHECKS_PASSING,
         RunResult(["gh", "pr", "merge", "12", "--squash", "--delete-branch"], 0, "", ""),
         RunResult(["gh", "pr", "view", "12", "--json", "state,url"], 0, "[]", ""),
     ])
@@ -623,6 +638,7 @@ def test_merge_pr_fails_when_post_merge_poll_never_confirms_state():
             '{"headRefName":"topic","state":"OPEN"}',
             "",
         ),
+        CHECKS_PASSING,
         RunResult(["gh", "pr", "merge", "12", "--squash", "--delete-branch"], 0, "", ""),
         RunResult(["gh", "pr", "view", "12", "--json", "state,url"], 1, "", "HTTP 502 Bad Gateway"),
         RunResult(["gh", "pr", "view", "12", "--json", "state,url"], 1, "", "HTTP 502 Bad Gateway"),
@@ -635,6 +651,158 @@ def test_merge_pr_fails_when_post_merge_poll_never_confirms_state():
     assert runner.calls.count(["gh", "pr", "view", "12", "--json", "state,url"]) == 3
     assert "could not poll PR state" in out
     assert "post-merge cleanup" not in out
+
+
+PR_VIEW_OPEN = RunResult(
+    ["gh", "pr", "view", "12", "--json", "headRefName,state,url"],
+    0,
+    '{"headRefName":"topic","state":"OPEN"}',
+    "",
+)
+MERGE_CMD = ["gh", "pr", "merge", "12", "--squash", "--delete-branch"]
+
+
+def test_merge_pr_refuses_when_ci_checks_failing():
+    runner = FakeRunner([
+        PR_VIEW_OPEN,
+        RunResult(
+            CHECKS_CMD,
+            0,
+            '[{"name":"ci-required","state":"FAILURE","link":"https://gha/runs/1"},'
+            '{"name":"lint","state":"SUCCESS"}]',
+            "",
+        ),
+    ])
+
+    rc, out = _capture(merge_pr, "12", runner=runner, sleeper=lambda _s: None, poll_s=0)
+
+    assert rc == 1
+    assert MERGE_CMD not in runner.calls
+    assert "refusing to merge: CI checks are failing" in out
+    assert "failed: ci-required [FAILURE] (https://gha/runs/1)" in out
+
+
+def test_merge_pr_waits_for_pending_ci_then_merges():
+    runner = FakeRunner([
+        PR_VIEW_OPEN,
+        RunResult(CHECKS_CMD, 0, '[{"name":"ci","state":"IN_PROGRESS"}]', ""),
+        RunResult(CHECKS_CMD, 0, '[{"name":"ci","state":"SUCCESS"}]', ""),
+        RunResult(MERGE_CMD, 0, "", ""),
+        RunResult(["gh", "pr", "view", "12", "--json", "state,url"], 0, '{"state":"MERGED"}', ""),
+    ])
+
+    rc, out = _capture(
+        merge_pr, "12", cleanup=False,
+        runner=runner, sleeper=lambda _s: None, poll_s=0, ci_poll_s=0,
+    )
+
+    assert rc == 0
+    assert runner.calls.count(CHECKS_CMD) == 2
+    assert "ci: waiting for 1 pending check(s)" in out
+    assert "ci: all 1 checks passed" in out
+    assert "state: MERGED" in out
+
+
+def test_merge_pr_refuses_when_ci_still_pending_at_deadline():
+    runner = FakeRunner([
+        PR_VIEW_OPEN,
+        RunResult(CHECKS_CMD, 0, '[{"name":"ci","state":"IN_PROGRESS"}]', ""),
+    ])
+
+    rc, out = _capture(
+        merge_pr, "12",
+        runner=runner, sleeper=lambda _s: None, poll_s=0, ci_timeout_s=0, ci_poll_s=0,
+    )
+
+    assert rc == 1
+    assert MERGE_CMD not in runner.calls
+    assert "still pending" in out
+    assert "pending: ci [IN_PROGRESS]" in out
+    assert "refusing to merge: CI did not finish in time" in out
+
+
+def test_merge_pr_refuses_when_no_ci_checks_reported():
+    runner = FakeRunner([
+        PR_VIEW_OPEN,
+        RunResult(CHECKS_CMD, 0, "[]", ""),
+    ])
+
+    rc, out = _capture(
+        merge_pr, "12",
+        runner=runner, sleeper=lambda _s: None, poll_s=0, ci_timeout_s=0, ci_poll_s=0,
+    )
+
+    assert rc == 1
+    assert MERGE_CMD not in runner.calls
+    assert "refusing to merge: no CI checks reported" in out
+    assert "--skip-ci-reason" in out
+
+
+def test_merge_pr_treats_no_checks_reported_error_as_zero_checks():
+    runner = FakeRunner([
+        PR_VIEW_OPEN,
+        RunResult(
+            CHECKS_CMD, 1, "",
+            "no checks reported on the 'topic' branch",
+        ),
+    ])
+
+    rc, out = _capture(
+        merge_pr, "12",
+        runner=runner, sleeper=lambda _s: None, poll_s=0, ci_timeout_s=0, ci_poll_s=0,
+    )
+
+    assert rc == 1
+    assert MERGE_CMD not in runner.calls
+    assert "refusing to merge: no CI checks reported" in out
+
+
+def test_merge_pr_refuses_when_checks_fetch_fails():
+    runner = FakeRunner([
+        PR_VIEW_OPEN,
+        RunResult(CHECKS_CMD, 1, "", "HTTP 503 Service Unavailable"),
+    ])
+
+    rc, out = _capture(merge_pr, "12", runner=runner, sleeper=lambda _s: None, poll_s=0)
+
+    assert rc == 1
+    assert MERGE_CMD not in runner.calls
+    assert "refusing to merge: CI state unknown" in out
+
+
+def test_merge_pr_refuses_on_malformed_check_data():
+    runner = FakeRunner([
+        PR_VIEW_OPEN,
+        RunResult(CHECKS_CMD, 0, '[{"name":"ci","state":42}]', ""),
+    ])
+
+    rc, out = _capture(merge_pr, "12", runner=runner, sleeper=lambda _s: None, poll_s=0)
+
+    assert rc == 1
+    assert MERGE_CMD not in runner.calls
+    assert "malformed check data" in out
+    assert "refusing to merge: CI state unknown" in out
+
+
+def test_merge_pr_skipped_and_neutral_checks_do_not_count_as_pending():
+    runner = FakeRunner([
+        PR_VIEW_OPEN,
+        RunResult(
+            CHECKS_CMD,
+            0,
+            '[{"name":"ci","state":"SUCCESS"},{"name":"optional","state":"SKIPPED"},'
+            '{"name":"advisory","state":"NEUTRAL"}]',
+            "",
+        ),
+        RunResult(MERGE_CMD, 0, "", ""),
+        RunResult(["gh", "pr", "view", "12", "--json", "state,url"], 0, '{"state":"MERGED"}', ""),
+    ])
+
+    rc, out = _capture(merge_pr, "12", cleanup=False, runner=runner, sleeper=lambda _s: None, poll_s=0)
+
+    assert rc == 0
+    assert "ci: all 3 checks passed" in out
+    assert "state: MERGED" in out
 
 
 def test_cleanup_after_squash_uses_force_delete_to_avoid_not_merged_failure():

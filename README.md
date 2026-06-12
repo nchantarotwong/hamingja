@@ -333,7 +333,7 @@ agent to reason over:
 agent-rails commands                  # discover global + repo-local wrappers first
 agent-rails pr-create --title "..." --body-file pr.md
 agent-rails pr-create --title "..." --body - < pr.md  # stdin body, temp file, then gh --body-file
-agent-rails pr-merge 123              # gh merge + wait for MERGED + local cleanup
+agent-rails pr-merge 123              # wait for CI checks, gh merge + wait for MERGED + local cleanup
 agent-rails pr-merge 123 --skip-ci-reason "GHA budget exhausted; local suite passed"
 agent-rails post-merge-cleanup topic  # checkout main, pull --ff-only, branch -d topic
 agent-rails post-merge-cleanup topic --force-delete  # for squash/rebase-cleaned branches
@@ -349,6 +349,12 @@ has no upstream, it runs `git push -u origin HEAD:refs/heads/<branch>` before
 calling `gh pr create`; use `--remote <name>` to push somewhere other than
 `origin`. It refuses detached HEAD and the base branch so a PR is not
 accidentally opened from `main`.
+
+`pr-merge` gates on CI before merging: it polls the PR's checks (up to
+`--ci-timeout`, default 1800s) and refuses to merge while any check is
+failing, pending, unreported, or unreadable — branch protection in repos
+that don't have server-side required checks. The gate is fail-closed; the
+only bypass is an explicit, auditable `--skip-ci-reason`.
 
 The rule for project instructions is simple: run `agent-rails commands` before
 PR creation/merge/cleanup, CI status/failure extraction, or saved test-log
