@@ -495,9 +495,15 @@ def _ci_gate(
     while True:
         checks, error = _fetch_checks(pr, runner=runner)
         if error is not None:
-            lines.append(f"- error: {error}")
-            lines.append("- refusing to merge: CI state unknown; retry, or pass --skip-ci-reason with local validation")
-            return 1
+            # gh exits 1 with this message instead of returning [] when a PR
+            # has no checks — same situation as an empty list, so give it the
+            # same grace window (checks may simply not be reported yet).
+            if "no checks reported" in error:
+                checks = []
+            else:
+                lines.append(f"- error: {error}")
+                lines.append("- refusing to merge: CI state unknown; retry, or pass --skip-ci-reason with local validation")
+                return 1
         failing, pending = _classify_checks(checks)
         if failing:
             lines.append(f"- ci: {len(checks)} checks, {len(failing)} failing, {len(pending)} pending")

@@ -738,6 +738,25 @@ def test_merge_pr_refuses_when_no_ci_checks_reported():
     assert "--skip-ci-reason" in out
 
 
+def test_merge_pr_treats_no_checks_reported_error_as_zero_checks():
+    runner = FakeRunner([
+        PR_VIEW_OPEN,
+        RunResult(
+            CHECKS_CMD, 1, "",
+            "no checks reported on the 'topic' branch",
+        ),
+    ])
+
+    rc, out = _capture(
+        merge_pr, "12",
+        runner=runner, sleeper=lambda _s: None, poll_s=0, ci_timeout_s=0, ci_poll_s=0,
+    )
+
+    assert rc == 1
+    assert MERGE_CMD not in runner.calls
+    assert "refusing to merge: no CI checks reported" in out
+
+
 def test_merge_pr_refuses_when_checks_fetch_fails():
     runner = FakeRunner([
         PR_VIEW_OPEN,
