@@ -43,6 +43,7 @@ from .core.audit import clear_audit, read_audit, summarize
 from .core.budget import approve as _budget_approve
 from .core.budget import read_state as _budget_read_state
 from .core.budget import reset as _budget_reset
+from .core.budget import self_approve as _budget_self_approve
 from .profiles import (
     ALL_PROFILES,
     DEFAULT_PROFILES,
@@ -353,6 +354,25 @@ def _cmd_budget(args: argparse.Namespace) -> int:
         return 0
     if sub == "approve":
         add = max(1, args.add)
+        if getattr(args, "self_approve", False):
+            cfg = load_config(os.getcwd())
+            sa_cfg = cfg.get("budget", {}).get("self_approve", {})
+            result = _budget_self_approve(args.session_id, add_tools=add, cfg=sa_cfg)
+            if not result.get("ok"):
+                print(
+                    f"error: self-approve rejected: {result.get('reason', 'unknown')}",
+                    file=sys.stderr,
+                )
+                print(
+                    f"  Use: ! agent-rails budget approve {args.session_id} --add {add}",
+                    file=sys.stderr,
+                )
+                return 1
+            state = result.get("state", {})
+            print(f"self-approved: session={args.session_id}")
+            print(f"  approved_tool_calls: {state.get('approved_tool_calls')}")
+            print(f"  self_approve_times:  {state.get('self_approve_times')}")
+            return 0
         state = _budget_approve(args.session_id, add_tools=add, approve_subagent=args.subagent)
         if not state:
             print(f"error: could not update budget state for session: {args.session_id}", file=sys.stderr)
@@ -1044,6 +1064,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--subagent",
         action="store_true",
         help="also unblock one subagent spawn",
+    )
+    bgt_approve.add_argument(
+        "--self",
+        action="store_true",
+        dest="self_approve",
+        help="agent-initiated self-approve: validated against budget.self_approve config limits",
     )
     bgt_approve.set_defaults(func=_cmd_budget, budget_cmd="approve")
 

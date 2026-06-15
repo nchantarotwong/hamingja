@@ -36,6 +36,21 @@ from agent_rails.detectors.base import BLOCK, NUDGE  # noqa: E402
 _LARGE_FILE_LINE_THRESHOLD = 200
 
 
+def _is_budget_command(tool: str, tool_input: object) -> bool:
+    """Return True for Bash calls that are agent-rails budget commands.
+
+    These are exempt from the budget gate so the agent can self-approve or
+    query status without itself consuming a metered slot that triggers another
+    checkpoint block.
+    """
+    if str(tool).strip() != "Bash":
+        return False
+    if not isinstance(tool_input, dict):
+        return False
+    cmd = str(tool_input.get("command") or "").lstrip()
+    return cmd.startswith("agent-rails budget")
+
+
 def _large_read_line_count(tool: str, args: object) -> int:
     """Return the line count if this is an unscoped read of a large file, else 0.
 
@@ -130,13 +145,14 @@ def main() -> int:
             if cfg.get("mode") != "off":
                 budget_cfg = cfg.get("budget")
                 if isinstance(budget_cfg, dict) and budget_cfg.get("enabled", True):
-                    is_large = _large_read_line_count(tool, tool_input) > 0
-                    bv = budget_check(session_id, tool, is_large, budget_cfg)
-                    if bv.action == BUDGET_BLOCK:
-                        _emit_deny(bv.reason)
-                        return 0
-                    if bv.action == BUDGET_NUDGE:
-                        nudge_parts.append(bv.reason)
+                    if not _is_budget_command(tool, tool_input):
+                        is_large = _large_read_line_count(tool, tool_input) > 0
+                        bv = budget_check(session_id, tool, is_large, budget_cfg)
+                        if bv.action == BUDGET_BLOCK:
+                            _emit_deny(bv.reason)
+                            return 0
+                        if bv.action == BUDGET_NUDGE:
+                            nudge_parts.append(bv.reason)
         except Exception:
             pass  # budget gate always fails open
 

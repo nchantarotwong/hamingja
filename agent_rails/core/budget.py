@@ -106,6 +106,7 @@ def _default_state(checkpoint_at: int) -> dict:
         "large_reads": 0,
         "approved_tool_calls": checkpoint_at,
         "subagent_approved": False,
+        "self_approve_times": 0,
     }
 
 
@@ -126,6 +127,9 @@ def _load_locked(fh, checkpoint_at: int) -> dict:
         v = data.get("subagent_approved")
         if isinstance(v, bool):
             state["subagent_approved"] = v
+        v = data.get("self_approve_times")
+        if isinstance(v, int):
+            state["self_approve_times"] = max(0, v)
     except Exception:
         pass
     return state
@@ -185,6 +189,7 @@ def increment_and_check(
                 lr = state["large_reads"]
                 approved_tc = state["approved_tool_calls"]
                 subagent_approved = state["subagent_approved"]
+                sa_times_used = state["self_approve_times"]
 
                 _save_locked(fh, state)
             finally:
@@ -215,8 +220,20 @@ def increment_and_check(
 
         # Soft checkpoint block
         if tc > approved_tc:
-            return BudgetVerdict(
-                BLOCK,
+            sa_cfg = cfg.get("self_approve")
+            sa_cfg = sa_cfg if isinstance(sa_cfg, dict) else {}
+            sa_enabled = bool(sa_cfg.get("enabled", False))
+            try:
+                sa_max_add = max(1, int(sa_cfg.get("max_add", 3)))
+            except Exception:
+                sa_max_add = 3
+            try:
+                sa_max_times = max(0, int(sa_cfg.get("max_times_per_session", 2)))
+            except Exception:
+                sa_max_times = 2
+            sa_remaining = max(0, sa_max_times - sa_times_used)
+
+            preamble = (
                 f"[agent-rails budget] Checkpoint: {tc}/{approved_tc} tool calls used.\n\n"
                 f"Done:\n"
                 f"- \n\n"
@@ -224,8 +241,21 @@ def increment_and_check(
                 f"- \n\n"
                 f"Request:\n"
                 f"- +N tools to [specific reason — what the next tool will prove]\n\n"
-                f"Approve:\n"
-                f"  ! agent-rails budget approve {session_id} --add N",
+            )
+            if sa_enabled and sa_remaining > 0:
+                return BudgetVerdict(
+                    BLOCK,
+                    preamble
+                    + f"Self-approve (≤{sa_max_add} tools, {sa_remaining}/{sa_max_times} uses remaining):\n"
+                    + f"  agent-rails budget approve {session_id} --add N --self\n\n"
+                    + f"Human approval (larger asks or when self-approve is exhausted):\n"
+                    + f"  ! agent-rails budget approve {session_id} --add N",
+                )
+            return BudgetVerdict(
+                BLOCK,
+                preamble
+                + f"Approve:\n"
+                + f"  ! agent-rails budget approve {session_id} --add N",
             )
 
         # Large-read nudge (over quota but not blocking)
@@ -277,6 +307,62 @@ def approve(
                 _unlock(fh)
     except Exception:
         return {}
+
+
+def self_approve(session_id: str, add_tools: int, cfg: dict) -> dict:
+    """Attempt an agent-initiated self-approve: validate limits then extend budget.
+
+    cfg is the ``budget.self_approve`` sub-dict from the resolved config.
+    Returns {"ok": bool, "reason": str, "state": dict}.  Fail-open on error.
+    """
+    try:
+        sa_cfg = cfg if isinstance(cfg, dict) else {}
+        if not bool(sa_cfg.get("enabled", False)):
+            return {"ok": False, "reason": "self-approve is disabled in config", "state": {}}
+        try:
+            max_add = max(1, int(sa_cfg.get("max_add", 3)))
+        except Exception:
+            max_add = 3
+        try:
+            max_times = max(0, int(sa_cfg.get("max_times_per_session", 2)))
+        except Exception:
+            max_times = 2
+
+        if add_tools > max_add:
+            return {
+                "ok": False,
+                "reason": (
+                    f"--add {add_tools} exceeds self-approve max_add={max_add}; "
+                    f"use human approval"
+                ),
+                "state": {},
+            }
+
+        path = _budget_path(session_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a+", encoding="utf-8") as fh:
+            _lock(fh, exclusive=True)
+            try:
+                state = _load_locked(fh, _DEFAULTS["checkpoint_at"])
+                times_used = state.get("self_approve_times", 0)
+                if times_used >= max_times:
+                    return {
+                        "ok": False,
+                        "reason": (
+                            f"self-approve exhausted ({times_used}/{max_times} uses); "
+                            f"use human approval"
+                        ),
+                        "state": dict(state),
+                    }
+                new_ceiling = state["tool_calls"] + max(add_tools, 1)
+                state["approved_tool_calls"] = max(state["approved_tool_calls"], new_ceiling)
+                state["self_approve_times"] = times_used + 1
+                _save_locked(fh, state)
+                return {"ok": True, "reason": "", "state": dict(state)}
+            finally:
+                _unlock(fh)
+    except Exception:
+        return {"ok": False, "reason": "unexpected error; use human approval", "state": {}}
 
 
 def reset(session_id: str) -> bool:
