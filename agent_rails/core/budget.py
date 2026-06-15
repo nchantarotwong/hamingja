@@ -48,6 +48,9 @@ _DEFAULTS = {
     "max_large_reads": 2,
     "max_subagents": 0,
     "poll_timeout_s": 60,
+    # self_approve.replenish_every: 0 disables; otherwise one self-approve
+    # slot is replenished per N tool calls past checkpoint_at.
+    "replenish_every": 20,
 }
 
 
@@ -156,9 +159,57 @@ def _save_locked(fh, state: dict) -> None:
 def _cfg_int(cfg: dict, key: str) -> int:
     v = cfg.get(key, _DEFAULTS.get(key, 1))
     try:
-        return max(0 if key == "poll_timeout_s" else 1, int(v))
+        floor = 0 if key in ("poll_timeout_s", "replenish_every") else 1
+        return max(floor, int(v))
     except Exception:
         return _DEFAULTS.get(key, 1)
+
+
+def _sa_cfg(sub: object) -> tuple[bool, int, int, int]:
+    """Pull (enabled, max_add, max_times, replenish_every) from the self_approve sub-dict.
+
+    Callers pass the SUB-DICT directly (not the wrapping budget cfg), so this
+    can't accidentally interpret the budget's ``"enabled": True`` as self-approve
+    being enabled. Returns disabled defaults for None / non-dict input.
+    """
+    sa = sub if isinstance(sub, dict) else {}
+    enabled = bool(sa.get("enabled", False))
+    try:
+        max_add = max(1, int(sa.get("max_add", 3)))
+    except Exception:
+        max_add = 3
+    try:
+        max_times = max(0, int(sa.get("max_times_per_session", 2)))
+    except Exception:
+        max_times = 2
+    try:
+        # replenish_every floor of 0 = disabled
+        replenish_every = max(0, int(sa.get("replenish_every", _DEFAULTS["replenish_every"])))
+    except Exception:
+        replenish_every = _DEFAULTS["replenish_every"]
+    return enabled, max_add, max_times, replenish_every
+
+
+def _sa_remaining(
+    tool_calls: int,
+    self_approve_times: int,
+    checkpoint_at: int,
+    max_times: int,
+    replenish_every: int,
+) -> int:
+    """Return remaining self-approve slots given replenishment.
+
+    Replenishment: one slot is restored per ``replenish_every`` tool calls past
+    ``checkpoint_at``. ``replenish_every <= 0`` disables replenishment.
+    """
+    if max_times <= 0:
+        return 0
+    if replenish_every > 0 and tool_calls > checkpoint_at:
+        replenished = (tool_calls - checkpoint_at) // replenish_every
+    else:
+        replenished = 0
+    effective_used = max(0, self_approve_times - replenished)
+    return max(0, max_times - effective_used)
 
 
 def _poll_for_approval(
@@ -296,37 +347,40 @@ def increment_and_check(
 
         # Soft checkpoint block
         if tc > approved_tc:
-            sa_cfg = cfg.get("self_approve")
-            sa_cfg = sa_cfg if isinstance(sa_cfg, dict) else {}
-            sa_enabled = bool(sa_cfg.get("enabled", False))
-            try:
-                sa_max_add = max(1, int(sa_cfg.get("max_add", 3)))
-            except Exception:
-                sa_max_add = 3
-            try:
-                sa_max_times = max(0, int(sa_cfg.get("max_times_per_session", 2)))
-            except Exception:
-                sa_max_times = 2
-            sa_remaining = max(0, sa_max_times - sa_times_used)
+            sa_enabled, sa_max_add, sa_max_times, sa_replenish = _sa_cfg(
+                cfg.get("self_approve")
+            )
+            sa_remaining = _sa_remaining(
+                tc, sa_times_used, checkpoint_at, sa_max_times, sa_replenish
+            )
 
+            # When self-approve is available, skip the 60s polling: the agent
+            # can self-approve inline (Bash exemption in tripwire) and retry in
+            # milliseconds. Polling is reserved for the human-approval path.
             if sa_enabled and sa_remaining > 0:
-                approve_hint = (
-                    f"  agent-rails budget approve {session_id} --add N --self\n"
-                    f"  (or human: ! agent-rails budget approve {session_id} --add N)"
+                return BudgetVerdict(
+                    BLOCK,
+                    f"[agent-rails budget] Checkpoint: {tc}/{approved_tc} tool calls used.\n\n"
+                    f"Self-approve to continue. Run this as a Bash tool call, then retry:\n"
+                    f"  agent-rails budget approve {session_id} --self --add N\n"
+                    f"  (N = 1-{sa_max_add}; {sa_remaining}/{sa_max_times} uses remaining)\n\n"
+                    f"Human approval — fallback when self-approve isn't appropriate "
+                    f"(open-ended work, exhausted slots):\n"
+                    f"  ! agent-rails budget approve {session_id} --add N",
                 )
-            else:
-                approve_hint = f"  ! agent-rails budget approve {session_id} --add N"
 
+            # Self-approve unavailable: poll for human approval, then deny.
             checkpoint_msg = (
                 f"[agent-rails budget] Checkpoint: {tc}/{approved_tc} tool calls used.\n"
                 f"Approve to continue (Claude will resume automatically):\n"
-                f"{approve_hint}"
+                f"  ! agent-rails budget approve {session_id} --add N"
             )
             print(f"\n{checkpoint_msg}\n", file=sys.stderr, flush=True)
             if _poll_for_approval(session_id, poll_timeout_s, tc):
                 return BudgetVerdict(ALLOW, "")
 
-            preamble = (
+            return BudgetVerdict(
+                BLOCK,
                 f"[agent-rails budget] Checkpoint: {tc}/{approved_tc} tool calls used.\n\n"
                 f"Done:\n"
                 f"- \n\n"
@@ -334,21 +388,8 @@ def increment_and_check(
                 f"- \n\n"
                 f"Request:\n"
                 f"- +N tools to [specific reason — what the next tool will prove]\n\n"
-            )
-            if sa_enabled and sa_remaining > 0:
-                return BudgetVerdict(
-                    BLOCK,
-                    preamble
-                    + f"Self-approve (≤{sa_max_add} tools, {sa_remaining}/{sa_max_times} uses remaining):\n"
-                    + f"  agent-rails budget approve {session_id} --add N --self\n\n"
-                    + f"Human approval (larger asks or when self-approve is exhausted):\n"
-                    + f"  ! agent-rails budget approve {session_id} --add N",
-                )
-            return BudgetVerdict(
-                BLOCK,
-                preamble
-                + f"Approve:\n"
-                + f"  ! agent-rails budget approve {session_id} --add N",
+                f"Approve:\n"
+                f"  ! agent-rails budget approve {session_id} --add N",
             )
 
         # Large-read nudge (over quota but not blocking)
@@ -409,17 +450,15 @@ def self_approve(session_id: str, add_tools: int, cfg: dict) -> dict:
     Returns {"ok": bool, "reason": str, "state": dict}.  Fail-open on error.
     """
     try:
-        sa_cfg = cfg if isinstance(cfg, dict) else {}
-        if not bool(sa_cfg.get("enabled", False)):
+        # Public API accepts either the inner self_approve sub-dict (the common
+        # case — CLI passes this through) or the wrapping budget cfg.
+        if isinstance(cfg, dict) and isinstance(cfg.get("self_approve"), dict):
+            sub = cfg.get("self_approve")
+        else:
+            sub = cfg
+        enabled, max_add, max_times, replenish_every = _sa_cfg(sub)
+        if not enabled:
             return {"ok": False, "reason": "self-approve is disabled in config", "state": {}}
-        try:
-            max_add = max(1, int(sa_cfg.get("max_add", 3)))
-        except Exception:
-            max_add = 3
-        try:
-            max_times = max(0, int(sa_cfg.get("max_times_per_session", 2)))
-        except Exception:
-            max_times = 2
 
         if add_tools > max_add:
             return {
@@ -431,14 +470,26 @@ def self_approve(session_id: str, add_tools: int, cfg: dict) -> dict:
                 "state": {},
             }
 
+        # checkpoint_at is needed for replenishment math; pull from the parent cfg
+        # if caller passed the wrapping budget dict, else fall back to the default.
+        checkpoint_at = _DEFAULTS["checkpoint_at"]
+        if isinstance(cfg, dict) and "checkpoint_at" in cfg:
+            try:
+                checkpoint_at = max(1, int(cfg["checkpoint_at"]))
+            except Exception:
+                pass
+
         path = _budget_path(session_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a+", encoding="utf-8") as fh:
             _lock(fh, exclusive=True)
             try:
-                state = _load_locked(fh, _DEFAULTS["checkpoint_at"])
+                state = _load_locked(fh, checkpoint_at)
                 times_used = state.get("self_approve_times", 0)
-                if times_used >= max_times:
+                remaining = _sa_remaining(
+                    state["tool_calls"], times_used, checkpoint_at, max_times, replenish_every
+                )
+                if remaining <= 0:
                     return {
                         "ok": False,
                         "reason": (

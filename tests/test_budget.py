@@ -351,3 +351,109 @@ def test_checkpoint_block_no_self_approve_when_exhausted():
     bv = increment_and_check(SESSION, "Bash", False, cfg)
     assert bv.action == BLOCK
     assert "Self-approve" not in bv.reason
+
+
+# ---------------------------------------------------------------------------
+# Skip-poll when self-approve is available (inline self-approve fast path)
+# ---------------------------------------------------------------------------
+
+def test_checkpoint_skips_poll_when_self_approve_available(monkeypatch):
+    """Inline-self-approve flow: with sa enabled+remaining, no polling happens.
+
+    Without this, the agent would wait poll_timeout_s seconds before being told
+    to self-approve — exactly the friction we're removing.
+    """
+    cfg = dict(_CFG_WITH_SA, poll_timeout_s=30)  # non-zero so a skip is meaningful
+    called: list = []
+
+    def fake_poll(*args, **kwargs):
+        called.append(args)
+        return False
+
+    monkeypatch.setattr("agent_rails.core.budget._poll_for_approval", fake_poll)
+    for _ in range(13):
+        bv = increment_and_check(SESSION, "Bash", False, cfg)
+    assert bv.action == BLOCK
+    assert called == []  # polling never invoked
+    # Reframed message: instruction-style with --self leading
+    assert "Self-approve" in bv.reason
+    assert "--self" in bv.reason
+    assert "then retry" in bv.reason.lower()
+
+
+def test_checkpoint_polls_when_self_approve_unavailable(monkeypatch):
+    """Human-approval path is preserved — polling still happens when sa is off."""
+    cfg = dict(_CFG_SA_DISABLED, poll_timeout_s=30)
+    called: list = []
+
+    def fake_poll(*args, **kwargs):
+        called.append(args)
+        return False
+
+    monkeypatch.setattr("agent_rails.core.budget._poll_for_approval", fake_poll)
+    for _ in range(13):
+        bv = increment_and_check(SESSION, "Bash", False, cfg)
+    assert bv.action == BLOCK
+    assert called  # poll was attempted
+
+
+# ---------------------------------------------------------------------------
+# Self-approve replenishment
+# ---------------------------------------------------------------------------
+
+_CFG_REPLENISH = dict(
+    _CFG,
+    self_approve={
+        "enabled": True,
+        "max_add": 3,
+        "max_times_per_session": 2,
+        "replenish_every": 5,
+    },
+)
+
+
+def test_self_approve_replenishment_restores_slot():
+    """After max_times is hit, replenish_every paced tool calls earn a slot back.
+
+    Production callers (CLI) pass the wrapping budget cfg so checkpoint_at is
+    in scope for replenishment math; this test mirrors that.
+    """
+    # Hit first checkpoint (tc=13)
+    for _ in range(13):
+        increment_and_check(SESSION, "Bash", False, _CFG_REPLENISH)
+    # Burn both slots
+    assert self_approve(SESSION, add_tools=1, cfg=_CFG_REPLENISH)["ok"] is True
+    assert self_approve(SESSION, add_tools=1, cfg=_CFG_REPLENISH)["ok"] is True
+    # Third attempt rejected at tc=13 — replenished=(13-12)//5=0
+    rejected = self_approve(SESSION, add_tools=1, cfg=_CFG_REPLENISH)
+    assert rejected["ok"] is False
+    assert "exhausted" in rejected["reason"]
+    # Extend ceiling so further tool calls don't re-checkpoint, then drive tc to 17
+    approve(SESSION, add_tools=20)
+    for _ in range(4):  # tc 13 -> 17, replenished=(17-12)//5=1
+        increment_and_check(SESSION, "Bash", False, _CFG_REPLENISH)
+    # Replenishment grants one slot back
+    granted = self_approve(SESSION, add_tools=1, cfg=_CFG_REPLENISH)
+    assert granted["ok"] is True
+    assert granted["state"]["self_approve_times"] == 3
+
+
+def test_replenish_every_zero_disables_replenishment():
+    """replenish_every=0 means no replenishment ever — original strict cap."""
+    cfg = dict(_CFG, self_approve={
+        "enabled": True,
+        "max_add": 3,
+        "max_times_per_session": 1,
+        "replenish_every": 0,
+    })
+    for _ in range(13):
+        increment_and_check(SESSION, "Bash", False, cfg)
+    self_approve(SESSION, add_tools=1, cfg=cfg)
+    approve(SESSION, add_tools=20)
+    for _ in range(5):  # plenty of paced calls
+        increment_and_check(SESSION, "Bash", False, cfg)
+    rejected = self_approve(SESSION, add_tools=1, cfg=cfg)
+    assert rejected["ok"] is False
+    assert "exhausted" in rejected["reason"]
+
+

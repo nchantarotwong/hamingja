@@ -72,6 +72,7 @@ _DEFAULT = {
             "fallback_patterns": ["grep ", "rg ", "sed ", "awk "],
             "protected_targets": [],
         },
+        "python_command": {"enabled": True, "nudge_at": 1, "block_at": 2},
     },
 }
 
