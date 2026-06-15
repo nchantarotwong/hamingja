@@ -174,6 +174,17 @@ When the user says they merged a PR, treat that as authoritative:
   `~/.claude/` or `~/.codex/`. (Branch deletion is handled by Post-merge
   cleanup; it doesn't need a second confirm there.)
 
+## Subagent discipline
+
+Use a subagent when reconnaissance would produce significant output in the
+main context (many reads, large files). A constrained subagent returning
+compact refs/verdict is cheaper overall than polluting the main thread.
+
+- Scope the target precisely: name exact files or patterns, never "explore the codebase."
+- Specify the output contract: file:line refs, one-sentence summary, no prose.
+- Skip the subagent when a single `grep`/`Read` suffices, or you'd need to
+  re-read its full output to proceed anyway.
+
 ## Terminology
 
 Use primary/replica, leader/follower, coordinator/worker — not master/slave.
