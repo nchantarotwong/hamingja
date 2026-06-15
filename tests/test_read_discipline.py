@@ -112,7 +112,7 @@ def test_first_unscoped_read_blocks_for_huge_file(tmp_path):
     verdict = DET.evaluate([], candidate, CFG)
     assert verdict is not None
     assert verdict.action == BLOCK
-    assert "1000 lines" in verdict.reason
+    assert "1000+ lines" in verdict.reason
     assert "offset+limit" in verdict.reason
 
 
@@ -208,6 +208,17 @@ def test_missing_file_not_flagged():
     events = [_ev(path="/nonexistent/ghost.py")] * 5
     candidate = _ev(path="/nonexistent/ghost.py")
     verdict = DET.evaluate(events, candidate, CFG)
+    assert verdict is None
+
+
+def test_file_inspection_exception_fails_open(tmp_path, monkeypatch):
+    path = _make_large_file(tmp_path, lines=1000)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("unexpected inspection failure")
+
+    monkeypatch.setattr(Path, "open", boom)
+    verdict = DET.evaluate([], _ev(path=path), CFG)
     assert verdict is None
 
 

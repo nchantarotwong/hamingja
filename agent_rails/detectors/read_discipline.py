@@ -27,15 +27,29 @@ if TYPE_CHECKING:
 
 _LARGE_FILE_LINE_THRESHOLD = 200
 _FIRST_READ_BLOCK_LINE_THRESHOLD = 1000
+_READ_CHUNK_BYTES = 64 * 1024
 
 
-def _line_count(path_str: str) -> Optional[int]:
-    """Return a file's line count, or None when it cannot be inspected."""
+def _line_count_up_to(path_str: str, limit: int) -> Optional[int]:
+    """Return min(line_count, limit), or None when the file cannot be inspected."""
     if not path_str:
         return None
     try:
-        return len(Path(path_str).read_bytes().splitlines())
-    except OSError:
+        count = 0
+        saw_any = False
+        last = b""
+        with Path(path_str).open("rb") as fh:
+            while count < limit:
+                chunk = fh.read(_READ_CHUNK_BYTES)
+                if not chunk:
+                    break
+                saw_any = True
+                count += chunk.count(b"\n")
+                last = chunk[-1:]
+        if saw_any and last != b"\n":
+            count += 1
+        return min(count, limit)
+    except Exception:
         return None
 
 
@@ -58,7 +72,7 @@ def _refs_hint(path: str) -> str:
                 return " If available, use `scripts/refs.sh <symbol-or-pattern>` to locate references first."
             if (root / ".git").exists():
                 break
-    except OSError:
+    except Exception:
         return ""
     return ""
 
@@ -87,11 +101,6 @@ class ReadDisciplineDetector(Detector):
         if not path:
             return None
 
-        line_count = _line_count(path)
-        # Skip missing/unreadable/small files — fail open and keep overhead low.
-        if line_count is None or line_count < _LARGE_FILE_LINE_THRESHOLD:
-            return None
-
         nudge_at = _cfg_int(cfg, "nudge_at", 2)
         block_at = max(nudge_at + 1, _cfg_int(cfg, "block_at", 3))
         first_read_block_at = _cfg_int(
@@ -100,6 +109,12 @@ class ReadDisciplineDetector(Detector):
             _FIRST_READ_BLOCK_LINE_THRESHOLD,
             floor=0,
         )
+        count_limit = max(_LARGE_FILE_LINE_THRESHOLD, first_read_block_at)
+        line_count = _line_count_up_to(path, count_limit)
+        # Skip missing/unreadable/small files — fail open and keep overhead low.
+        if line_count is None or line_count < _LARGE_FILE_LINE_THRESHOLD:
+            return None
+
         name = Path(path).name
         hint = _refs_hint(path)
 
@@ -121,7 +136,7 @@ class ReadDisciplineDetector(Detector):
                 BLOCK,
                 self.name,
                 (
-                    f"Unscoped Read of {name} blocked ({line_count} lines). "
+                    f"Unscoped Read of {name} blocked ({line_count}+ lines). "
                     f"Use grep -n to locate the target section, then Read with "
                     f"offset+limit.{hint}"
                 ),
