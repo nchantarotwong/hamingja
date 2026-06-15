@@ -213,8 +213,9 @@ Configuration resolves in this order, and the trust boundary matters:
 7. `AGENT_RAILS_MODE` env var — **trusted** (your shell); may set any mode.
 
 All values are sanitized: modes are canonicalized, and `window`/`block_at`/
-`nudge_at` are coerced to ints with safe floors, so a typo or out-of-range
-value can neither crash a detector nor cause a spurious block.
+`nudge_at`/detector-specific thresholds are coerced to ints with safe floors,
+so a typo or out-of-range value can neither crash a detector nor cause a
+spurious block.
 
 The user-level policy registry is how private or project-specific guardrails
 stay out of the public package while still becoming real hard protections. A
@@ -452,6 +453,9 @@ Example repo-local config:
     "error_streak": {
       "nudge_at": 4,
       "block_at": 8
+    },
+    "read_discipline": {
+      "block_first_read_at_lines": 1000
     }
   }
 }

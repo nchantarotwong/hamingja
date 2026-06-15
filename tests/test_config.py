@@ -104,6 +104,48 @@ def test_project_can_raise_block_at():
     _no_env(body)
 
 
+def test_project_cannot_lower_first_read_block_threshold():
+    def body():
+        d = _proj({".agent-rails.json": json.dumps({
+            "detectors": {
+                "read_discipline": {"block_first_read_at_lines": 400}
+            }
+        })})
+        assert (
+            load_config(d)["detectors"]["read_discipline"]["block_first_read_at_lines"]
+            == 1000
+        )
+    _no_env(body)
+
+
+def test_project_can_raise_first_read_block_threshold():
+    def body():
+        d = _proj({".agent-rails.json": json.dumps({
+            "detectors": {
+                "read_discipline": {"block_first_read_at_lines": 1500}
+            }
+        })})
+        assert (
+            load_config(d)["detectors"]["read_discipline"]["block_first_read_at_lines"]
+            == 1500
+        )
+    _no_env(body)
+
+
+def test_project_can_disable_first_read_block_threshold():
+    def body():
+        d = _proj({".agent-rails.json": json.dumps({
+            "detectors": {
+                "read_discipline": {"block_first_read_at_lines": 0}
+            }
+        })})
+        assert (
+            load_config(d)["detectors"]["read_discipline"]["block_first_read_at_lines"]
+            == 0
+        )
+    _no_env(body)
+
+
 def test_project_can_disable_detector_but_not_enable_a_tightening():
     def body():
         d = _proj({".agent-rails.json": json.dumps(

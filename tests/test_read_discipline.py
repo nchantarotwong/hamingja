@@ -106,6 +106,55 @@ def test_first_unscoped_read_is_quiet(tmp_path):
     assert verdict is None
 
 
+def test_first_unscoped_read_blocks_for_huge_file(tmp_path):
+    path = _make_large_file(tmp_path, lines=1000)
+    candidate = _ev(path=path)
+    verdict = DET.evaluate([], candidate, CFG)
+    assert verdict is not None
+    assert verdict.action == BLOCK
+    assert "1000+ lines" in verdict.reason
+    assert "offset+limit" in verdict.reason
+
+
+def test_first_unscoped_read_below_huge_threshold_uses_repeat_policy(tmp_path):
+    path = _make_large_file(tmp_path, lines=999)
+    candidate = _ev(path=path)
+    verdict = DET.evaluate([], candidate, CFG)
+    assert verdict is None
+
+
+def test_first_read_block_threshold_can_be_raised(tmp_path):
+    path = _make_large_file(tmp_path, lines=1000)
+    cfg = {
+        "detectors": {
+            "read_discipline": {
+                "enabled": True,
+                "nudge_at": 2,
+                "block_at": 3,
+                "block_first_read_at_lines": 1200,
+            }
+        }
+    }
+    verdict = DET.evaluate([], _ev(path=path), cfg)
+    assert verdict is None
+
+
+def test_first_read_block_threshold_zero_disables_first_read_block(tmp_path):
+    path = _make_large_file(tmp_path, lines=1000)
+    cfg = {
+        "detectors": {
+            "read_discipline": {
+                "enabled": True,
+                "nudge_at": 2,
+                "block_at": 3,
+                "block_first_read_at_lines": 0,
+            }
+        }
+    }
+    verdict = DET.evaluate([], _ev(path=path), cfg)
+    assert verdict is None
+
+
 def test_second_unscoped_read_nudges(tmp_path):
     path = _make_large_file(tmp_path)
     prior = _ev(path=path)
@@ -162,6 +211,17 @@ def test_missing_file_not_flagged():
     assert verdict is None
 
 
+def test_file_inspection_exception_fails_open(tmp_path, monkeypatch):
+    path = _make_large_file(tmp_path, lines=1000)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("unexpected inspection failure")
+
+    monkeypatch.setattr(Path, "open", boom)
+    verdict = DET.evaluate([], _ev(path=path), CFG)
+    assert verdict is None
+
+
 def test_disabled_detector_is_silent(tmp_path):
     path = _make_large_file(tmp_path)
     cfg = {"detectors": {"read_discipline": {"enabled": False}}}
@@ -186,6 +246,36 @@ def test_custom_thresholds(tmp_path):
     verdict2 = DET.evaluate(events2, _ev(path=path), cfg)
     assert verdict2 is not None
     assert verdict2.action == BLOCK
+
+
+def test_refs_script_hint_when_repo_refs_helper_exists(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    refs = repo / "refs.sh"
+    refs.write_text("#!/bin/sh\n")
+    path = repo / "large.py"
+    path.write_text("\n".join(f"line {i}" for i in range(1000)))
+
+    verdict = DET.evaluate([], _ev(path=str(path)), CFG)
+    assert verdict is not None
+    assert verdict.action == BLOCK
+    assert "./refs.sh <symbol-or-pattern>" in verdict.reason
+
+
+def test_refs_script_hint_when_scripts_refs_helper_exists(tmp_path):
+    repo = tmp_path / "repo"
+    scripts = repo / "scripts"
+    scripts.mkdir(parents=True)
+    (repo / ".git").mkdir()
+    (scripts / "refs.sh").write_text("#!/bin/sh\n")
+    path = repo / "large.py"
+    path.write_text("\n".join(f"line {i}" for i in range(1000)))
+
+    verdict = DET.evaluate([], _ev(path=str(path)), CFG)
+    assert verdict is not None
+    assert verdict.action == BLOCK
+    assert "scripts/refs.sh <symbol-or-pattern>" in verdict.reason
 
 
 # ---------------------------------------------------------------------------

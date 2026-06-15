@@ -25,6 +25,8 @@ session:
 
 - **2nd unscoped read of the same file** → nudge: next read will be blocked.
 - **3rd unscoped read of the same file** → blocked: use grep + offset/limit.
+- **1st unscoped read of a 1000+ line file** → blocked: locate the section
+  first, then read a bounded window.
 
 The tripwire hook emits an advisory before every unscoped read of a file over
 200 lines, regardless of repetition count.
