@@ -22,7 +22,9 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
+import time
 from pathlib import Path
 
 try:
@@ -41,9 +43,10 @@ _SUBAGENT_TOOLS = frozenset({"Agent", "Task"})
 _DEFAULTS = {
     "nudge_at": 8,
     "checkpoint_at": 12,
-    "hard_block_at": 20,
+    "hard_block_at": 60,
     "max_large_reads": 2,
     "max_subagents": 0,
+    "poll_timeout_s": 60,
 }
 
 
@@ -150,11 +153,45 @@ def _save_locked(fh, state: dict) -> None:
 # ---------------------------------------------------------------------------
 
 def _cfg_int(cfg: dict, key: str) -> int:
-    v = cfg.get(key, _DEFAULTS[key])
+    v = cfg.get(key, _DEFAULTS.get(key, 1))
     try:
-        return max(1, int(v))
+        return max(0 if key == "poll_timeout_s" else 1, int(v))
     except Exception:
-        return _DEFAULTS[key]
+        return _DEFAULTS.get(key, 1)
+
+
+def _poll_for_approval(
+    session_id: str, timeout_s: int, blocked_at_tc: int, reset_only: bool = False
+) -> bool:
+    """Poll the budget state file until the block clears or timeout.
+
+    reset_only=True: only clears on reset() (file deletion) — used for hard blocks.
+    reset_only=False: clears on approve() (ceiling raised) or reset().
+    Returns True if cleared, False on timeout. Fails open on read errors.
+    """
+    if timeout_s <= 0:
+        return False
+    path = _budget_path(session_id)
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        time.sleep(0.5)
+        try:
+            if not path.exists():
+                return True  # reset() cleared state
+            if not reset_only:
+                with path.open("r", encoding="utf-8") as fh:
+                    _lock(fh, exclusive=False)
+                    try:
+                        raw = fh.read()
+                    finally:
+                        _unlock(fh)
+                data = json.loads(raw) if raw.strip() else {}
+                if isinstance(data, dict):
+                    if blocked_at_tc <= data.get("approved_tool_calls", 0):
+                        return True
+        except Exception:
+            pass
+    return False
 
 
 def increment_and_check(
@@ -195,13 +232,18 @@ def increment_and_check(
             finally:
                 _unlock(fh)
 
-        # Hard block: unconditional; only reset() clears it
+        poll_timeout_s = _cfg_int(cfg, "poll_timeout_s")
+
+        # Hard block: only reset() or approve() clears it
         if tc > hard_block_at:
-            return BudgetVerdict(
-                BLOCK,
+            hard_msg = (
                 f"[agent-rails budget] Hard limit: {tc}/{hard_block_at} tool calls. Reset required.\n\n"
-                f"  ! agent-rails budget reset {session_id}",
+                f"  ! agent-rails budget reset {session_id}"
             )
+            print(f"\n{hard_msg}\n", file=sys.stderr, flush=True)
+            if _poll_for_approval(session_id, poll_timeout_s, tc, reset_only=True):
+                return BudgetVerdict(ALLOW, "")
+            return BudgetVerdict(BLOCK, hard_msg)
 
         # Subagent block
         if is_subagent and sa > max_subagents and not subagent_approved:
@@ -232,6 +274,23 @@ def increment_and_check(
             except Exception:
                 sa_max_times = 2
             sa_remaining = max(0, sa_max_times - sa_times_used)
+
+            if sa_enabled and sa_remaining > 0:
+                approve_hint = (
+                    f"  agent-rails budget approve {session_id} --add N --self\n"
+                    f"  (or human: ! agent-rails budget approve {session_id} --add N)"
+                )
+            else:
+                approve_hint = f"  ! agent-rails budget approve {session_id} --add N"
+
+            checkpoint_msg = (
+                f"[agent-rails budget] Checkpoint: {tc}/{approved_tc} tool calls used.\n"
+                f"Approve to continue (Claude will resume automatically):\n"
+                f"{approve_hint}"
+            )
+            print(f"\n{checkpoint_msg}\n", file=sys.stderr, flush=True)
+            if _poll_for_approval(session_id, poll_timeout_s, tc):
+                return BudgetVerdict(ALLOW, "")
 
             preamble = (
                 f"[agent-rails budget] Checkpoint: {tc}/{approved_tc} tool calls used.\n\n"
