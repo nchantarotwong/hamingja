@@ -40,6 +40,9 @@ from typing import Optional
 from . import __version__
 from .config import load_config
 from .core.audit import clear_audit, read_audit, summarize
+from .core.budget import approve as _budget_approve
+from .core.budget import read_state as _budget_read_state
+from .core.budget import reset as _budget_reset
 from .profiles import (
     ALL_PROFILES,
     DEFAULT_PROFILES,
@@ -335,6 +338,39 @@ def _copy_stdin_to_body_file(body_file) -> str | None:
         if total > MAX_STDIN_BODY_BYTES:
             return f"- error: stdin PR body exceeds {MAX_STDIN_BODY_BYTES} bytes; use --body-file for larger content"
         body_file.write(chunk)
+
+
+def _cmd_budget(args: argparse.Namespace) -> int:
+    sub = getattr(args, "budget_cmd", None)
+    if sub == "status":
+        state = _budget_read_state(args.session_id)
+        if not state:
+            print(f"no budget state found for session: {args.session_id}")
+            return 0
+        print(f"budget state for session: {args.session_id}")
+        for k, v in sorted(state.items()):
+            print(f"  {k}: {v}")
+        return 0
+    if sub == "approve":
+        add = max(1, args.add)
+        state = _budget_approve(args.session_id, add_tools=add, approve_subagent=args.subagent)
+        if not state:
+            print(f"error: could not update budget state for session: {args.session_id}", file=sys.stderr)
+            return 1
+        print(f"approved: session={args.session_id}")
+        print(f"  approved_tool_calls: {state.get('approved_tool_calls')}")
+        print(f"  subagent_approved:   {state.get('subagent_approved')}")
+        return 0
+    if sub == "reset":
+        deleted = _budget_reset(args.session_id)
+        if deleted:
+            print(f"reset: budget state cleared for session: {args.session_id}")
+        else:
+            print(f"reset: no budget state found for session: {args.session_id}")
+        return 0
+    # no sub-command: print usage
+    args._parser.print_help()  # type: ignore[attr-defined]
+    return 0
 
 
 def _cmd_test_summary(args: argparse.Namespace) -> int:
@@ -986,6 +1022,35 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("version", help="print version").set_defaults(
         func=lambda _a: (print(f"agent-rails {__version__}"), 0)[1]
     )
+
+    bgt = sub.add_parser("budget", help="inspect and approve session budget gates")
+    bgt_sub = bgt.add_subparsers(dest="budget_cmd")
+    bgt.set_defaults(func=_cmd_budget, _parser=bgt)
+
+    bgt_status = bgt_sub.add_parser("status", help="show current budget counters for a session")
+    bgt_status.add_argument("session_id", help="session ID shown in the block message")
+    bgt_status.set_defaults(func=_cmd_budget, budget_cmd="status")
+
+    bgt_approve = bgt_sub.add_parser("approve", help="extend tool-call budget (and optionally unblock a subagent)")
+    bgt_approve.add_argument("session_id", help="session ID shown in the block message")
+    bgt_approve.add_argument(
+        "--add",
+        type=int,
+        default=8,
+        metavar="N",
+        help="additional tool calls to grant (default: 8)",
+    )
+    bgt_approve.add_argument(
+        "--subagent",
+        action="store_true",
+        help="also unblock one subagent spawn",
+    )
+    bgt_approve.set_defaults(func=_cmd_budget, budget_cmd="approve")
+
+    bgt_reset = bgt_sub.add_parser("reset", help="clear all budget counters for a session (hard-block recovery)")
+    bgt_reset.add_argument("session_id", help="session ID shown in the block message")
+    bgt_reset.set_defaults(func=_cmd_budget, budget_cmd="reset")
+
     return p
 
 

@@ -1,5 +1,13 @@
 {
   "mode": "observe",
+  "budget": {
+    "enabled": true,
+    "nudge_at": 8,
+    "checkpoint_at": 12,
+    "hard_block_at": 20,
+    "max_large_reads": 2,
+    "max_subagents": 0
+  },
   "window": 12,
   "detectors": {
     "repetition": {
