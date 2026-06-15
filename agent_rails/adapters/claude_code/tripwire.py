@@ -30,6 +30,42 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from agent_rails.core.api import check  # noqa: E402
 from agent_rails.detectors.base import BLOCK, NUDGE  # noqa: E402
 
+_LARGE_FILE_LINE_THRESHOLD = 200
+
+
+def _large_read_advisory(tool: str, args: object) -> str | None:
+    """Return an advisory string when a Read has no offset/limit on a large file.
+
+    Fires on the first (and every) unscoped Read so the model is warned before
+    the file content arrives.  The read itself is never blocked here — that
+    escalation belongs to the read_discipline detector after a repeat offense.
+    Fails open: any OSError or type error returns None.
+    """
+    if not isinstance(args, dict):
+        return None
+    if str(tool).strip().lower() != "read":
+        return None
+    has_offset = args.get("offset") not in (None, "")
+    has_limit = args.get("limit") not in (None, "")
+    if has_offset or has_limit:
+        return None
+    path_str = str(args.get("file_path") or args.get("path") or "").strip()
+    if not path_str:
+        return None
+    try:
+        line_count = Path(path_str).read_bytes().count(b"\n")
+    except OSError:
+        return None
+    if line_count < _LARGE_FILE_LINE_THRESHOLD:
+        return None
+    name = Path(path_str).name
+    return (
+        f"[agent-rails] {name} has ~{line_count} lines. "
+        f"Prefer: grep -n for the target symbol/section, then Read with "
+        f"offset+limit. Unscoped reads of large files are the primary source "
+        f"of excess token usage in a session."
+    )
+
 
 def _emit_deny(reason: str) -> None:
     print(json.dumps({
@@ -74,7 +110,11 @@ def main() -> int:
                     "were enforcing. " + context
                 )
             _emit_nudge(context)
-        # ALLOW: print nothing
+        else:
+            # ALLOW: still emit a pre-read advisory for unscoped large-file reads
+            advisory = _large_read_advisory(tool, tool_input)
+            if advisory:
+                _emit_nudge(advisory)
     except Exception:
         return 0  # any failure -> allow
 

@@ -31,6 +31,7 @@ from ..detectors.error_streak import ErrorStreakDetector
 from ..detectors.oscillation import OscillationDetector
 from ..detectors.leverage_fallback import LeverageFallbackDetector
 from ..detectors.workflow_wrapper import WorkflowWrapperDetector
+from ..detectors.read_discipline import ReadDisciplineDetector
 
 # Registry. Add a detector here to enable it. Order matters only for ties:
 # on equal severity the earlier detector's verdict is kept (see evaluate()),
@@ -38,6 +39,7 @@ from ..detectors.workflow_wrapper import WorkflowWrapperDetector
 DETECTORS = [
     WorkflowWrapperDetector(),
     LeverageFallbackDetector(),
+    ReadDisciplineDetector(),
     RepetitionDetector(),
     OscillationDetector(),
     ErrorStreakDetector(),

@@ -26,6 +26,12 @@
       "nudge_at": 1,
       "block_at": 2
     },
+    "read_discipline": {
+      "enabled": true,
+      "large_file_lines": 200,
+      "nudge_at": 2,
+      "block_at": 3
+    },
     "leverage_fallback": {
       "enabled": true,
       "block_at": 2,

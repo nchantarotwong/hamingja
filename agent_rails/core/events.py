@@ -32,6 +32,8 @@ class ToolEvent:
     arg_kind: str = ""
     arg_preview: str = ""
     output_hash: str = ""
+    read_scoped: bool = True  # False when Read has no offset/limit (unscoped large-file read)
+    read_path: str = ""       # normalized path for unscoped-read detector lookups
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), sort_keys=True)
@@ -49,6 +51,8 @@ class ToolEvent:
             arg_kind=str(d.get("arg_kind", "")),
             arg_preview=str(d.get("arg_preview", "")),
             output_hash=str(d.get("output_hash", "")),
+            read_scoped=bool(d.get("read_scoped", True)),
+            read_path=str(d.get("read_path", "")),
         )
 
     # --- factories: the ONE place a ToolEvent is built from raw args -------
@@ -59,19 +63,23 @@ class ToolEvent:
     def candidate(cls, session_id: str, tool: str, args: Any) -> "ToolEvent":
         """A call about to run (PreToolUse / check); outcome unknown."""
         norm = normalize_tool_args(tool, args)
+        scoped, rpath = _read_scope(tool, args)
         return cls(
             session_id, tool, hash_args(norm.value), PENDING, time.time(),
             args_complete=norm.complete, arg_kind=norm.kind, arg_preview=norm.preview,
+            read_scoped=scoped, read_path=rpath,
         )
 
     @classmethod
     def record(cls, session_id: str, tool: str, args: Any, ok: bool, output: Any = None) -> "ToolEvent":
         """A completed call with a known outcome (PostToolUse / observe)."""
         norm = normalize_tool_args(tool, args)
+        scoped, rpath = _read_scope(tool, args)
         return cls(
             session_id, tool, hash_args(norm.value), OK if ok else ERROR, time.time(),
             args_complete=norm.complete, arg_kind=norm.kind, arg_preview=norm.preview,
             output_hash=hash_output(output),
+            read_scoped=scoped, read_path=rpath,
         )
 
     @classmethod
@@ -85,9 +93,11 @@ class ToolEvent:
         the diagnostic the block asked for; it carries the candidate's hash, so
         an identical *retry* still matches and stays blocked under repetition."""
         norm = normalize_tool_args(tool, args)
+        scoped, rpath = _read_scope(tool, args)
         return cls(
             session_id, tool, hash_args(norm.value), BLOCKED, time.time(),
             args_complete=norm.complete, arg_kind=norm.kind, arg_preview=norm.preview,
+            read_scoped=scoped, read_path=rpath,
         )
 
 
@@ -137,6 +147,25 @@ def _preview(s: str, limit: int = 320) -> str:
     if len(compact) <= limit:
         return compact
     return compact[: limit - 1] + "…"
+
+
+def _read_scope(tool: str, args: Any) -> tuple[bool, str]:
+    """Return (is_scoped, normalized_path) for Read tool calls.
+
+    A Read is *unscoped* when it has no offset and no limit — the model will
+    receive the entire file regardless of size. Scoped reads (offset/limit
+    present) target a bounded window and are not flagged.
+    Non-Read tools always return (True, "").
+    """
+    if _tool_lower(tool) != "read":
+        return True, ""
+    if not isinstance(args, dict):
+        return True, ""
+    has_offset = args.get("offset") not in (None, "")
+    has_limit = args.get("limit") not in (None, "")
+    scoped = has_offset or has_limit
+    path = str(args.get("file_path") or args.get("path") or "").strip()
+    return scoped, path
 
 
 def normalize_tool_args(tool: str, args: Any) -> NormalizedArgs:
