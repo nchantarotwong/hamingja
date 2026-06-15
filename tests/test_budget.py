@@ -15,6 +15,7 @@ from agent_rails.core.budget import (
     increment_and_check,
     read_state,
     reset,
+    self_approve,
 )
 
 SESSION = "test-budget-session"
@@ -238,3 +239,97 @@ def test_approve_returns_empty_on_bad_session(monkeypatch, tmp_path):
     monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(fake_file))
     state = approve("bad-session", add_tools=8)
     assert state == {}
+
+
+# ---------------------------------------------------------------------------
+# self_approve()
+# ---------------------------------------------------------------------------
+
+_SA_CFG = {"enabled": True, "max_add": 3, "max_times_per_session": 2}
+
+
+def test_self_approve_works_within_limits():
+    # Hit checkpoint first
+    for _ in range(13):
+        increment_and_check(SESSION, "Bash", False, _CFG)
+    result = self_approve(SESSION, add_tools=2, cfg=_SA_CFG)
+    assert result["ok"] is True
+    assert result["state"]["self_approve_times"] == 1
+    assert result["state"]["approved_tool_calls"] >= 13 + 2
+
+
+def test_self_approve_rejects_oversized_add():
+    result = self_approve(SESSION, add_tools=5, cfg=_SA_CFG)
+    assert result["ok"] is False
+    assert "max_add" in result["reason"]
+
+
+def test_self_approve_rejects_when_exhausted():
+    for _ in range(13):
+        increment_and_check(SESSION, "Bash", False, _CFG)
+    self_approve(SESSION, add_tools=2, cfg=_SA_CFG)
+    # extend ceiling so second call doesn't re-checkpoint
+    approve(SESSION, add_tools=10)
+    self_approve(SESSION, add_tools=2, cfg=_SA_CFG)
+    # third self-approve should be rejected
+    result = self_approve(SESSION, add_tools=2, cfg=_SA_CFG)
+    assert result["ok"] is False
+    assert "exhausted" in result["reason"]
+
+
+def test_self_approve_disabled():
+    cfg = dict(_SA_CFG, enabled=False)
+    result = self_approve(SESSION, add_tools=2, cfg=cfg)
+    assert result["ok"] is False
+    assert "disabled" in result["reason"]
+
+
+def test_self_approve_bad_cfg_fails_open():
+    result = self_approve(SESSION, add_tools=2, cfg=None)  # type: ignore[arg-type]
+    assert result["ok"] is False  # disabled (no enabled=True)
+
+
+def test_self_approve_increments_counter():
+    result1 = self_approve(SESSION, add_tools=1, cfg=_SA_CFG)
+    assert result1["ok"] is True
+    result2 = self_approve(SESSION, add_tools=1, cfg=_SA_CFG)
+    assert result2["ok"] is True
+    assert result2["state"]["self_approve_times"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint block message — self-approve option presence
+# ---------------------------------------------------------------------------
+
+_CFG_WITH_SA = dict(_CFG, self_approve={"enabled": True, "max_add": 3, "max_times_per_session": 2})
+_CFG_SA_DISABLED = dict(_CFG, self_approve={"enabled": False, "max_add": 3, "max_times_per_session": 2})
+
+
+def test_checkpoint_block_shows_self_approve_option():
+    for _ in range(13):
+        bv = increment_and_check(SESSION, "Bash", False, _CFG_WITH_SA)
+    assert bv.action == BLOCK
+    assert "Self-approve" in bv.reason
+    assert "--self" in bv.reason
+    assert "Human approval" in bv.reason
+
+
+def test_checkpoint_block_no_self_approve_when_disabled():
+    for _ in range(13):
+        bv = increment_and_check(SESSION, "Bash", False, _CFG_SA_DISABLED)
+    assert bv.action == BLOCK
+    assert "Self-approve" not in bv.reason
+    assert "! agent-rails budget approve" in bv.reason
+
+
+def test_checkpoint_block_no_self_approve_when_exhausted():
+    cfg = dict(_CFG, self_approve={"enabled": True, "max_add": 3, "max_times_per_session": 1})
+    # Use up the one self-approve slot
+    self_approve(SESSION, add_tools=1, cfg=cfg["self_approve"])
+    # Now trigger checkpoint
+    approve(SESSION, add_tools=0)  # reset ceiling to trigger block
+    for _ in range(13):
+        increment_and_check(SESSION, "Bash", False, cfg)
+    bv = increment_and_check(SESSION, "Bash", False, cfg)
+    assert bv.action == BLOCK
+    assert "Self-approve" not in bv.reason

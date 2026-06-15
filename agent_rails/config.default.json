@@ -6,7 +6,13 @@
     "checkpoint_at": 12,
     "hard_block_at": 20,
     "max_large_reads": 2,
-    "max_subagents": 0
+    "max_subagents": 0,
+    "self_approve": {
+      "enabled": true,
+      "max_add": 3,
+      "max_times_per_session": 2,
+      "requires_checkpoint": true
+    }
   },
   "window": 12,
   "detectors": {
