@@ -165,6 +165,9 @@ When the user says they merged a PR, treat that as authoritative:
 5. Stop and report.
 
 Use the agent-rails wrappers when available:
+- `agent-rails pr-create --title <title> --body-file <path>` before `gh pr create`;
+  write a concise PR body to a temporary/repo-local markdown file first, or use
+  `--body -` with stdin. Do not pass a literal body string to `--body`.
 - `agent-rails pr-merge <pr>` before `gh pr merge`
 - `agent-rails post-merge-cleanup [branch]` before raw git cleanup
 
