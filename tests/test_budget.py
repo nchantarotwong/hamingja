@@ -27,6 +27,7 @@ _CFG = {
     "hard_block_at": 20,
     "max_large_reads": 2,
     "max_subagents": 0,
+    "poll_timeout_s": 0,  # disable polling in tests; production config sets this to ~60
 }
 
 
