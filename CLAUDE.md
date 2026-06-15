@@ -164,6 +164,13 @@ When the user says they merged a PR, treat that as authoritative:
    authorization for this specific deletion — no separate confirm needed.
 5. Stop and report.
 
+Use the agent-rails wrappers when available:
+- `agent-rails pr-merge <pr>` before `gh pr merge`
+- `agent-rails post-merge-cleanup [branch]` before raw git cleanup
+
+If a wrapper is unavailable or fails loudly, rerun the raw fallback with
+`AGENT_RAILS_ALLOW_RAW=1` and note why.
+
 ## Communication
 
 - Report outcomes faithfully. If tests fail, say so with the output.
