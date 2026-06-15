@@ -382,11 +382,14 @@ def _cmd_budget(args: argparse.Namespace) -> int:
         print(f"  subagent_approved:   {state.get('subagent_approved')}")
         return 0
     if sub == "reset":
-        deleted = _budget_reset(args.session_id)
+        add = max(0, int(getattr(args, "add_tools", 0) or 0))
+        deleted = _budget_reset(args.session_id, add_tools=add)
         if deleted:
             print(f"reset: budget state cleared for session: {args.session_id}")
         else:
             print(f"reset: no budget state found for session: {args.session_id}")
+        if add > 0:
+            print(f"  pre-approved: {add} tool calls added above checkpoint_at for next session")
         return 0
     # no sub-command: print usage
     args._parser.print_help()  # type: ignore[attr-defined]
@@ -1075,6 +1078,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     bgt_reset = bgt_sub.add_parser("reset", help="clear all budget counters for a session (hard-block recovery)")
     bgt_reset.add_argument("session_id", help="session ID shown in the block message")
+    bgt_reset.add_argument(
+        "--add", dest="add_tools", type=int, default=0, metavar="N",
+        help="pre-approve N tool calls above checkpoint_at so the resumed session has runway before the next checkpoint",
+    )
     bgt_reset.set_defaults(func=_cmd_budget, budget_cmd="reset")
 
     return p
