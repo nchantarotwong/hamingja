@@ -191,6 +191,22 @@ def test_after_reset_counters_restart():
     assert bv.action == ALLOW
 
 
+def test_reset_add_tools_pre_approves_ceiling():
+    reset(SESSION, add_tools=20)
+    state = read_state(SESSION)
+    # approved_tool_calls should be checkpoint_at (12 in test cfg) + 20 = 32
+    # but reset uses _DEFAULTS["checkpoint_at"] = 25, so ceiling = 25 + 20 = 45
+    assert state["approved_tool_calls"] == 45
+    assert state["tool_calls"] == 0
+
+
+def test_reset_add_tools_zero_leaves_no_file():
+    for _ in range(5):
+        increment_and_check(SESSION, "Bash", False, _CFG)
+    reset(SESSION, add_tools=0)
+    assert read_state(SESSION) == {}
+
+
 # ---------------------------------------------------------------------------
 # read_state()
 # ---------------------------------------------------------------------------
@@ -325,11 +341,12 @@ def test_checkpoint_block_no_self_approve_when_disabled():
 
 def test_checkpoint_block_no_self_approve_when_exhausted():
     cfg = dict(_CFG, self_approve={"enabled": True, "max_add": 3, "max_times_per_session": 1})
-    # Use up the one self-approve slot
+    # Seed the session so ceiling comes from cfg.checkpoint_at (12), not _DEFAULTS
+    increment_and_check(SESSION, "Bash", False, cfg)  # tc=1, approved_tc=12
+    # Use up the one self-approve slot; ceiling stays at max(12, 1+1)=12
     self_approve(SESSION, add_tools=1, cfg=cfg["self_approve"])
-    # Now trigger checkpoint
-    approve(SESSION, add_tools=0)  # reset ceiling to trigger block
-    for _ in range(13):
+    # Drive past the checkpoint (tc=1 → 14; 14 > approved_tc=12 → BLOCK)
+    for _ in range(12):
         increment_and_check(SESSION, "Bash", False, cfg)
     bv = increment_and_check(SESSION, "Bash", False, cfg)
     assert bv.action == BLOCK

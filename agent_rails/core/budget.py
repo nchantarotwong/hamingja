@@ -11,10 +11,11 @@ State: <state_dir>/<session>-budget.json
 
 Config keys (from cfg dict, typically cfg["budget"]):
   nudge_at:        8    soft warning
-  checkpoint_at:   12   blocks until approved; also the initial approved ceiling
-  hard_block_at:   20   unconditional block; only reset() clears it
+  checkpoint_at:   25   blocks until approved; also the initial approved ceiling
+  hard_block_at:   60   unconditional block; only reset() clears it
   max_large_reads: 2    advisory nudge when exceeded
   max_subagents:   0    blocks Agent tool unless subagent_approved is set
+  poll_timeout_s:  60   seconds the hook waits for approval before denying
 
 FAIL-OPEN: all public functions swallow exceptions and return allow/empty on error.
 """
@@ -42,7 +43,7 @@ _SUBAGENT_TOOLS = frozenset({"Agent", "Task"})
 
 _DEFAULTS = {
     "nudge_at": 8,
-    "checkpoint_at": 12,
+    "checkpoint_at": 25,
     "hard_block_at": 60,
     "max_large_reads": 2,
     "max_subagents": 0,
@@ -194,6 +195,31 @@ def _poll_for_approval(
     return False
 
 
+def _poll_for_subagent_approval(session_id: str, timeout_s: int) -> bool:
+    """Poll until subagent_approved is set or state is gone. Returns True if cleared."""
+    if timeout_s <= 0:
+        return False
+    path = _budget_path(session_id)
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        time.sleep(0.5)
+        try:
+            if not path.exists():
+                return True  # reset() cleared state
+            with path.open("r", encoding="utf-8") as fh:
+                _lock(fh, exclusive=False)
+                try:
+                    raw = fh.read()
+                finally:
+                    _unlock(fh)
+            data = json.loads(raw) if raw.strip() else {}
+            if isinstance(data, dict) and data.get("subagent_approved"):
+                return True
+        except Exception:
+            pass
+    return False
+
+
 def increment_and_check(
     session_id: str,
     tool: str,
@@ -247,6 +273,14 @@ def increment_and_check(
 
         # Subagent block
         if is_subagent and sa > max_subagents and not subagent_approved:
+            subagent_msg = (
+                f"[agent-rails budget] Subagent blocked: {sa} attempted, {max_subagents} approved.\n"
+                f"Approve to continue (Claude will resume automatically):\n"
+                f"  ! agent-rails budget approve {session_id} --subagent"
+            )
+            print(f"\n{subagent_msg}\n", file=sys.stderr, flush=True)
+            if _poll_for_subagent_approval(session_id, poll_timeout_s):
+                return BudgetVerdict(ALLOW, "")
             return BudgetVerdict(
                 BLOCK,
                 f"[agent-rails budget] Subagent blocked: {sa} attempted, {max_subagents} approved.\n\n"
@@ -424,17 +458,28 @@ def self_approve(session_id: str, add_tools: int, cfg: dict) -> dict:
         return {"ok": False, "reason": "unexpected error; use human approval", "state": {}}
 
 
-def reset(session_id: str) -> bool:
+def reset(session_id: str, add_tools: int = 0) -> bool:
     """Delete the budget state file, fully resetting all counters.
 
-    Returns True if deleted, False if not found, raises nothing.
+    If add_tools > 0, immediately writes a fresh state with
+    approved_tool_calls = checkpoint_at + add_tools so the resumed
+    session has a head-start before the next checkpoint fires.
+
+    Returns True if a file was deleted, False if not found, raises nothing.
     """
     try:
         path = _budget_path(session_id)
+        deleted = False
         if path.exists():
             path.unlink()
-            return True
-        return False
+            deleted = True
+        if add_tools > 0:
+            fresh = _default_state(_DEFAULTS["checkpoint_at"])
+            fresh["approved_tool_calls"] = _DEFAULTS["checkpoint_at"] + max(0, add_tools)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("w", encoding="utf-8") as fh:
+                fh.write(json.dumps(fresh))
+        return deleted
     except Exception:
         return False
 
