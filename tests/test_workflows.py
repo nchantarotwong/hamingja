@@ -722,15 +722,25 @@ def test_merge_pr_refuses_when_ci_still_pending_at_deadline():
 
 
 def test_merge_pr_refuses_when_no_ci_checks_reported():
-    runner = FakeRunner([
-        PR_VIEW_OPEN,
-        RunResult(CHECKS_CMD, 0, "[]", ""),
-    ])
+    with tempfile.TemporaryDirectory() as raw:
+        repo = Path(raw)
+        workflows = repo / ".github" / "workflows"
+        workflows.mkdir(parents=True)
+        (workflows / "ci.yml").write_text("name: ci\n", encoding="utf-8")
+        old = os.getcwd()
+        os.chdir(repo)
+        try:
+            runner = FakeRunner([
+                PR_VIEW_OPEN,
+                RunResult(CHECKS_CMD, 0, "[]", ""),
+            ])
 
-    rc, out = _capture(
-        merge_pr, "12",
-        runner=runner, sleeper=lambda _s: None, poll_s=0, ci_timeout_s=0, ci_poll_s=0,
-    )
+            rc, out = _capture(
+                merge_pr, "12",
+                runner=runner, sleeper=lambda _s: None, poll_s=0, ci_timeout_s=0, ci_poll_s=0,
+            )
+        finally:
+            os.chdir(old)
 
     assert rc == 1
     assert MERGE_CMD not in runner.calls
@@ -738,19 +748,119 @@ def test_merge_pr_refuses_when_no_ci_checks_reported():
     assert "--skip-ci-reason" in out
 
 
-def test_merge_pr_treats_no_checks_reported_error_as_zero_checks():
-    runner = FakeRunner([
-        PR_VIEW_OPEN,
-        RunResult(
-            CHECKS_CMD, 1, "",
-            "no checks reported on the 'topic' branch",
-        ),
-    ])
+def test_merge_pr_refuses_no_ci_from_subdir_when_repo_has_workflows():
+    with tempfile.TemporaryDirectory() as raw:
+        repo = Path(raw)
+        workflows = repo / ".github" / "workflows"
+        workdir = repo / "pkg"
+        workflows.mkdir(parents=True)
+        workdir.mkdir()
+        (repo / ".git").mkdir()
+        (workflows / "ci.yml").write_text("name: ci\n", encoding="utf-8")
+        old = os.getcwd()
+        os.chdir(workdir)
+        try:
+            runner = FakeRunner([
+                PR_VIEW_OPEN,
+                RunResult(CHECKS_CMD, 0, "[]", ""),
+            ])
 
-    rc, out = _capture(
-        merge_pr, "12",
-        runner=runner, sleeper=lambda _s: None, poll_s=0, ci_timeout_s=0, ci_poll_s=0,
-    )
+            rc, out = _capture(
+                merge_pr, "12",
+                runner=runner, sleeper=lambda _s: None, poll_s=0, ci_timeout_s=0, ci_poll_s=0,
+            )
+        finally:
+            os.chdir(old)
+
+    assert rc == 1
+    assert MERGE_CMD not in runner.calls
+    assert "refusing to merge: no CI checks reported" in out
+
+
+def test_merge_pr_auto_skips_no_ci_when_no_workflows_exist_locally():
+    with tempfile.TemporaryDirectory() as raw:
+        repo = Path(raw)
+        (repo / ".git").mkdir()
+        old = os.getcwd()
+        os.chdir(repo)
+        try:
+            runner = FakeRunner([
+                PR_VIEW_OPEN,
+                RunResult(CHECKS_CMD, 0, "[]", ""),
+                RunResult(MERGE_CMD, 0, "", ""),
+                RunResult(["gh", "pr", "view", "12", "--json", "state,url"], 0, '{"state":"MERGED"}', ""),
+            ])
+
+            rc, out = _capture(
+                merge_pr,
+                "12",
+                cleanup=False,
+                runner=runner,
+                sleeper=lambda _s: None,
+                poll_s=0,
+                ci_timeout_s=0,
+                ci_poll_s=0,
+            )
+        finally:
+            os.chdir(old)
+
+    assert rc == 0
+    assert MERGE_CMD in runner.calls
+    assert "ci gate SKIPPED" in out
+    assert "no GitHub Actions workflows found locally" in out
+    assert "state: MERGED" in out
+
+
+def test_merge_pr_refuses_no_ci_when_repo_root_cannot_be_proven():
+    with tempfile.TemporaryDirectory() as raw:
+        old = os.getcwd()
+        os.chdir(raw)
+        try:
+            runner = FakeRunner([
+                PR_VIEW_OPEN,
+                RunResult(CHECKS_CMD, 0, "[]", ""),
+            ])
+
+            rc, out = _capture(
+                merge_pr,
+                "12",
+                runner=runner,
+                sleeper=lambda _s: None,
+                poll_s=0,
+                ci_timeout_s=0,
+                ci_poll_s=0,
+            )
+        finally:
+            os.chdir(old)
+
+    assert rc == 1
+    assert MERGE_CMD not in runner.calls
+    assert "refusing to merge: no CI checks reported" in out
+
+
+def test_merge_pr_treats_no_checks_reported_error_as_zero_checks():
+    with tempfile.TemporaryDirectory() as raw:
+        repo = Path(raw)
+        workflows = repo / ".github" / "workflows"
+        workflows.mkdir(parents=True)
+        (workflows / "ci.yml").write_text("name: ci\n", encoding="utf-8")
+        old = os.getcwd()
+        os.chdir(repo)
+        try:
+            runner = FakeRunner([
+                PR_VIEW_OPEN,
+                RunResult(
+                    CHECKS_CMD, 1, "",
+                    "no checks reported on the 'topic' branch",
+                ),
+            ])
+
+            rc, out = _capture(
+                merge_pr, "12",
+                runner=runner, sleeper=lambda _s: None, poll_s=0, ci_timeout_s=0, ci_poll_s=0,
+            )
+        finally:
+            os.chdir(old)
 
     assert rc == 1
     assert MERGE_CMD not in runner.calls
@@ -1256,6 +1366,26 @@ def test_ci_failures_run_id_fetches_workflow_context():
     assert "tests #456 (https://ci/run)" in out
 
 
+def test_ci_failures_extracts_pytest_failures_from_stderr():
+    runner = FakeRunner([
+        RunResult(
+            ["gh", "run", "view", "456", "--json", "workflowName,url"],
+            0,
+            '{"workflowName":"tests","url":"https://ci/run"}',
+            "",
+        ),
+        RunResult(
+            ["gh", "run", "view", "456", "--log-failed"],
+            0,
+            "",
+            "FAILED tests/foo_test.py::test_bar - AssertionError: expected 1\n",
+        ),
+    ])
+    rc, out = _capture(ci_failures, run_id="456", runner=runner)
+    assert rc == 1
+    assert "failing test: tests/foo_test.py::test_bar - AssertionError: expected 1" in out
+
+
 def test_ci_failures_run_id_rejects_malformed_metadata_without_crashing():
     runner = FakeRunner([
         RunResult(
@@ -1323,6 +1453,17 @@ def test_summarize_pytest_log_extracts_gh_prefixed_lines():
     )
     summary = summarize_pytest_log(text)
     assert summary.failures == ["tests/foo_test.py::test_bar - AssertionError: expected 1"]
+
+
+def test_summarize_pytest_log_strips_ansi_and_timestamp_prefixes():
+    text = (
+        "2026-06-05T00:00:00Z \x1b[31mFAILED\x1b[0m "
+        "tests/foo_test.py::test_bar - AssertionError: expected 1\n"
+        "2026-06-05T00:00:01Z \x1b[31m================ 1 failed in 0.12s ================\x1b[0m\n"
+    )
+    summary = summarize_pytest_log(text)
+    assert summary.failures == ["tests/foo_test.py::test_bar - AssertionError: expected 1"]
+    assert summary.final_line == "1 failed in 0.12s"
 
 
 def test_test_summary_missing_file_reports_error():
