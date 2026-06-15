@@ -355,7 +355,14 @@ accidentally opened from `main`.
 `--ci-timeout`, default 1800s) and refuses to merge while any check is
 failing, pending, unreported, or unreadable — branch protection in repos
 that don't have server-side required checks. The gate is fail-closed; the
-only bypass is an explicit, auditable `--skip-ci-reason`.
+only bypass is an explicit, auditable `--skip-ci-reason`. If GitHub reports no
+checks and local repo inspection proves there are no `.github/workflows/*.yml`
+or `*.yaml` files, `pr-merge` treats the repo as no-CI and skips the gate
+without an extra failed attempt.
+
+`ci-failures` summarizes pytest-style failures from both stdout and stderr of
+`gh run view --log-failed`, including GitHub timestamp-prefixed and ANSI-colored
+pytest summary lines.
 
 The rule for project instructions is simple: run `agent-rails commands` before
 PR creation/merge/cleanup, CI status/failure extraction, or saved test-log

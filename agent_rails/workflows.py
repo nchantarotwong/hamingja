@@ -8,6 +8,7 @@ summary instead of another round of manual probing.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import time
@@ -408,6 +409,7 @@ FAILING_CHECK_STATES = {"FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"}
 # NEUTRAL is terminal and counts as passing, matching GitHub's own
 # required-check semantics (neutral/skipped do not block a merge).
 TERMINAL_CHECK_STATES = {"SUCCESS", "FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "SKIPPED", "NEUTRAL"}
+WORKFLOW_FILE_SUFFIXES = {".yml", ".yaml"}
 
 
 def _fetch_checks(pr: Optional[str], *, runner: Runner):
@@ -516,6 +518,10 @@ def _ci_gate(
             return 0
         now = time.monotonic()
         if not checks and now >= no_checks_deadline:
+            if _repo_has_no_ci_workflows():
+                lines.append("- ci gate SKIPPED")
+                lines.append("- no GitHub Actions workflows found locally; treating missing checks as no CI")
+                return 0
             lines.append("- refusing to merge: no CI checks reported for this PR; if this repo has no CI, pass --skip-ci-reason")
             return 1
         if now >= deadline:
@@ -528,6 +534,31 @@ def _ci_gate(
             lines.append(f"- ci: waiting for {len(pending)} pending check(s)")
             waiting_logged = True
         sleeper(ci_poll_s)
+
+
+def _repo_has_no_ci_workflows(root: Optional[Path] = None) -> bool:
+    """True only when local repo inspection proves no Actions workflows exist."""
+    try:
+        base = root or Path(os.getcwd())
+        found_repo_marker = False
+        for cur in (base, *base.parents):
+            if (cur / ".git").exists() or (cur / ".github").exists():
+                base = cur
+                found_repo_marker = True
+                break
+        if not found_repo_marker:
+            return False
+        workflows = base / ".github" / "workflows"
+        if not workflows.exists():
+            return True
+        if not workflows.is_dir():
+            return False
+        for child in workflows.iterdir():
+            if child.is_file() and child.suffix.lower() in WORKFLOW_FILE_SUFFIXES:
+                return False
+        return True
+    except Exception:
+        return False
 
 
 def _ci_budget_blocked(failing_checks: list[dict], *, runner: Runner) -> bool:
@@ -685,7 +716,7 @@ def ci_failures(
     if log.returncode != 0:
         print(f"- error: {_err(log)}")
         return log.returncode or 1
-    summary = summarize_pytest_log(log.stdout)
+    summary = summarize_pytest_log(f"{log.stdout}\n{log.stderr}")
     if not summary.failures and not summary.errors:
         print("- failed log fetched, but no pytest-style failures were extracted")
         return 1
@@ -701,6 +732,8 @@ class TestSummary:
     final_line: Optional[str]
 
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_GHA_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\s+")
 _FAILED_RE = re.compile(r"^(FAILED|ERROR)\s+(\S+)(?:\s+-\s+(.*))?$")
 _TRACE_RE = re.compile(r"^\s*(E\s+.+|AssertionError\b.*|[A-Za-z_][\w.]*Error: .+)$")
 _FINAL_RE = re.compile(r"=+\s+.*(?:failed|error|passed|skipped|xfailed|xpassed).*\s+in\s+[\d.]+s\s+=+", re.I)
@@ -732,10 +765,11 @@ def summarize_pytest_log(text: str, *, max_items: int = 20) -> TestSummary:
 
 def _log_message(line: str) -> str:
     """Return the likely human log message from plain pytest or gh log output."""
+    line = _ANSI_RE.sub("", line).strip()
     if "\t" not in line:
-        return line
+        return _GHA_TIMESTAMP_RE.sub("", line)
     parts = line.split("\t")
-    return parts[-1] if parts else line
+    return _GHA_TIMESTAMP_RE.sub("", parts[-1].strip()) if parts else line
 
 
 def test_summary(path: Path) -> int:
