@@ -44,7 +44,8 @@
       "enabled": true,
       "large_file_lines": 200,
       "nudge_at": 2,
-      "block_at": 3
+      "block_at": 3,
+      "block_first_read_at_lines": 1000
     },
     "leverage_fallback": {
       "enabled": true,

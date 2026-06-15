@@ -63,6 +63,13 @@ _DEFAULT = {
         "oscillation": {"enabled": True, "nudge_at": 4, "block_at": 6},
         "error_streak": {"enabled": True, "nudge_at": 3, "block_at": 6},
         "workflow_wrapper": {"enabled": True, "nudge_at": 1, "block_at": 2},
+        "read_discipline": {
+            "enabled": True,
+            "large_file_lines": 200,
+            "nudge_at": 2,
+            "block_at": 3,
+            "block_first_read_at_lines": 1000,
+        },
         "leverage_fallback": {
             "enabled": True,
             "nudge_at": 1,
@@ -188,6 +195,10 @@ def _restrict_merge(baseline: dict, project) -> dict:
                 d["block_at"] = max(d["block_at"], _to_int(pd.get("block_at"), d["block_at"]))
             if "nudge_at" in pd:  # raise only
                 d["nudge_at"] = max(d["nudge_at"], _to_int(pd.get("nudge_at"), d["nudge_at"]))
+            if "block_first_read_at_lines" in pd and "block_first_read_at_lines" in d:
+                current = _to_int(d.get("block_first_read_at_lines"), 0)
+                proposed = _to_int(pd.get("block_first_read_at_lines"), current)
+                d["block_first_read_at_lines"] = 0 if proposed <= 0 else max(current, proposed)
             if "exempt_tools" in pd:  # extend only: more exemptions = less blocking
                 base_ex = d.get("exempt_tools") if isinstance(d.get("exempt_tools"), list) else []
                 merged = list(base_ex)

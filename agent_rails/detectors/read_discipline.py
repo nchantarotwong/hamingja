@@ -1,11 +1,11 @@
-"""ReadDisciplineDetector — nudge/block on repeated unscoped reads of large files.
+"""ReadDisciplineDetector — nudge/block on unscoped reads of large files.
 
 An *unscoped* Read has no offset and no limit: the model will receive the entire
 file regardless of size.  A single unscoped read of a large file gets an
 advisory from the tripwire hook (cheap, no history needed).  This detector
-handles the repeat-offense case: if the model reads the same large file
-unscoped a second time in a session it is nudged; a third unscoped read of the
-same file is blocked.
+handles two higher-signal cases:
+  * repeated unscoped reads of the same large file;
+  * the first unscoped read of a genuinely huge file.
 
 Design notes:
   * Only fires on Read events where read_scoped=False and read_path is set.
@@ -26,16 +26,41 @@ if TYPE_CHECKING:
     from ..core.events import ToolEvent
 
 _LARGE_FILE_LINE_THRESHOLD = 200
+_FIRST_READ_BLOCK_LINE_THRESHOLD = 1000
 
 
-def _is_large(path_str: str) -> bool:
-    """True when the file exists and exceeds the line threshold."""
+def _line_count(path_str: str) -> Optional[int]:
+    """Return a file's line count, or None when it cannot be inspected."""
     if not path_str:
-        return False
+        return None
     try:
-        return Path(path_str).read_bytes().count(b"\n") >= _LARGE_FILE_LINE_THRESHOLD
+        return len(Path(path_str).read_bytes().splitlines())
     except OSError:
-        return False
+        return None
+
+
+def _cfg_int(cfg: dict, key: str, default: int, floor: int = 1) -> int:
+    try:
+        return max(floor, int(cfg.get(key, default)))
+    except Exception:
+        return default
+
+
+def _refs_hint(path: str) -> str:
+    """Return an optional repo-local reference lookup hint."""
+    try:
+        cur = Path(path).resolve().parent
+        for root in (cur, *cur.parents):
+            if (root / "refs.sh").is_file():
+                return " If available, use `./refs.sh <symbol-or-pattern>` to locate references first."
+            scripts = root / "scripts"
+            if (scripts / "refs.sh").is_file():
+                return " If available, use `scripts/refs.sh <symbol-or-pattern>` to locate references first."
+            if (root / ".git").exists():
+                break
+    except OSError:
+        return ""
+    return ""
 
 
 class ReadDisciplineDetector(Detector):
@@ -62,13 +87,21 @@ class ReadDisciplineDetector(Detector):
         if not path:
             return None
 
-        # Skip small files — the overhead is already low.
-        if not _is_large(path):
+        line_count = _line_count(path)
+        # Skip missing/unreadable/small files — fail open and keep overhead low.
+        if line_count is None or line_count < _LARGE_FILE_LINE_THRESHOLD:
             return None
 
-        nudge_at = max(1, int(cfg.get("nudge_at", 2)))
-        block_at = max(nudge_at + 1, int(cfg.get("block_at", 3)))
+        nudge_at = _cfg_int(cfg, "nudge_at", 2)
+        block_at = max(nudge_at + 1, _cfg_int(cfg, "block_at", 3))
+        first_read_block_at = _cfg_int(
+            cfg,
+            "block_first_read_at_lines",
+            _FIRST_READ_BLOCK_LINE_THRESHOLD,
+            floor=0,
+        )
         name = Path(path).name
+        hint = _refs_hint(path)
 
         # Count prior unscoped reads of the same path in the event window.
         prior_unscoped = sum(
@@ -83,6 +116,17 @@ class ReadDisciplineDetector(Detector):
         # +1 to include the current candidate itself.
         total = prior_unscoped + 1
 
+        if first_read_block_at > 0 and total == 1 and line_count >= first_read_block_at:
+            return Verdict(
+                BLOCK,
+                self.name,
+                (
+                    f"Unscoped Read of {name} blocked ({line_count} lines). "
+                    f"Use grep -n to locate the target section, then Read with "
+                    f"offset+limit.{hint}"
+                ),
+            )
+
         if total < nudge_at:
             return None
 
@@ -93,7 +137,7 @@ class ReadDisciplineDetector(Detector):
                 (
                     f"Unscoped Read of {name} blocked (read {total}x without "
                     f"offset/limit). Use grep -n to locate the target section, "
-                    f"then Read with offset+limit."
+                    f"then Read with offset+limit.{hint}"
                 ),
             )
 
@@ -103,6 +147,6 @@ class ReadDisciplineDetector(Detector):
             (
                 f"Unscoped Read of {name} again ({total}x). Next unscoped read "
                 f"of this file will be blocked. Use grep -n to find the section, "
-                f"then Read with offset+limit."
+                f"then Read with offset+limit.{hint}"
             ),
         )
