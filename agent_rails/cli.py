@@ -356,8 +356,11 @@ def _cmd_budget(args: argparse.Namespace) -> int:
         add = max(1, args.add)
         if getattr(args, "self_approve", False):
             cfg = load_config(os.getcwd())
-            sa_cfg = cfg.get("budget", {}).get("self_approve", {})
-            result = _budget_self_approve(args.session_id, add_tools=add, cfg=sa_cfg)
+            # Pass the wrapping budget cfg so self_approve sees both the
+            # self_approve sub-dict AND checkpoint_at (used for replenishment math).
+            result = _budget_self_approve(
+                args.session_id, add_tools=add, cfg=cfg.get("budget", {})
+            )
             if not result.get("ok"):
                 print(
                     f"error: self-approve rejected: {result.get('reason', 'unknown')}",
