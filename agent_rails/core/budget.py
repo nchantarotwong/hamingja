@@ -217,7 +217,7 @@ def _poll_for_approval(
 ) -> bool:
     """Poll the budget state file until the block clears or timeout.
 
-    reset_only=True: only clears on reset() (file deletion) — used for hard blocks.
+    reset_only=True: only clears on reset() (file deletion).
     reset_only=False: clears on approve() (ceiling raised) or reset().
     Returns True if cleared, False on timeout. Fails open on read errors.
     """
@@ -312,7 +312,7 @@ def increment_and_check(
         poll_timeout_s = _cfg_int(cfg, "poll_timeout_s")
 
         # Hard block: approve() or reset() clears it
-        if tc > hard_block_at:
+        if tc > hard_block_at and tc > approved_tc:
             hard_msg = (
                 f"[agent-rails budget] Hard limit: {tc}/{hard_block_at} tool calls.\n\n"
                 f"Extend the budget:\n"
