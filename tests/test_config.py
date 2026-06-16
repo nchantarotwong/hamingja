@@ -380,6 +380,66 @@ def test_search_stops_at_repo_boundary():
     _no_env(body)
 
 
+# --- budget overlay: project config may only relax (raise limits) -----------
+
+def test_project_can_raise_checkpoint_at():
+    def body():
+        d = _proj({".agent-rails.json": json.dumps(
+            {"budget": {"checkpoint_at": 100}})})
+        assert load_config(d)["budget"]["checkpoint_at"] == 100
+    _no_env(body)
+
+
+def test_project_cannot_lower_checkpoint_at():
+    def body():
+        d = _proj({".agent-rails.json": json.dumps(
+            {"budget": {"checkpoint_at": 1}})})
+        assert load_config(d)["budget"]["checkpoint_at"] >= 12
+    _no_env(body)
+
+
+def test_project_can_raise_hard_block_at():
+    def body():
+        d = _proj({".agent-rails.json": json.dumps(
+            {"budget": {"hard_block_at": 100}})})
+        assert load_config(d)["budget"]["hard_block_at"] == 100
+    _no_env(body)
+
+
+def test_project_can_raise_self_approve_max_add():
+    def body():
+        d = _proj({".agent-rails.json": json.dumps(
+            {"budget": {"self_approve": {"max_add": 10}}})})
+        assert load_config(d)["budget"]["self_approve"]["max_add"] == 10
+    _no_env(body)
+
+
+def test_project_cannot_lower_self_approve_max_add():
+    def body():
+        d = _proj({".agent-rails.json": json.dumps(
+            {"budget": {"self_approve": {"max_add": 1}}})})
+        assert load_config(d)["budget"]["self_approve"]["max_add"] >= 3
+    _no_env(body)
+
+
+def test_project_can_lower_replenish_every():
+    """Lower replenish_every = faster slot recovery = more relaxed; project may do this."""
+    def body():
+        d = _proj({".agent-rails.json": json.dumps(
+            {"budget": {"self_approve": {"replenish_every": 5}}})})
+        assert load_config(d)["budget"]["self_approve"]["replenish_every"] == 5
+    _no_env(body)
+
+
+def test_project_cannot_raise_replenish_every():
+    """Higher replenish_every = slower recovery = stricter; project must not tighten."""
+    def body():
+        d = _proj({".agent-rails.json": json.dumps(
+            {"budget": {"self_approve": {"replenish_every": 999}}})})
+        assert load_config(d)["budget"]["self_approve"]["replenish_every"] <= 15
+    _no_env(body)
+
+
 if __name__ == "__main__":
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from _run import run_module_tests
