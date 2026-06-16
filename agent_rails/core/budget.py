@@ -12,7 +12,7 @@ State: <state_dir>/<session>-budget.json
 Config keys (from cfg dict, typically cfg["budget"]):
   nudge_at:        8    soft warning
   checkpoint_at:   25   blocks until approved; also the initial approved ceiling
-  hard_block_at:   60   unconditional block; only reset() clears it
+  hard_block_at:   60   hard block; approve() or reset() clears it
   max_large_reads: 2    advisory nudge when exceeded
   max_subagents:   0    blocks Agent tool unless subagent_approved is set
   poll_timeout_s:  60   seconds the hook waits for approval before denying
@@ -217,7 +217,7 @@ def _poll_for_approval(
 ) -> bool:
     """Poll the budget state file until the block clears or timeout.
 
-    reset_only=True: only clears on reset() (file deletion) — used for hard blocks.
+    reset_only=True: only clears on reset() (file deletion).
     reset_only=False: clears on approve() (ceiling raised) or reset().
     Returns True if cleared, False on timeout. Fails open on read errors.
     """
@@ -311,14 +311,17 @@ def increment_and_check(
 
         poll_timeout_s = _cfg_int(cfg, "poll_timeout_s")
 
-        # Hard block: only reset() or approve() clears it
-        if tc > hard_block_at:
+        # Hard block: approve() or reset() clears it
+        if tc > hard_block_at and tc > approved_tc:
             hard_msg = (
-                f"[agent-rails budget] Hard limit: {tc}/{hard_block_at} tool calls. Reset required.\n\n"
+                f"[agent-rails budget] Hard limit: {tc}/{hard_block_at} tool calls.\n\n"
+                f"Extend the budget:\n"
+                f"  ! agent-rails budget approve {session_id} --add N\n\n"
+                f"Or reset (clears all session state):\n"
                 f"  ! agent-rails budget reset {session_id}"
             )
             print(f"\n{hard_msg}\n", file=sys.stderr, flush=True)
-            if _poll_for_approval(session_id, poll_timeout_s, tc, reset_only=True):
+            if _poll_for_approval(session_id, poll_timeout_s, tc, reset_only=False):
                 return BudgetVerdict(ALLOW, "")
             return BudgetVerdict(BLOCK, hard_msg)
 

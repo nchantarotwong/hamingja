@@ -206,6 +206,25 @@ def _restrict_merge(baseline: dict, project) -> dict:
                     if t not in merged:
                         merged.append(t)
                 d["exempt_tools"] = merged
+
+    pbud = project.get("budget")
+    if isinstance(pbud, dict):
+        bud = out.setdefault("budget", {})
+        for key in ("checkpoint_at", "hard_block_at", "nudge_at"):
+            if key in pbud:
+                bud[key] = max(_to_int(bud.get(key), 1), _to_int(pbud.get(key), 1))
+        psa = pbud.get("self_approve")
+        if isinstance(psa, dict):
+            sa = bud.setdefault("self_approve", {})
+            for key in ("max_add", "max_times_per_session"):
+                if key in psa:
+                    sa[key] = max(_to_int(sa.get(key), 1), _to_int(psa.get(key), 1))
+            if "replenish_every" in psa:
+                current = _to_int(sa.get("replenish_every"), 0)
+                proposed = _to_int(psa.get("replenish_every"), current)
+                # Lower replenish_every (> 0) = faster slot recovery = more relaxed.
+                if proposed > 0:
+                    sa["replenish_every"] = min(current, proposed) if current > 0 else proposed
     return out
 
 

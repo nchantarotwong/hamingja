@@ -63,14 +63,16 @@ def test_block_at_checkpoint():
     assert SESSION in bv.reason
 
 
-def test_hard_block_unconditional():
-    # Approve past checkpoint so normal blocks don't fire
-    approve(SESSION, add_tools=100)
+def test_hard_block_clears_after_approve():
     for _ in range(21):
         bv = increment_and_check(SESSION, "Bash", False, _CFG)
     assert bv.action == BLOCK
     assert "Hard limit" in bv.reason
     assert SESSION in bv.reason
+
+    approve(SESSION, add_tools=8)
+    bv = increment_and_check(SESSION, "Bash", False, _CFG)
+    assert bv.action != BLOCK
 
 
 # ---------------------------------------------------------------------------
@@ -455,5 +457,3 @@ def test_replenish_every_zero_disables_replenishment():
     rejected = self_approve(SESSION, add_tools=1, cfg=cfg)
     assert rejected["ok"] is False
     assert "exhausted" in rejected["reason"]
-
-
