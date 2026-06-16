@@ -122,6 +122,7 @@ def test_create_pr_uses_existing_upstream_without_push():
         runner = FakeRunner([
             RunResult(["git", "branch", "--show-current"], 0, "topic\n", ""),
             RunResult(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], 0, "origin/topic\n", ""),
+            RunResult(["git", "rev-list", "--left-right", "--count", "@{u}...HEAD"], 0, "0\t0\n", ""),
             RunResult(["gh", "pr", "create"], 0, "https://github.test/pull/3\n", ""),
         ])
 
@@ -137,6 +138,7 @@ def test_create_pr_uses_existing_upstream_without_push():
     assert runner.calls == [
         ["git", "branch", "--show-current"],
         ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+        ["git", "rev-list", "--left-right", "--count", "@{u}...HEAD"],
         [
             "gh", "pr", "create",
             "--title", "Add wrapper",
@@ -145,6 +147,189 @@ def test_create_pr_uses_existing_upstream_without_push():
         ],
     ]
     assert "git push" not in out
+
+
+def test_create_pr_pushes_current_branch_when_upstream_is_behind():
+    with tempfile.TemporaryDirectory() as raw:
+        body = Path(raw) / "body.md"
+        body.write_text("Summary\n", encoding="utf-8")
+        runner = FakeRunner([
+            RunResult(["git", "branch", "--show-current"], 0, "topic\n", ""),
+            RunResult(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], 0, "origin/topic\n", ""),
+            RunResult(["git", "rev-list", "--left-right", "--count", "@{u}...HEAD"], 0, "0\t2\n", ""),
+            RunResult(["git", "config", "--get", "branch.topic.remote"], 0, "origin\n", ""),
+            RunResult(["git", "config", "--get", "branch.topic.merge"], 0, "refs/heads/topic\n", ""),
+            RunResult(["git", "push", "origin", "HEAD:refs/heads/topic"], 0, "", ""),
+            RunResult(["gh", "pr", "create"], 0, "https://github.test/pull/3\n", ""),
+        ])
+
+        rc, out = _capture(
+            create_pr,
+            title="Add wrapper",
+            body_file=body,
+            base="main",
+            runner=runner,
+        )
+
+    assert rc == 0
+    assert runner.calls == [
+        ["git", "branch", "--show-current"],
+        ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+        ["git", "rev-list", "--left-right", "--count", "@{u}...HEAD"],
+        ["git", "config", "--get", "branch.topic.remote"],
+        ["git", "config", "--get", "branch.topic.merge"],
+        ["git", "push", "origin", "HEAD:refs/heads/topic"],
+        [
+            "gh", "pr", "create",
+            "--title", "Add wrapper",
+            "--body-file", str(body),
+            "--base", "main",
+        ],
+    ]
+    assert "ok: git push origin HEAD:refs/heads/topic" in out
+
+
+def test_create_pr_refuses_diverged_existing_upstream():
+    with tempfile.TemporaryDirectory() as raw:
+        body = Path(raw) / "body.md"
+        body.write_text("Summary\n", encoding="utf-8")
+        runner = FakeRunner([
+            RunResult(["git", "branch", "--show-current"], 0, "topic\n", ""),
+            RunResult(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], 0, "origin/topic\n", ""),
+            RunResult(["git", "rev-list", "--left-right", "--count", "@{u}...HEAD"], 0, "1\t2\n", ""),
+        ])
+
+        rc, out = _capture(
+            create_pr,
+            title="Add wrapper",
+            body_file=body,
+            base="main",
+            runner=runner,
+        )
+
+    assert rc == 1
+    assert "branch is behind or diverged from origin/topic" in out
+    assert runner.calls == [
+        ["git", "branch", "--show-current"],
+        ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+        ["git", "rev-list", "--left-right", "--count", "@{u}...HEAD"],
+    ]
+
+
+def test_create_pr_refuses_behind_existing_upstream():
+    with tempfile.TemporaryDirectory() as raw:
+        body = Path(raw) / "body.md"
+        body.write_text("Summary\n", encoding="utf-8")
+        runner = FakeRunner([
+            RunResult(["git", "branch", "--show-current"], 0, "topic\n", ""),
+            RunResult(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], 0, "origin/topic\n", ""),
+            RunResult(["git", "rev-list", "--left-right", "--count", "@{u}...HEAD"], 0, "1\t0\n", ""),
+        ])
+
+        rc, out = _capture(
+            create_pr,
+            title="Add wrapper",
+            body_file=body,
+            base="main",
+            runner=runner,
+        )
+
+    assert rc == 1
+    assert "branch is behind or diverged from origin/topic" in out
+    assert runner.calls == [
+        ["git", "branch", "--show-current"],
+        ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+        ["git", "rev-list", "--left-right", "--count", "@{u}...HEAD"],
+    ]
+
+
+def test_create_pr_refuses_malformed_upstream_ahead_counts():
+    with tempfile.TemporaryDirectory() as raw:
+        body = Path(raw) / "body.md"
+        body.write_text("Summary\n", encoding="utf-8")
+        runner = FakeRunner([
+            RunResult(["git", "branch", "--show-current"], 0, "topic\n", ""),
+            RunResult(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], 0, "origin/topic\n", ""),
+            RunResult(["git", "rev-list", "--left-right", "--count", "@{u}...HEAD"], 0, "wat\n", ""),
+        ])
+
+        rc, out = _capture(
+            create_pr,
+            title="Add wrapper",
+            body_file=body,
+            base="main",
+            runner=runner,
+        )
+
+    assert rc == 1
+    assert "could not parse upstream ahead/behind counts" in out
+    assert runner.calls == [
+        ["git", "branch", "--show-current"],
+        ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+        ["git", "rev-list", "--left-right", "--count", "@{u}...HEAD"],
+    ]
+
+
+def test_create_pr_refuses_option_like_configured_upstream_remote():
+    with tempfile.TemporaryDirectory() as raw:
+        body = Path(raw) / "body.md"
+        body.write_text("Summary\n", encoding="utf-8")
+        runner = FakeRunner([
+            RunResult(["git", "branch", "--show-current"], 0, "topic\n", ""),
+            RunResult(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], 0, "origin/topic\n", ""),
+            RunResult(["git", "rev-list", "--left-right", "--count", "@{u}...HEAD"], 0, "0\t1\n", ""),
+            RunResult(["git", "config", "--get", "branch.topic.remote"], 0, "--mirror\n", ""),
+            RunResult(["git", "config", "--get", "branch.topic.merge"], 0, "refs/heads/topic\n", ""),
+        ])
+
+        rc, out = _capture(
+            create_pr,
+            title="Add wrapper",
+            body_file=body,
+            base="main",
+            runner=runner,
+        )
+
+    assert rc == 1
+    assert "could not determine configured upstream push target" in out
+    assert runner.calls == [
+        ["git", "branch", "--show-current"],
+        ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+        ["git", "rev-list", "--left-right", "--count", "@{u}...HEAD"],
+        ["git", "config", "--get", "branch.topic.remote"],
+        ["git", "config", "--get", "branch.topic.merge"],
+    ]
+
+
+def test_create_pr_refuses_non_branch_configured_upstream_merge_ref():
+    with tempfile.TemporaryDirectory() as raw:
+        body = Path(raw) / "body.md"
+        body.write_text("Summary\n", encoding="utf-8")
+        runner = FakeRunner([
+            RunResult(["git", "branch", "--show-current"], 0, "topic\n", ""),
+            RunResult(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], 0, "origin/tag\n", ""),
+            RunResult(["git", "rev-list", "--left-right", "--count", "@{u}...HEAD"], 0, "0\t1\n", ""),
+            RunResult(["git", "config", "--get", "branch.topic.remote"], 0, "origin\n", ""),
+            RunResult(["git", "config", "--get", "branch.topic.merge"], 0, "refs/tags/tag\n", ""),
+        ])
+
+        rc, out = _capture(
+            create_pr,
+            title="Add wrapper",
+            body_file=body,
+            base="main",
+            runner=runner,
+        )
+
+    assert rc == 1
+    assert "could not determine configured upstream push target" in out
+    assert runner.calls == [
+        ["git", "branch", "--show-current"],
+        ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+        ["git", "rev-list", "--left-right", "--count", "@{u}...HEAD"],
+        ["git", "config", "--get", "branch.topic.remote"],
+        ["git", "config", "--get", "branch.topic.merge"],
+    ]
 
 
 def test_create_pr_head_skips_auto_push():
