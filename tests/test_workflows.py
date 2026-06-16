@@ -933,6 +933,74 @@ def test_merge_pr_refuses_when_no_ci_checks_reported():
     assert "--skip-ci-reason" in out
 
 
+def test_merge_pr_surfaces_conflicts_when_no_checks_reported():
+    with tempfile.TemporaryDirectory() as raw:
+        repo = Path(raw)
+        workflows = repo / ".github" / "workflows"
+        workflows.mkdir(parents=True)
+        (workflows / "ci.yml").write_text("name: ci\n", encoding="utf-8")
+        old = os.getcwd()
+        os.chdir(repo)
+        try:
+            runner = FakeRunner([
+                PR_VIEW_OPEN,
+                RunResult(CHECKS_CMD, 0, "[]", ""),
+                RunResult(
+                    ["gh", "pr", "view", "12", "--json", "mergeStateStatus,mergeable"],
+                    0,
+                    '{"mergeStateStatus":"DIRTY","mergeable":"CONFLICTING"}',
+                    "",
+                ),
+            ])
+
+            rc, out = _capture(
+                merge_pr, "12",
+                runner=runner, sleeper=lambda _s: None, poll_s=0, ci_timeout_s=0, ci_poll_s=0,
+            )
+        finally:
+            os.chdir(old)
+
+    assert rc == 1
+    assert MERGE_CMD not in runner.calls
+    assert "This branch has conflicts that must be resolved before merging" in out
+    assert "refusing to merge: resolve branch conflicts" in out
+    assert "refusing to merge: no CI checks reported" not in out
+
+
+def test_merge_pr_surfaces_conflicts_when_gh_reports_no_checks_error():
+    with tempfile.TemporaryDirectory() as raw:
+        repo = Path(raw)
+        workflows = repo / ".github" / "workflows"
+        workflows.mkdir(parents=True)
+        (workflows / "ci.yml").write_text("name: ci\n", encoding="utf-8")
+        old = os.getcwd()
+        os.chdir(repo)
+        try:
+            runner = FakeRunner([
+                PR_VIEW_OPEN,
+                RunResult(CHECKS_CMD, 1, "", "no checks reported on the 'topic' branch"),
+                RunResult(
+                    ["gh", "pr", "view", "12", "--json", "mergeStateStatus,mergeable"],
+                    0,
+                    '{"mergeStateStatus":"DIRTY","mergeable":"UNKNOWN"}',
+                    "",
+                ),
+            ])
+
+            rc, out = _capture(
+                merge_pr, "12",
+                runner=runner, sleeper=lambda _s: None, poll_s=0, ci_timeout_s=0, ci_poll_s=0,
+            )
+        finally:
+            os.chdir(old)
+
+    assert rc == 1
+    assert MERGE_CMD not in runner.calls
+    assert "This branch has conflicts that must be resolved before merging" in out
+    assert "refusing to merge: resolve branch conflicts" in out
+    assert "refusing to merge: no CI checks reported" not in out
+
+
 def test_merge_pr_refuses_no_ci_from_subdir_when_repo_has_workflows():
     with tempfile.TemporaryDirectory() as raw:
         repo = Path(raw)
@@ -972,6 +1040,12 @@ def test_merge_pr_auto_skips_no_ci_when_no_workflows_exist_locally():
             runner = FakeRunner([
                 PR_VIEW_OPEN,
                 RunResult(CHECKS_CMD, 0, "[]", ""),
+                RunResult(
+                    ["gh", "pr", "view", "12", "--json", "mergeStateStatus,mergeable"],
+                    0,
+                    '{"mergeStateStatus":"CLEAN","mergeable":"MERGEABLE"}',
+                    "",
+                ),
                 RunResult(MERGE_CMD, 0, "", ""),
                 RunResult(["gh", "pr", "view", "12", "--json", "state,url"], 0, '{"state":"MERGED"}', ""),
             ])

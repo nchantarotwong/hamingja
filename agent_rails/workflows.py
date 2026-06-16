@@ -509,6 +509,23 @@ def _check_line(prefix: str, check: dict) -> str:
     return f"- {prefix}: {check.get('name', '?')} [{status}]" + suffix
 
 
+def _pr_conflict_reason(pr: str, *, runner: Runner) -> Optional[str]:
+    try:
+        res = runner(["gh", "pr", "view", pr, "--json", "mergeStateStatus,mergeable"])
+    except Exception:
+        return None
+    if res.returncode != 0:
+        return None
+    info = _json_object_from(res)
+    if not isinstance(info, dict):
+        return None
+    merge_state = info.get("mergeStateStatus")
+    mergeable = info.get("mergeable")
+    if merge_state == "DIRTY" or mergeable == "CONFLICTING":
+        return "This branch has conflicts that must be resolved before merging"
+    return None
+
+
 def ci_status(pr: Optional[str] = None, *, runner: Runner = default_runner) -> int:
     checks, error = _fetch_checks(pr, runner=runner)
     if error is not None:
@@ -574,6 +591,11 @@ def _ci_gate(
             return 0
         now = time.monotonic()
         if not checks and now >= no_checks_deadline:
+            conflict_reason = _pr_conflict_reason(pr, runner=runner)
+            if conflict_reason:
+                lines.append(f"- mergeability: {conflict_reason}")
+                lines.append("- refusing to merge: resolve branch conflicts, then rerun the wrapper")
+                return 1
             if _repo_has_no_ci_workflows():
                 lines.append("- ci gate SKIPPED")
                 lines.append("- no GitHub Actions workflows found locally; treating missing checks as no CI")
