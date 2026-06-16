@@ -77,6 +77,7 @@ def locate(
             return []
         max_results = max(1, int(max_results))
         context_lines = max(10, int(context_lines))
+        atlas_locations = _atlas_locations(root_path, tokens, glob, context_lines)
         hits = _rg_hits(root_path, tokens, glob)
         if not hits:
             hits = _scan_hits(root_path, tokens, glob)
@@ -88,6 +89,7 @@ def locate(
         for path, path_hits in grouped.items():
             locations.extend(_locations_for_path(path, path_hits, tokens, context_lines, symbol))
 
+        locations.extend(atlas_locations)
         locations.sort(key=lambda loc: (-loc.confidence, str(loc.path), loc.start))
         return _dedupe(locations)[:max_results]
     except Exception:
@@ -340,6 +342,46 @@ def _dedupe(locations: list[Location]) -> list[Location]:
         seen.add(key)
         out.append(loc)
     return out
+
+
+def _atlas_locations(root: Path, tokens: list[str], glob: str | None, context_lines: int) -> list[Location]:
+    try:
+        from .code_atlas import build_code_atlas  # noqa: PLC0415
+
+        atlas = build_code_atlas(
+            root=root,
+            glob=glob,
+            min_lines=0,
+            max_files=200,
+            max_entries_per_file=200,
+        )
+    except Exception:
+        return []
+
+    locations: list[Location] = []
+    for item in atlas:
+        path_text = _match_text(str(item.path))
+        for entry in item.entries:
+            entry_text = _match_text(f"{entry.name} {entry.kind} {item.path.name}")
+            token_hits = sum(1 for t in tokens if t in entry_text)
+            path_hits = sum(1 for t in tokens if t in path_text)
+            if token_hits == 0 and path_hits == 0:
+                continue
+            end = min(entry.end, entry.start + max(10, context_lines) - 1)
+            score = 0.80 + (0.18 * token_hits / max(1, len(tokens))) + min(0.08, path_hits * 0.03)
+            if token_hits == len(tokens):
+                score += 0.04
+            reason = "code atlas"
+            if token_hits:
+                reason += " symbol match"
+            if path_hits:
+                reason += ", path match"
+            locations.append(Location(item.path, entry.start, max(entry.start, end), min(0.98, score), reason))
+    return locations
+
+
+def _match_text(value: str) -> str:
+    return value.lower().replace("_", " ").replace("-", " ")
 
 
 def _display_path(path: Path, root: Path) -> Path:

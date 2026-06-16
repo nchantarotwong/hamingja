@@ -169,6 +169,43 @@ def test_codex_tripwire_skips_escalation_nudge_when_already_escalated():
     assert p.stdout == ""
 
 
+def test_codex_tripwire_nudges_large_unscoped_read_to_locate():
+    _reset_state_env()
+    d = _proj({"large.py": "\n".join(f"line {i}" for i in range(250))})
+    path = os.path.join(d, "large.py")
+    payload = {
+        "hook_event_name": "PreToolUse",
+        "session_id": "codex-large-read",
+        "cwd": d,
+        "tool_name": "Read",
+        "tool_input": {"file_path": path},
+    }
+    p = _run_script(TRIPWIRE, payload)
+    assert p.returncode == 0
+    out = json.loads(p.stdout)
+    hso = out["hookSpecificOutput"]
+    assert hso["hookEventName"] == "PreToolUse"
+    assert "permissionDecision" not in hso
+    assert "agent-rails locate" in hso["additionalContext"]
+    assert "offset+limit" in hso["additionalContext"]
+
+
+def test_codex_tripwire_no_large_read_nudge_for_scoped_read():
+    _reset_state_env()
+    d = _proj({"large.py": "\n".join(f"line {i}" for i in range(250))})
+    path = os.path.join(d, "large.py")
+    payload = {
+        "hook_event_name": "PreToolUse",
+        "session_id": "codex-scoped-read",
+        "cwd": d,
+        "tool_name": "Read",
+        "tool_input": {"file_path": path, "offset": 1, "limit": 50},
+    }
+    p = _run_script(TRIPWIRE, payload)
+    assert p.returncode == 0
+    assert p.stdout == ""
+
+
 def test_codex_bash_payload_variants_hash_distinct_commands():
     _reset_state_env()
     a = ToolEvent.record("codex-normalize", "Bash", {"parameters": {"cmd": "rg foo"}}, True)

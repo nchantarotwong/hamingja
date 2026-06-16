@@ -45,13 +45,18 @@ for the project's soft workflow rails.
 agent-rails locate "pick directory endpoint"
 agent-rails locate-symbol "do_GET"
 agent-rails locate-edit "where should I add repo root field?"
+agent-rails code-atlas
+agent-rails repo-health
 ```
 
-The locator is the generic fallback before reading a large file. It combines
-ripgrep hits when available with path/name relevance and simple block-boundary
-expansion, then prints ranked `file:start-end` targets plus `sed -n` commands.
-It does not print file contents. Repo-specific helpers such as `refs.sh` can
-still be better expert tools, but `agent-rails locate` is available everywhere.
+The locator is the generic fallback before reading a large file. `code-atlas`
+prints a deterministic file map of symbol/section line ranges without file
+contents; `locate` consults that map first, then combines ripgrep hits when
+available with path/name relevance and simple block-boundary expansion. Both
+paths print bounded line ranges and read commands.
+`repo-health` surfaces large files, approximate unscoped-read token cost, and
+split-name hints. Repo-specific helpers such as `refs.sh` can still be better
+expert tools, but these commands are available everywhere.
 
 ### Claude Code
 
