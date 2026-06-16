@@ -379,9 +379,11 @@ state.
 failing, pending, unreported, or unreadable — branch protection in repos
 that don't have server-side required checks. The gate is fail-closed; the
 only bypass is an explicit, auditable `--skip-ci-reason`. If GitHub reports no
-checks and local repo inspection proves there are no `.github/workflows/*.yml`
-or `*.yaml` files, `pr-merge` treats the repo as no-CI and skips the gate
-without an extra failed attempt.
+checks, `pr-merge` first checks PR mergeability so branch conflicts are
+reported directly instead of being misclassified as missing CI. When local repo
+inspection proves there are no `.github/workflows/*.yml` or `*.yaml` files, it
+treats the repo as no-CI and skips the gate without an extra failed merge
+attempt.
 
 `ci-failures` summarizes pytest-style failures from both stdout and stderr of
 `gh run view --log-failed`, including GitHub timestamp-prefixed and ANSI-colored
