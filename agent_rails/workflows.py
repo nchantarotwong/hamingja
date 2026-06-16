@@ -179,6 +179,38 @@ def create_pr(
                 _print_lines(lines)
                 return pushed.returncode or 1
             lines.append(f"- ok: git push -u {remote} {refspec}")
+        else:
+            upstream_name = upstream.stdout.strip() or "@{u}"
+            counts = runner(["git", "rev-list", "--left-right", "--count", "@{u}...HEAD"])
+            if counts.returncode != 0:
+                lines.append(f"- error: {_err(counts)}")
+                _print_lines(lines)
+                return counts.returncode or 1
+            parsed = _parse_ahead_behind(counts.stdout)
+            if parsed is None:
+                lines.append(f"- error: could not parse upstream ahead/behind counts: {counts.stdout.strip()!r}")
+                _print_lines(lines)
+                return 1
+            behind, ahead = parsed
+            if behind:
+                lines.append(f"- error: branch is behind or diverged from {upstream_name}; pull/rebase before creating a PR")
+                _print_lines(lines)
+                return 1
+            if ahead:
+                upstream_remote = runner(["git", "config", "--get", f"branch.{branch}.remote"])
+                upstream_merge = runner(["git", "config", "--get", f"branch.{branch}.merge"])
+                push_target = _push_target(upstream_remote.stdout, upstream_merge.stdout)
+                if upstream_remote.returncode != 0 or upstream_merge.returncode != 0 or push_target is None:
+                    lines.append("- error: could not determine configured upstream push target")
+                    _print_lines(lines)
+                    return 1
+                push_remote, push_ref = push_target
+                pushed = runner(["git", "push", push_remote, f"HEAD:{push_ref}"])
+                if pushed.returncode != 0:
+                    lines.append(f"- error: {_err(pushed)}")
+                    _print_lines(lines)
+                    return pushed.returncode or 1
+                lines.append(f"- ok: git push {push_remote} HEAD:{push_ref}")
 
     cmd = [
         "gh",
@@ -218,6 +250,30 @@ def _git_current_branch(runner: Runner) -> Optional[str]:
 
 def _valid_remote_name(remote: str) -> bool:
     return bool(remote.strip()) and not remote.startswith("-")
+
+
+def _parse_ahead_behind(text: str) -> Optional[tuple[int, int]]:
+    parts = text.split()
+    if len(parts) != 2:
+        return None
+    try:
+        behind = int(parts[0])
+        ahead = int(parts[1])
+    except ValueError:
+        return None
+    if behind < 0 or ahead < 0:
+        return None
+    return behind, ahead
+
+
+def _push_target(remote_text: str, merge_text: str) -> Optional[tuple[str, str]]:
+    remote = remote_text.strip()
+    merge_ref = merge_text.strip()
+    if not _valid_remote_name(remote):
+        return None
+    if not merge_ref.startswith("refs/heads/") or merge_ref == "refs/heads/":
+        return None
+    return remote, merge_ref
 
 
 def _git_branch_exists(branch: str, runner: Runner) -> bool:

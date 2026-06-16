@@ -368,8 +368,11 @@ agent-rails test-summary .pytest_output.log
 `pr-create` checks the current branch when `--head` is omitted. If the branch
 has no upstream, it runs `git push -u origin HEAD:refs/heads/<branch>` before
 calling `gh pr create`; use `--remote <name>` to push somewhere other than
-`origin`. It refuses detached HEAD and the base branch so a PR is not
-accidentally opened from `main`.
+`origin`. If the branch already has an upstream and local commits are ahead of
+it, `pr-create` runs a non-force push to that configured upstream before
+calling `gh pr create`. It refuses detached HEAD, the base branch, and diverged
+upstream state so a PR is not accidentally opened from `main` or stale branch
+state.
 
 `pr-merge` gates on CI before merging: it polls the PR's checks (up to
 `--ci-timeout`, default 1800s) and refuses to merge while any check is
