@@ -77,6 +77,9 @@ def test_workflow_subcommands_parse():
         ["ci-failures", "12", "--command-timeout", "10"],
         ["ci-failures", "--run", "456", "--command-timeout", "10"],
         ["test-summary", ".pytest_output.log"],
+        ["locate", "pick directory endpoint", "--glob", "*.py"],
+        ["locate-symbol", "do_GET", "--max-results", "3"],
+        ["locate-edit", "where should I add repo root field?", "--context-lines", "40"],
     ]
     for argv in cases:
         args = parser.parse_args(argv)

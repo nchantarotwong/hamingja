@@ -35,8 +35,23 @@ up whatever it finds under `~/.claude/` and `~/.codex/`. The raw
 `bash agent_rails/adapters/<harness>/install.sh` still works if you'd rather
 not install the package. After installing, `agent-rails status` prints the
 resolved config for any directory, `agent-rails report` shows what has fired,
-and `agent-rails init` generates a `CLAUDE.md` (+ `AGENTS.md` symlink) for
-the project's soft workflow rails.
+`agent-rails locate` ranks small line ranges to inspect before reading large
+files, and `agent-rails init` generates a `CLAUDE.md` (+ `AGENTS.md` symlink)
+for the project's soft workflow rails.
+
+### Code locator
+
+```bash
+agent-rails locate "pick directory endpoint"
+agent-rails locate-symbol "do_GET"
+agent-rails locate-edit "where should I add repo root field?"
+```
+
+The locator is the generic fallback before reading a large file. It combines
+ripgrep hits when available with path/name relevance and simple block-boundary
+expansion, then prints ranked `file:start-end` targets plus `sed -n` commands.
+It does not print file contents. Repo-specific helpers such as `refs.sh` can
+still be better expert tools, but `agent-rails locate` is available everywhere.
 
 ### Claude Code
 

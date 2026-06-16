@@ -60,21 +60,22 @@ def _cfg_int(cfg: dict, key: str, default: int, floor: int = 1) -> int:
         return default
 
 
-def _refs_hint(path: str) -> str:
-    """Return an optional repo-local reference lookup hint."""
+def _locator_hint(path: str) -> str:
+    """Return a generic locator hint plus optional repo-local helper discovery."""
+    hint = " Run `agent-rails locate \"<what you are looking for>\"` before reading large files."
     try:
         cur = Path(path).resolve().parent
         for root in (cur, *cur.parents):
             if (root / "refs.sh").is_file():
-                return " If available, use `./refs.sh <symbol-or-pattern>` to locate references first."
+                return hint + " Repo helper also available: `./refs.sh <symbol-or-pattern>`."
             scripts = root / "scripts"
             if (scripts / "refs.sh").is_file():
-                return " If available, use `scripts/refs.sh <symbol-or-pattern>` to locate references first."
+                return hint + " Repo helper also available: `scripts/refs.sh <symbol-or-pattern>`."
             if (root / ".git").exists():
                 break
     except Exception:
-        return ""
-    return ""
+        return hint
+    return hint
 
 
 class ReadDisciplineDetector(Detector):
@@ -116,7 +117,7 @@ class ReadDisciplineDetector(Detector):
             return None
 
         name = Path(path).name
-        hint = _refs_hint(path)
+        hint = _locator_hint(path)
 
         # Count prior unscoped reads of the same path in the event window.
         prior_unscoped = sum(
