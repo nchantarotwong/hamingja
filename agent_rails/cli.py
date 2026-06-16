@@ -5,6 +5,9 @@ A thin operator-facing CLI over the same core the hooks use. Subcommands:
     agent-rails report [--reset]   tuning summary: what fired, would-block rates
     agent-rails status [DIR]       resolved config for DIR (default: cwd)
     agent-rails commands           list workflow wrappers available here
+    agent-rails locate QUERY       ranked code ranges to read next
+    agent-rails locate-symbol NAME ranked definition-ish ranges
+    agent-rails locate-edit QUERY  ranked ranges for a desired change
     agent-rails install [HARNESS]  install hooks; no arg = all detected harnesses
     agent-rails init [...]         compose a CLAUDE.md + AGENTS.md symlink from profiles
     agent-rails pr-create ...      create a PR with a body file
@@ -44,6 +47,7 @@ from .core.budget import approve as _budget_approve
 from .core.budget import read_state as _budget_read_state
 from .core.budget import reset as _budget_reset
 from .core.budget import self_approve as _budget_self_approve
+from .locator import format_locations, locate
 from .profiles import (
     ALL_PROFILES,
     DEFAULT_PROFILES,
@@ -158,6 +162,23 @@ def _cmd_commands(args: argparse.Namespace) -> int:
     print()
     print("Use these before raw gh/git polling, PR cleanup, CI log scraping, or manual test-log parsing.")
     print("Codex: if a wrapper fails because of sandboxed network or .git writes, rerun that wrapper with sandbox escalation.")
+    return 0
+
+
+def _cmd_locate(args: argparse.Namespace) -> int:
+    try:
+        root = Path(args.dir) if args.dir else Path.cwd()
+        results = locate(
+            args.query,
+            root=root,
+            glob=args.glob,
+            max_results=args.max_results,
+            context_lines=args.context_lines,
+            symbol=getattr(args, "symbol", False),
+        )
+        print(format_locations(results, root=root))
+    except Exception:
+        print("No likely targets found.")
     return 0
 
 
@@ -892,6 +913,25 @@ def build_parser() -> argparse.ArgumentParser:
 
     cmds = sub.add_parser("commands", help="list workflow wrappers available in this repo")
     cmds.set_defaults(func=_cmd_commands)
+
+    def add_locate_args(parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("query", help="symbol, text, or desired change to locate")
+        parser.add_argument("--dir", help="repo/directory to search (default: cwd)")
+        parser.add_argument("--glob", help="optional file glob, for example '*.py' or 'src/**'")
+        parser.add_argument("--max-results", type=int, default=8, help="maximum ranked ranges to print (default: 8)")
+        parser.add_argument("--context-lines", type=int, default=80, help="maximum lines per suggested range (default: 80)")
+
+    loc = sub.add_parser("locate", help="rank code ranges matching a query without printing file contents")
+    add_locate_args(loc)
+    loc.set_defaults(func=_cmd_locate, symbol=False)
+
+    loc_sym = sub.add_parser("locate-symbol", help="rank definition-ish ranges for a symbol")
+    add_locate_args(loc_sym)
+    loc_sym.set_defaults(func=_cmd_locate, symbol=True)
+
+    loc_edit = sub.add_parser("locate-edit", help="rank ranges likely relevant to a desired code change")
+    add_locate_args(loc_edit)
+    loc_edit.set_defaults(func=_cmd_locate, symbol=False)
 
     ins = sub.add_parser(
         "install",

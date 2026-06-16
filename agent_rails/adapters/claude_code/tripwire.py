@@ -83,9 +83,9 @@ def _large_read_advisory(tool: str, args: object) -> str | None:
     name = Path(path_str).name if path_str else "file"
     return (
         f"[agent-rails] {name} has ~{line_count} lines. "
-        f"Prefer: grep -n for the target symbol/section, then Read with "
-        f"offset+limit. Unscoped reads of large files are the primary source "
-        f"of excess token usage in a session."
+        f"Prefer: `agent-rails locate \"<what you need>\"`, then Read only "
+        f"the suggested line range with offset+limit. Unscoped reads of large "
+        f"files are the primary source of excess token usage in a session."
     )
 
 

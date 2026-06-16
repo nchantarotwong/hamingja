@@ -260,6 +260,7 @@ def test_refs_script_hint_when_repo_refs_helper_exists(tmp_path):
     verdict = DET.evaluate([], _ev(path=str(path)), CFG)
     assert verdict is not None
     assert verdict.action == BLOCK
+    assert "agent-rails locate" in verdict.reason
     assert "./refs.sh <symbol-or-pattern>" in verdict.reason
 
 
@@ -275,6 +276,7 @@ def test_refs_script_hint_when_scripts_refs_helper_exists(tmp_path):
     verdict = DET.evaluate([], _ev(path=str(path)), CFG)
     assert verdict is not None
     assert verdict.action == BLOCK
+    assert "agent-rails locate" in verdict.reason
     assert "scripts/refs.sh <symbol-or-pattern>" in verdict.reason
 
 
@@ -288,7 +290,7 @@ def test_large_read_advisory_fires_on_unscoped_large_file(tmp_path):
     result = _large_read_advisory("Read", {"file_path": p})
     assert result is not None
     assert "large.py" in result
-    assert "offset" in result or "grep" in result
+    assert "agent-rails locate" in result
 
 
 def test_large_read_advisory_silent_for_small_file(tmp_path):
