@@ -27,13 +27,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
+from agent_rails.adapters.read_advisory import large_read_advisory, large_read_line_count  # noqa: E402
 from agent_rails.core.api import check  # noqa: E402
 from agent_rails.core.budget import BLOCK as BUDGET_BLOCK  # noqa: E402
 from agent_rails.core.budget import NUDGE as BUDGET_NUDGE  # noqa: E402
 from agent_rails.core.budget import increment_and_check as budget_check  # noqa: E402
 from agent_rails.detectors.base import BLOCK, NUDGE  # noqa: E402
-
-_LARGE_FILE_LINE_THRESHOLD = 200
 
 
 def _is_budget_command(tool: str, tool_input: object) -> bool:
@@ -52,41 +51,13 @@ def _is_budget_command(tool: str, tool_input: object) -> bool:
 
 
 def _large_read_line_count(tool: str, args: object) -> int:
-    """Return the line count if this is an unscoped read of a large file, else 0.
-
-    Fails open: returns 0 on any error.
-    """
-    if not isinstance(args, dict):
-        return 0
-    if str(tool).strip().lower() != "read":
-        return 0
-    has_offset = args.get("offset") not in (None, "")
-    has_limit = args.get("limit") not in (None, "")
-    if has_offset or has_limit:
-        return 0
-    path_str = str(args.get("file_path") or args.get("path") or "").strip()
-    if not path_str:
-        return 0
-    try:
-        line_count = Path(path_str).read_bytes().count(b"\n")
-    except OSError:
-        return 0
-    return line_count if line_count >= _LARGE_FILE_LINE_THRESHOLD else 0
+    """Compatibility wrapper for existing tests/imports."""
+    return large_read_line_count(tool, args)
 
 
 def _large_read_advisory(tool: str, args: object) -> str | None:
-    """Return an advisory string when a Read has no offset/limit on a large file."""
-    line_count = _large_read_line_count(tool, args)
-    if not line_count:
-        return None
-    path_str = str(args.get("file_path") or args.get("path") or "")  # type: ignore[union-attr]
-    name = Path(path_str).name if path_str else "file"
-    return (
-        f"[agent-rails] {name} has ~{line_count} lines. "
-        f"Prefer: `agent-rails locate \"<what you need>\"`, then Read only "
-        f"the suggested line range with offset+limit. Unscoped reads of large "
-        f"files are the primary source of excess token usage in a session."
-    )
+    """Compatibility wrapper for existing tests/imports."""
+    return large_read_advisory(tool, args)
 
 
 def _emit_deny(reason: str) -> None:

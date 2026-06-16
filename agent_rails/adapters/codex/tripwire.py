@@ -15,6 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
+from agent_rails.adapters.read_advisory import large_read_advisory  # noqa: E402
 from agent_rails.core.api import check  # noqa: E402
 from agent_rails.detectors.base import BLOCK, NUDGE  # noqa: E402
 
@@ -136,6 +137,11 @@ def main() -> int:
         except Exception:
             escalation_context = ""
 
+        try:
+            read_advisory = large_read_advisory(tool, tool_input) or ""
+        except Exception:
+            read_advisory = ""
+
         if verdict.action == BLOCK:
             _emit_deny(verdict.reason)
         elif verdict.action == NUDGE:
@@ -147,9 +153,13 @@ def main() -> int:
                 )
             if escalation_context:
                 context = context + "\n\n" + escalation_context
+            if read_advisory:
+                context = context + "\n\n" + read_advisory
             _emit_nudge(context)
         elif escalation_context:
             _emit_nudge(escalation_context)
+        elif read_advisory:
+            _emit_nudge(read_advisory)
     except Exception:
         return 0
 

@@ -5,6 +5,8 @@ A thin operator-facing CLI over the same core the hooks use. Subcommands:
     agent-rails report [--reset]   tuning summary: what fired, would-block rates
     agent-rails status [DIR]       resolved config for DIR (default: cwd)
     agent-rails commands           list workflow wrappers available here
+    agent-rails code-atlas [DIR]   map large files to bounded line ranges
+    agent-rails repo-health [DIR]  show large-file retrieval cost
     agent-rails locate QUERY       ranked code ranges to read next
     agent-rails locate-symbol NAME ranked definition-ish ranges
     agent-rails locate-edit QUERY  ranked ranges for a desired change
@@ -42,6 +44,7 @@ from typing import Optional
 
 from . import __version__
 from .config import load_config
+from .code_atlas import build_code_atlas, format_code_atlas, format_repo_health, repo_health
 from .core.audit import clear_audit, read_audit, summarize
 from .core.budget import approve as _budget_approve
 from .core.budget import read_state as _budget_read_state
@@ -162,6 +165,38 @@ def _cmd_commands(args: argparse.Namespace) -> int:
     print()
     print("Use these before raw gh/git polling, PR cleanup, CI log scraping, or manual test-log parsing.")
     print("Codex: if a wrapper fails because of sandboxed network or .git writes, rerun that wrapper with sandbox escalation.")
+    return 0
+
+
+def _cmd_code_atlas(args: argparse.Namespace) -> int:
+    try:
+        root = Path(args.dir) if args.dir else Path.cwd()
+        atlas = build_code_atlas(
+            root=root,
+            glob=args.glob,
+            min_lines=args.min_lines,
+            max_files=args.max_files,
+            max_entries_per_file=args.max_entries,
+        )
+        print(format_code_atlas(atlas, root=root))
+    except Exception:
+        print("No code atlas entries found.")
+    return 0
+
+
+def _cmd_repo_health(args: argparse.Namespace) -> int:
+    try:
+        root = Path(args.dir) if args.dir else Path.cwd()
+        health = repo_health(
+            root=root,
+            glob=args.glob,
+            min_lines=args.min_lines,
+            max_files=args.max_files,
+            max_suggestions=args.max_suggestions,
+        )
+        print(format_repo_health(health, root=root))
+    except Exception:
+        print("No large source files found.")
     return 0
 
 
@@ -913,6 +948,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     cmds = sub.add_parser("commands", help="list workflow wrappers available in this repo")
     cmds.set_defaults(func=_cmd_commands)
+
+    atlas = sub.add_parser("code-atlas", help="map large files to symbol/section line ranges")
+    atlas.add_argument("dir", nargs="?", help="repo/directory to map (default: cwd)")
+    atlas.add_argument("--glob", help="optional file glob, for example '*.py' or 'src/**'")
+    atlas.add_argument("--min-lines", type=int, default=200, help="minimum file size to include (default: 200)")
+    atlas.add_argument("--max-files", type=int, default=50, help="maximum files to print (default: 50)")
+    atlas.add_argument("--max-entries", type=int, default=80, help="maximum entries per file (default: 80)")
+    atlas.set_defaults(func=_cmd_code_atlas)
+
+    health = sub.add_parser("repo-health", help="show large-file retrieval cost and split hints")
+    health.add_argument("dir", nargs="?", help="repo/directory to inspect (default: cwd)")
+    health.add_argument("--glob", help="optional file glob, for example '*.py' or 'src/**'")
+    health.add_argument("--min-lines", type=int, default=1000, help="minimum file size to include (default: 1000)")
+    health.add_argument("--max-files", type=int, default=50, help="maximum files to print (default: 50)")
+    health.add_argument("--max-suggestions", type=int, default=8, help="maximum split hints per file (default: 8)")
+    health.set_defaults(func=_cmd_repo_health)
 
     def add_locate_args(parser: argparse.ArgumentParser) -> None:
         parser.add_argument("query", help="symbol, text, or desired change to locate")

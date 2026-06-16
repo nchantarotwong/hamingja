@@ -81,6 +81,16 @@ def test_default_includes_wrapper_usage_guidance():
         assert "fallback behavior only when the wrapper is unavailable or fails loudly" in out
 
 
+def test_default_includes_locate_before_large_read_guidance():
+    with tempfile.TemporaryDirectory() as d:
+        rc, out, _ = _run(["init", "--dry-run"], cwd=d)
+        assert rc == 0
+        assert 'agent-rails locate "<what you need>"' in out
+        assert "agent-rails code-atlas" in out
+        assert "agent-rails repo-health" in out
+        assert "read only the returned line range" in out
+
+
 def test_default_preserves_compaction_safety_invariants():
     with tempfile.TemporaryDirectory() as d:
         rc, out, _ = _run(["init", "--dry-run"], cwd=d)

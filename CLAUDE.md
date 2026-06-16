@@ -55,6 +55,17 @@ Before adding anything:
 4. Add detectors as new `detectors/` files implementing `Detector`, registered
    in `core/engine.py`. Keep harness-shaped code in adapters.
 
+## Navigation before broad reads
+
+Use the repo-level navigation layer before reading large files:
+
+1. Run `agent-rails code-atlas` when you need a map of symbols/sections.
+2. Run `agent-rails locate "<what you need>"` to get bounded line ranges.
+3. Read only the suggested range, not the whole file.
+4. Run `agent-rails repo-health` when a large file keeps attracting broad reads
+   or unrelated edits; use the output as split-pressure visibility, not an
+   automatic refactor mandate.
+
 ## QA-driven development
 
 Review, pressure-test edge cases, harden the failure paths, then build.
