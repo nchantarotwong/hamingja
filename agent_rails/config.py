@@ -256,25 +256,55 @@ def _restrict_merge(baseline: dict, project) -> dict:
                         w[key] = proposed
         # task_types: per-bucket threshold overrides. Raising thresholds is
         # RELAXING (more budget per bucket), so project values may only RAISE.
-        # New types are accepted as-is — they don't override anything, the
-        # agent has to opt in by setting state["task_type"] to that name.
+        #
+        # Trust boundary: per-type thresholds are capped at the project's
+        # effective `hard_block_at` (post-overlay). This stops a hostile
+        # project file from defining a custom `task_types["evil"]` with
+        # thresholds far above the global hard limit and then having the
+        # agent opt into it via `agent-rails budget task-type set`. Such a
+        # type would otherwise bypass the global ceiling entirely. With the
+        # cap, a custom type is no more dangerous than the global limit the
+        # project was already allowed to raise.
+        #
+        # Validation: ALL fields of a single type override must parse cleanly,
+        # else the WHOLE override is dropped. Avoids silent partial merges
+        # that mix valid + malformed fields and produce surprising thresholds.
         ptt = pbud.get("task_types")
         if isinstance(ptt, dict):
             tt = bud.setdefault("task_types", {})
+            # Cap = the post-relax global hard_block_at; the project task_types
+            # block runs AFTER the globals are merged above, so this picks up
+            # any raise the project just applied.
+            global_hb_cap = _to_int(bud.get("hard_block_at"), 0)
             for type_name, type_overrides in ptt.items():
                 if not isinstance(type_name, str) or not type_name.strip():
                     continue
                 if not isinstance(type_overrides, dict):
                     continue
                 key = type_name.strip()
-                existing = tt.get(key) if isinstance(tt.get(key), dict) else {}
-                merged = dict(existing)
+                # Validate all proposed fields before merging anything.
+                validated: dict[str, int] = {}
+                all_fields_ok = True
                 for tkey in ("checkpoint_at", "hard_block_at"):
                     if tkey not in type_overrides:
                         continue
-                    proposed = _to_int(type_overrides.get(tkey), 0)
+                    raw = type_overrides[tkey]
+                    try:
+                        proposed = int(raw)
+                    except (TypeError, ValueError):
+                        all_fields_ok = False
+                        break
                     if proposed < 1:
-                        continue
+                        all_fields_ok = False
+                        break
+                    if global_hb_cap > 0:
+                        proposed = min(proposed, global_hb_cap)
+                    validated[tkey] = proposed
+                if not all_fields_ok or not validated:
+                    continue
+                existing = tt.get(key) if isinstance(tt.get(key), dict) else {}
+                merged = dict(existing)
+                for tkey, proposed in validated.items():
                     current = _to_int(merged.get(tkey), 0)
                     if current <= 0:
                         merged[tkey] = proposed  # introducing the threshold

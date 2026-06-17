@@ -493,9 +493,14 @@ def test_project_malformed_weight_is_dropped():
 # --- budget overlay: task_types (relax = higher thresholds) -----------------
 
 def test_project_can_raise_task_type_checkpoint():
+    """A project may raise a built-in task type's checkpoint, but the new
+    value is capped at the project's effective hard_block_at. The legitimate
+    relaxation pattern is to raise hard_block_at first."""
     def body():
-        d = _proj({".agent-rails.json": json.dumps(
-            {"budget": {"task_types": {"debug": {"checkpoint_at": 999}}}})})
+        d = _proj({".agent-rails.json": json.dumps({"budget": {
+            "hard_block_at": 999,
+            "task_types": {"debug": {"checkpoint_at": 999}},
+        }})})
         out = load_config(d)
         assert out["budget"]["task_types"]["debug"]["checkpoint_at"] == 999
     _no_env(body)
@@ -514,13 +519,39 @@ def test_project_cannot_lower_existing_task_type_threshold():
     _no_env(body)
 
 
-def test_project_can_define_custom_task_type():
+def test_project_can_define_custom_task_type_when_raising_global_first():
+    """A project may introduce a custom task type, but its thresholds are
+    capped at the project's effective `hard_block_at`. The legitimate
+    pattern is to raise `hard_block_at` first so the custom bucket fits."""
     def body():
-        d = _proj({".agent-rails.json": json.dumps(
-            {"budget": {"task_types": {"migration": {"checkpoint_at": 80, "hard_block_at": 200}}}})})
+        d = _proj({".agent-rails.json": json.dumps({"budget": {
+            "hard_block_at": 200,
+            "task_types": {"migration": {"checkpoint_at": 80, "hard_block_at": 200}},
+        }})})
         out = load_config(d)
         assert out["budget"]["task_types"]["migration"]["checkpoint_at"] == 80
         assert out["budget"]["task_types"]["migration"]["hard_block_at"] == 200
+    _no_env(body)
+
+
+def test_project_task_type_capped_at_project_hard_block_at():
+    """A project task type with thresholds above the project's hard_block_at
+    is capped down to that ceiling. Stops a hostile project file from
+    smuggling in a custom bucket that bypasses the global hard limit."""
+    def body():
+        d = _proj({".agent-rails.json": json.dumps({"budget": {
+            # Don't raise globals — leave the project's effective hard_block_at
+            # at the baseline. A custom type with checkpoint_at: 9999 must
+            # then be clamped to that baseline.
+            "task_types": {"evil": {"checkpoint_at": 9999, "hard_block_at": 9999}},
+        }})})
+        out = load_config(d)
+        evil = out["budget"]["task_types"]["evil"]
+        baseline_hb = out["budget"]["hard_block_at"]
+        assert evil["checkpoint_at"] <= baseline_hb
+        assert evil["hard_block_at"] <= baseline_hb
+
+
     _no_env(body)
 
 
@@ -530,6 +561,21 @@ def test_project_task_type_with_invalid_dict_is_dropped():
             {"budget": {"task_types": {"junk": "not a dict"}}})})
         out = load_config(d)
         assert "junk" not in (out.get("budget", {}).get("task_types") or {})
+    _no_env(body)
+
+
+def test_project_task_type_partial_malformed_drops_whole_override():
+    """If any single field in a project task_types override fails to parse,
+    the WHOLE type override is dropped. Avoids silent partial merges where
+    a valid `hard_block_at` would land alongside a corrupted `checkpoint_at`,
+    producing surprising thresholds at the boundary."""
+    def body():
+        d = _proj({".agent-rails.json": json.dumps({"budget": {
+            "hard_block_at": 200,
+            "task_types": {"mixed": {"checkpoint_at": "abc", "hard_block_at": 150}},
+        }})})
+        out = load_config(d)
+        assert "mixed" not in (out.get("budget", {}).get("task_types") or {})
     _no_env(body)
 
 

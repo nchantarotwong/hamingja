@@ -367,7 +367,10 @@ def _sa_remaining(
     if max_times <= 0:
         return 0
     if replenish_every > 0 and tool_calls > checkpoint_at:
-        replenished = (tool_calls - checkpoint_at) // replenish_every
+        # Cast to int — `tool_calls` may now be a float (weighted counter),
+        # and we don't want fractional `replenished` propagating into the
+        # f-string ("1.0/2 uses remaining" looks broken).
+        replenished = int((tool_calls - checkpoint_at) // replenish_every)
     else:
         replenished = 0
     effective_used = max(0, self_approve_times - replenished)

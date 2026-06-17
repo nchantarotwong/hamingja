@@ -260,3 +260,26 @@ def test_raw_tool_calls_unaffected_by_weights():
     state = read_state(SESSION)
     assert state["tool_calls"] == 10
     assert state["weighted_calls"] == pytest.approx(5.0)
+
+
+# ---------------------------------------------------------------------------
+# Self-approve replenishment math under a weighted (float) counter
+# ---------------------------------------------------------------------------
+
+def test_sa_remaining_returns_int_when_weighted_counter_is_float():
+    """`_sa_remaining(weighted_calls=..., ...)` is now called with a float.
+    The returned slot count must still be an int so message templates
+    render "1/2 uses remaining" rather than "1.0/2 uses remaining"."""
+    from agent_rails.core.budget import _sa_remaining
+
+    # weighted_calls 30.5, checkpoint_at 20, replenish_every 10 →
+    # (30.5 - 20) // 10 = 1.0 (float); should cast to int.
+    remaining = _sa_remaining(
+        tool_calls=30.5,
+        self_approve_times=1,
+        checkpoint_at=20,
+        max_times=2,
+        replenish_every=10,
+    )
+    assert isinstance(remaining, int)
+    assert remaining == 2  # one slot replenished + one unused
