@@ -24,6 +24,9 @@ Config keys (from cfg dict, typically cfg["budget"]):
                    weights["_default"] then to 1.0. Built-in defaults give
                    read-class tools (Read/Glob/Grep/LS/etc.) a 0.5 cost so
                    orientation reads don't burn budget like edits.
+  disable_default_weights:
+                   bool — when true, skip built-in weight discounts. Explicit
+                   weights still win, then weights["_default"] / default_weight.
   task_types:      dict {type_name: {checkpoint_at, hard_block_at}} — per-bucket
                    threshold overrides. When state["task_type"] is set, the
                    matching bucket's thresholds override the top-level ones.
@@ -233,7 +236,7 @@ def _tool_weight(tool: str, cfg: dict) -> float:
 
     Resolution order (first match wins):
       1. cfg["weights"][tool]            — explicit per-tool override
-      2. _DEFAULT_WEIGHTS[tool]          — built-in (read-class tools = 0.5 etc.)
+      2. _DEFAULT_WEIGHTS[tool]          — built-in (unless disabled)
       3. cfg["weights"]["_default"]      — explicit catch-all override
       4. cfg["default_weight"]           — explicit default
       5. _DEFAULTS["default_weight"]     — 1.0
@@ -247,7 +250,10 @@ def _tool_weight(tool: str, cfg: dict) -> float:
         if isinstance(weights, dict):
             if name in weights:
                 return _clamp_weight(weights[name])
-        if name in _DEFAULT_WEIGHTS:
+        disable_default_weights = (
+            isinstance(cfg, dict) and cfg.get("disable_default_weights") is True
+        )
+        if not disable_default_weights and name in _DEFAULT_WEIGHTS:
             built_in = _DEFAULT_WEIGHTS[name]
             # An operator's explicit cfg["weights"][name] would have won above;
             # but cfg["weights"]["_default"] should NOT override a built-in

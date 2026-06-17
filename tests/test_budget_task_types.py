@@ -51,6 +51,24 @@ def test_builtin_weights_cover_read_class_tools():
         assert _DEFAULT_WEIGHTS[tool] == 0.5, tool
 
 
+def test_tool_weight_default_uses_builtin_discount():
+    assert _tool_weight("Read", {}) == 0.5
+
+
+def test_tool_weight_can_disable_builtin_discount():
+    assert _tool_weight("Read", {"disable_default_weights": True}) == 1.0
+
+
+def test_tool_weight_explicit_override_wins_when_builtin_discount_disabled():
+    cfg = {"disable_default_weights": True, "weights": {"Read": 0.2}}
+    assert _tool_weight("Read", cfg) == pytest.approx(0.2)
+
+
+def test_tool_weight_default_key_applies_when_builtin_discount_disabled():
+    cfg = {"disable_default_weights": True, "weights": {"_default": 0.25}}
+    assert _tool_weight("SomeNewTool", cfg) == pytest.approx(0.25)
+
+
 def test_tool_weight_unknown_tool_defaults_to_one():
     assert _tool_weight("Bash", {}) == 1.0
     assert _tool_weight("Edit", {}) == 1.0
