@@ -225,6 +225,63 @@ def _restrict_merge(baseline: dict, project) -> dict:
                 # Lower replenish_every (> 0) = faster slot recovery = more relaxed.
                 if proposed > 0:
                     sa["replenish_every"] = min(current, proposed) if current > 0 else proposed
+        # weights: per-tool cost multipliers. Lowering a weight is RELAXING
+        # (the tool consumes less budget), so project values may only LOWER.
+        # New tool entries are accepted as long as the proposed weight is <=
+        # the implicit default (1.0); raising any existing weight is ignored.
+        pw = pbud.get("weights")
+        if isinstance(pw, dict):
+            w = bud.setdefault("weights", {})
+            for tool_name, raw in pw.items():
+                if not isinstance(tool_name, str) or not tool_name.strip():
+                    continue
+                try:
+                    proposed = float(raw)
+                except (TypeError, ValueError):
+                    continue
+                if proposed < 0 or proposed > 10:
+                    continue  # malformed; ignore rather than clamp silently
+                key = tool_name.strip()
+                if key in w:
+                    try:
+                        current = float(w[key])
+                    except (TypeError, ValueError):
+                        current = 1.0
+                    if proposed < current:
+                        w[key] = proposed
+                else:
+                    # New entry — accept only if it's a discount vs. the
+                    # implicit default of 1.0. Refuse increases.
+                    if proposed <= 1.0:
+                        w[key] = proposed
+        # task_types: per-bucket threshold overrides. Raising thresholds is
+        # RELAXING (more budget per bucket), so project values may only RAISE.
+        # New types are accepted as-is — they don't override anything, the
+        # agent has to opt in by setting state["task_type"] to that name.
+        ptt = pbud.get("task_types")
+        if isinstance(ptt, dict):
+            tt = bud.setdefault("task_types", {})
+            for type_name, type_overrides in ptt.items():
+                if not isinstance(type_name, str) or not type_name.strip():
+                    continue
+                if not isinstance(type_overrides, dict):
+                    continue
+                key = type_name.strip()
+                existing = tt.get(key) if isinstance(tt.get(key), dict) else {}
+                merged = dict(existing)
+                for tkey in ("checkpoint_at", "hard_block_at"):
+                    if tkey not in type_overrides:
+                        continue
+                    proposed = _to_int(type_overrides.get(tkey), 0)
+                    if proposed < 1:
+                        continue
+                    current = _to_int(merged.get(tkey), 0)
+                    if current <= 0:
+                        merged[tkey] = proposed  # introducing the threshold
+                    else:
+                        merged[tkey] = max(current, proposed)  # raise only
+                if merged:
+                    tt[key] = merged
     return out
 
 
