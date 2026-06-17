@@ -490,6 +490,14 @@ def test_project_malformed_weight_is_dropped():
     _no_env(body)
 
 
+def test_project_cannot_disable_default_weights():
+    def body():
+        d = _proj({".agent-rails.json": json.dumps(
+            {"budget": {"disable_default_weights": True}})})
+        assert "disable_default_weights" not in load_config(d).get("budget", {})
+    _no_env(body)
+
+
 # --- budget overlay: task_types (relax = higher thresholds) -----------------
 
 def test_project_can_raise_task_type_checkpoint():

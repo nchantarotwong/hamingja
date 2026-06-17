@@ -210,6 +210,8 @@ def _restrict_merge(baseline: dict, project) -> dict:
     pbud = project.get("budget")
     if isinstance(pbud, dict):
         bud = out.setdefault("budget", {})
+        # Project overlays are untrusted and must not enable strict counting.
+        # disable_default_weights is trusted-only; intentionally do not merge it.
         for key in ("checkpoint_at", "hard_block_at", "nudge_at"):
             if key in pbud:
                 bud[key] = max(_to_int(bud.get(key), 1), _to_int(pbud.get(key), 1))
