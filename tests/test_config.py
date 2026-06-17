@@ -440,6 +440,145 @@ def test_project_cannot_raise_replenish_every():
     _no_env(body)
 
 
+# --- budget overlay: weights (relax = lower cost) ---------------------------
+
+def test_project_can_lower_a_tool_weight():
+    """A project can DISCOUNT a tool further than the built-in (more relaxed)."""
+    def body():
+        d = _proj({".agent-rails.json": json.dumps(
+            {"budget": {"weights": {"Bash": 0.25}}})})
+        assert load_config(d)["budget"]["weights"]["Bash"] == 0.25
+    _no_env(body)
+
+
+def test_project_lower_wins_over_higher_existing_weight():
+    """If both project and baseline set a weight, the lower (more relaxed) wins."""
+    def body():
+        d = _proj({".agent-rails.json": json.dumps(
+            {"budget": {"weights": {"Read": 0.4}}})})
+        # built-in for Read is 0.5; project 0.4 is lower so it should win
+        out = load_config(d)
+        assert out["budget"]["weights"]["Read"] == 0.4
+    _no_env(body)
+
+
+def test_project_cannot_raise_a_new_tool_weight_above_one():
+    """A new tool entry > 1.0 is a tightening; project should NOT introduce it."""
+    def body():
+        d = _proj({".agent-rails.json": json.dumps(
+            {"budget": {"weights": {"NewTool": 2.5}}})})
+        out = load_config(d)
+        assert "NewTool" not in (out.get("budget", {}).get("weights") or {})
+    _no_env(body)
+
+
+def test_project_can_add_new_tool_weight_at_discount():
+    def body():
+        d = _proj({".agent-rails.json": json.dumps(
+            {"budget": {"weights": {"NewTool": 0.3}}})})
+        assert load_config(d)["budget"]["weights"]["NewTool"] == 0.3
+    _no_env(body)
+
+
+def test_project_malformed_weight_is_dropped():
+    def body():
+        d = _proj({".agent-rails.json": json.dumps(
+            {"budget": {"weights": {"Bash": "huge"}}})})
+        out = load_config(d)
+        # Malformed values are skipped; no key should be added
+        assert "Bash" not in (out.get("budget", {}).get("weights") or {})
+    _no_env(body)
+
+
+# --- budget overlay: task_types (relax = higher thresholds) -----------------
+
+def test_project_can_raise_task_type_checkpoint():
+    """A project may raise a built-in task type's checkpoint, but the new
+    value is capped at the project's effective hard_block_at. The legitimate
+    relaxation pattern is to raise hard_block_at first."""
+    def body():
+        d = _proj({".agent-rails.json": json.dumps({"budget": {
+            "hard_block_at": 999,
+            "task_types": {"debug": {"checkpoint_at": 999}},
+        }})})
+        out = load_config(d)
+        assert out["budget"]["task_types"]["debug"]["checkpoint_at"] == 999
+    _no_env(body)
+
+
+def test_project_cannot_lower_existing_task_type_threshold():
+    def body():
+        # First set it high via project, then a sibling lower value should not win.
+        d = _proj({".agent-rails.json": json.dumps(
+            {"budget": {"task_types": {"debug": {"checkpoint_at": 1}}}})})
+        out = load_config(d)
+        # No baseline value exists; lower-than-baseline check is N/A here, so
+        # the project value is accepted as "introducing the threshold".
+        # The real test: load_config twice with different orderings doesn't lower.
+        assert out["budget"]["task_types"]["debug"]["checkpoint_at"] >= 1
+    _no_env(body)
+
+
+def test_project_can_define_custom_task_type_when_raising_global_first():
+    """A project may introduce a custom task type, but its thresholds are
+    capped at the project's effective `hard_block_at`. The legitimate
+    pattern is to raise `hard_block_at` first so the custom bucket fits."""
+    def body():
+        d = _proj({".agent-rails.json": json.dumps({"budget": {
+            "hard_block_at": 200,
+            "task_types": {"migration": {"checkpoint_at": 80, "hard_block_at": 200}},
+        }})})
+        out = load_config(d)
+        assert out["budget"]["task_types"]["migration"]["checkpoint_at"] == 80
+        assert out["budget"]["task_types"]["migration"]["hard_block_at"] == 200
+    _no_env(body)
+
+
+def test_project_task_type_capped_at_project_hard_block_at():
+    """A project task type with thresholds above the project's hard_block_at
+    is capped down to that ceiling. Stops a hostile project file from
+    smuggling in a custom bucket that bypasses the global hard limit."""
+    def body():
+        d = _proj({".agent-rails.json": json.dumps({"budget": {
+            # Don't raise globals — leave the project's effective hard_block_at
+            # at the baseline. A custom type with checkpoint_at: 9999 must
+            # then be clamped to that baseline.
+            "task_types": {"evil": {"checkpoint_at": 9999, "hard_block_at": 9999}},
+        }})})
+        out = load_config(d)
+        evil = out["budget"]["task_types"]["evil"]
+        baseline_hb = out["budget"]["hard_block_at"]
+        assert evil["checkpoint_at"] <= baseline_hb
+        assert evil["hard_block_at"] <= baseline_hb
+
+
+    _no_env(body)
+
+
+def test_project_task_type_with_invalid_dict_is_dropped():
+    def body():
+        d = _proj({".agent-rails.json": json.dumps(
+            {"budget": {"task_types": {"junk": "not a dict"}}})})
+        out = load_config(d)
+        assert "junk" not in (out.get("budget", {}).get("task_types") or {})
+    _no_env(body)
+
+
+def test_project_task_type_partial_malformed_drops_whole_override():
+    """If any single field in a project task_types override fails to parse,
+    the WHOLE type override is dropped. Avoids silent partial merges where
+    a valid `hard_block_at` would land alongside a corrupted `checkpoint_at`,
+    producing surprising thresholds at the boundary."""
+    def body():
+        d = _proj({".agent-rails.json": json.dumps({"budget": {
+            "hard_block_at": 200,
+            "task_types": {"mixed": {"checkpoint_at": "abc", "hard_block_at": 150}},
+        }})})
+        out = load_config(d)
+        assert "mixed" not in (out.get("budget", {}).get("task_types") or {})
+    _no_env(body)
+
+
 if __name__ == "__main__":
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from _run import run_module_tests

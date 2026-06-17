@@ -47,9 +47,12 @@ from .config import load_config
 from .code_atlas import build_code_atlas, format_code_atlas, format_repo_health, repo_health
 from .core.audit import clear_audit, read_audit, summarize
 from .core.budget import approve as _budget_approve
+from .core.budget import get_task_type as _budget_get_task_type
+from .core.budget import known_task_types as _budget_known_task_types
 from .core.budget import read_state as _budget_read_state
 from .core.budget import reset as _budget_reset
 from .core.budget import self_approve as _budget_self_approve
+from .core.budget import set_task_type as _budget_set_task_type
 from .locator import format_locations, locate
 from .profiles import (
     ALL_PROFILES,
@@ -449,6 +452,34 @@ def _cmd_budget(args: argparse.Namespace) -> int:
             print(f"reset: no budget state found for session: {args.session_id}")
         if add > 0:
             print(f"  pre-approved: {add} tool calls added above checkpoint_at for next session")
+        return 0
+    if sub == "task-type":
+        action = getattr(args, "task_type_action", None)
+        cfg = load_config(os.getcwd())
+        budget_cfg = cfg.get("budget", {}) if isinstance(cfg, dict) else {}
+        if action == "list":
+            for name in _budget_known_task_types(budget_cfg):
+                print(name)
+            return 0
+        if action == "get":
+            current = _budget_get_task_type(args.session_id)
+            print(current if current else "(not set)")
+            return 0
+        if action == "set":
+            result = _budget_set_task_type(args.session_id, args.type_name, budget_cfg)
+            if not result.get("ok"):
+                print(
+                    f"error: task-type set rejected: {result.get('reason', 'unknown')}",
+                    file=sys.stderr,
+                )
+                return 1
+            state = result.get("state", {})
+            print(f"task-type: session={args.session_id}")
+            print(f"  task_type:           {state.get('task_type')}")
+            print(f"  approved_tool_calls: {state.get('approved_tool_calls')}")
+            return 0
+        # bare `budget task-type`: print help
+        args._parser.print_help()  # type: ignore[attr-defined]
         return 0
     # no sub-command: print usage
     args._parser.print_help()  # type: ignore[attr-defined]
@@ -1177,6 +1208,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="pre-approve N tool calls above checkpoint_at so the resumed session has runway before the next checkpoint",
     )
     bgt_reset.set_defaults(func=_cmd_budget, budget_cmd="reset")
+
+    bgt_tt = bgt_sub.add_parser(
+        "task-type",
+        help="declare or inspect a session's task type (trivial/standard/debug/audit/explore)",
+    )
+    bgt_tt.set_defaults(func=_cmd_budget, budget_cmd="task-type", _parser=bgt_tt)
+    bgt_tt_sub = bgt_tt.add_subparsers(dest="task_type_action")
+
+    bgt_tt_set = bgt_tt_sub.add_parser(
+        "set",
+        help="declare the task type for a session; raises the budget ceiling to that bucket's checkpoint_at",
+    )
+    bgt_tt_set.add_argument("session_id", help="session ID shown in the block message")
+    bgt_tt_set.add_argument(
+        "type_name",
+        help="task type name (built-in: trivial, standard, debug, audit, explore; or any custom type declared in .agent-rails.json)",
+    )
+    bgt_tt_set.set_defaults(func=_cmd_budget, budget_cmd="task-type", task_type_action="set")
+
+    bgt_tt_get = bgt_tt_sub.add_parser("get", help="print a session's declared task type, or '(not set)'")
+    bgt_tt_get.add_argument("session_id", help="session ID shown in the block message")
+    bgt_tt_get.set_defaults(func=_cmd_budget, budget_cmd="task-type", task_type_action="get")
+
+    bgt_tt_list = bgt_tt_sub.add_parser("list", help="list the known task type names for this project's config")
+    bgt_tt_list.set_defaults(func=_cmd_budget, budget_cmd="task-type", task_type_action="list")
 
     return p
 

@@ -52,7 +52,10 @@ def test_nudge_at_nudge_threshold():
     for _ in range(9):
         bv = increment_and_check(SESSION, "Bash", False, _CFG)
     assert bv.action == NUDGE
-    assert "9 tool calls" in bv.reason
+    # Message format: "9 weighted calls used. Checkpoint required at N."
+    # Bash carries weight 1.0, so weighted matches raw and the helper omits
+    # the "(raw N)" suffix.
+    assert "9 weighted calls" in bv.reason
 
 
 def test_block_at_checkpoint():
