@@ -133,6 +133,24 @@ leverage tool.
 Add a guardrail = a new file in `detectors/` implementing the `Detector`
 interface, registered in `core/engine.py`.
 
+### Budget gate
+
+The budget gate is a session-level checkpoint for long-running agent work. When
+it blocks, the message includes the session id; use that id with the CLI:
+
+```bash
+agent-rails budget <session-id>          # show current counters
+agent-rails budget <session-id> add 20   # approve 20 more tool calls
+agent-rails budget <session-id> reset    # clear all counters for the session
+agent-rails budget <session-id> reset 20 # reset, then pre-approve 20 calls
+agent-rails budget <session-id> subagent # approve one subagent spawn
+agent-rails budget <session-id> add 3 --self  # agent self-approve, if config allows it
+```
+
+`reset` is the hard-block recovery path: it deletes the session budget state so
+the next tool call starts from fresh counters. `reset N` also grants runway
+above the configured checkpoint for the resumed session.
+
 ## Graduated response, not a kill switch
 
 * **nudge** — inject an advisory into the agent's context ("3rd identical call;

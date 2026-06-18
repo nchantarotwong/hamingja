@@ -3,7 +3,7 @@ import io
 import os
 import sys
 import tempfile
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -13,6 +13,8 @@ os.environ["AGENT_RAILS_STATE_DIR"] = _TMP
 from agent_rails.cli import build_parser, main  # noqa: E402
 import agent_rails.cli as cli_module  # noqa: E402
 from agent_rails.core.audit import clear_audit, log_verdict  # noqa: E402
+from agent_rails.core.budget import read_state as budget_read_state  # noqa: E402
+from agent_rails.core.budget import reset as budget_reset  # noqa: E402
 from agent_rails.detectors.base import BLOCK, NUDGE, Verdict  # noqa: E402
 
 
@@ -82,11 +84,65 @@ def test_workflow_subcommands_parse():
         ["locate", "pick directory endpoint", "--glob", "*.py"],
         ["locate-symbol", "do_GET", "--max-results", "3"],
         ["locate-edit", "where should I add repo root field?", "--context-lines", "40"],
+        ["budget", "session-123"],
+        ["budget", "session-123", "add", "20"],
+        ["budget", "session-123", "add", "3", "--self"],
+        ["budget", "session-123", "reset", "20"],
+        ["budget", "session-123", "subagent"],
+        ["budget", "task-type", "list"],
+        ["budget", "task-type", "set", "session-123", "debug"],
     ]
     for argv in cases:
         args = parser.parse_args(argv)
         assert args.command == argv[0]
         assert callable(args.func)
+
+
+def test_budget_short_form_status_shows_next_steps():
+    session = "cli-budget-status"
+    budget_reset(session)
+
+    out = _run(["budget", session])
+
+    assert "no budget state found" in out
+    assert f"agent-rails budget {session} add 20" in out
+    assert f"agent-rails budget {session} reset" in out
+
+
+def test_budget_short_form_add_reset_and_subagent():
+    session = "cli-budget-short-form"
+    budget_reset(session)
+
+    out = _run(["budget", session, "add", "30"])
+    assert "approved:" in out
+    assert budget_read_state(session)["approved_tool_calls"] == 30
+
+    out = _run(["budget", session, "subagent"])
+    assert "subagent_approved:   True" in out
+    assert budget_read_state(session)["subagent_approved"] is True
+
+    out = _run(["budget", session, "reset", "20"])
+    assert "pre-approved: 20" in out
+    assert budget_read_state(session)["approved_tool_calls"] == 45
+
+
+def test_budget_short_form_rejects_bad_add_value():
+    err = io.StringIO()
+    with redirect_stderr(err):
+        rc = main(["budget", "cli-budget-bad-add", "add", "nope"])
+
+    assert rc == 2
+    assert "add requires a positive integer" in err.getvalue()
+    assert "agent-rails budget cli-budget-bad-add add 20" in err.getvalue()
+
+
+def test_budget_short_form_rejects_flag_without_session():
+    err = io.StringIO()
+    with redirect_stderr(err):
+        rc = main(["budget", "--self"])
+
+    assert rc == 2
+    assert "missing budget session id" in err.getvalue()
 
 
 def test_pr_create_body_dash_reads_stdin_and_writes_temp_body():

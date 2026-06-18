@@ -516,9 +516,9 @@ def increment_and_check(
             hard_msg = (
                 f"[agent-rails budget] Hard limit: {_fmt_calls(wc, tc)}/{hard_block_at} weighted calls{type_tag}.\n\n"
                 f"Extend the budget:\n"
-                f"  ! agent-rails budget approve {session_id} --add N\n\n"
+                f"  ! agent-rails budget {session_id} add N\n\n"
                 f"Or reset (clears all session state):\n"
-                f"  ! agent-rails budget reset {session_id}"
+                f"  ! agent-rails budget {session_id} reset"
             )
             print(f"\n{hard_msg}\n", file=sys.stderr, flush=True)
             if _poll_for_approval(session_id, poll_timeout_s, wc, reset_only=False):
@@ -530,7 +530,7 @@ def increment_and_check(
             subagent_msg = (
                 f"[agent-rails budget] Subagent blocked: {sa} attempted, {max_subagents} approved.\n"
                 f"Approve to continue (Claude will resume automatically):\n"
-                f"  ! agent-rails budget approve {session_id} --subagent"
+                f"  ! agent-rails budget {session_id} subagent"
             )
             print(f"\n{subagent_msg}\n", file=sys.stderr, flush=True)
             if _poll_for_subagent_approval(session_id, poll_timeout_s):
@@ -545,7 +545,7 @@ def increment_and_check(
                 f"- Bounded scope (exact files or diff range):\n"
                 f"- Expected output (diagnosis/verdict, not implementation):\n\n"
                 f"Approve:\n"
-                f"  ! agent-rails budget approve {session_id} --subagent",
+                f"  ! agent-rails budget {session_id} subagent",
             )
 
         # Soft checkpoint block
@@ -565,18 +565,18 @@ def increment_and_check(
                     BLOCK,
                     f"[agent-rails budget] Checkpoint: {_fmt_calls(wc, tc)}/{approved_tc} weighted calls used{type_tag}.\n\n"
                     f"Self-approve to continue. Run this as a Bash tool call, then retry:\n"
-                    f"  agent-rails budget approve {session_id} --self --add N\n"
+                    f"  agent-rails budget {session_id} add N --self\n"
                     f"  (N = 1-{sa_max_add}; {sa_remaining}/{sa_max_times} uses remaining)\n\n"
                     f"Human approval — fallback when self-approve isn't appropriate "
                     f"(open-ended work, exhausted slots):\n"
-                    f"  ! agent-rails budget approve {session_id} --add N",
+                    f"  ! agent-rails budget {session_id} add N",
                 )
 
             # Self-approve unavailable: poll for human approval, then deny.
             checkpoint_msg = (
                 f"[agent-rails budget] Checkpoint: {_fmt_calls(wc, tc)}/{approved_tc} weighted calls used{type_tag}.\n"
                 f"Approve to continue (Claude will resume automatically):\n"
-                f"  ! agent-rails budget approve {session_id} --add N"
+                f"  ! agent-rails budget {session_id} add N"
             )
             print(f"\n{checkpoint_msg}\n", file=sys.stderr, flush=True)
             if _poll_for_approval(session_id, poll_timeout_s, wc):
@@ -592,7 +592,7 @@ def increment_and_check(
                 f"Request:\n"
                 f"- +N tools to [specific reason — what the next tool will prove]\n\n"
                 f"Approve:\n"
-                f"  ! agent-rails budget approve {session_id} --add N",
+                f"  ! agent-rails budget {session_id} add N",
             )
 
         # Large-read nudge (over quota but not blocking)
