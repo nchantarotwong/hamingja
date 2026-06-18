@@ -502,6 +502,17 @@ def _classify_checks(checks: list[dict]):
     return failing, pending
 
 
+def _checks_fingerprint(checks: list[dict]) -> tuple[tuple[str, str], ...]:
+    """Stable identity for the reported check set, excluding volatile URLs."""
+    return tuple(sorted(
+        (
+            str(c.get("name") or ""),
+            str(c.get("conclusion") or c.get("state") or "").upper(),
+        )
+        for c in checks
+    ))
+
+
 def _check_line(prefix: str, check: dict) -> str:
     link = check.get("link") or ""
     suffix = f" ({link})" if link else ""
@@ -567,6 +578,7 @@ def _ci_gate(
     # ci_timeout_s-long hang.
     no_checks_deadline = time.monotonic() + min(max(0, ci_timeout_s), 60)
     waiting_logged = False
+    passed_fingerprint: Optional[tuple[tuple[str, str], ...]] = None
     while True:
         checks, error = _fetch_checks(pr, runner=runner)
         if error is not None:
@@ -587,8 +599,15 @@ def _ci_gate(
             lines.append("- refusing to merge: CI checks are failing; fix CI, or pass --skip-ci-reason with local validation")
             return 1
         if checks and not pending:
-            lines.append(f"- ci: all {len(checks)} checks passed")
-            return 0
+            fingerprint = _checks_fingerprint(checks)
+            if passed_fingerprint == fingerprint:
+                lines.append(f"- ci: all {len(checks)} checks passed")
+                return 0
+            passed_fingerprint = fingerprint
+            lines.append(f"- ci: all {len(checks)} reported checks passed; verifying stable check set")
+            sleeper(min(max(ci_poll_s, 0), 5))
+            continue
+        passed_fingerprint = None
         now = time.monotonic()
         if not checks and now >= no_checks_deadline:
             conflict_reason = _pr_conflict_reason(pr, runner=runner)
