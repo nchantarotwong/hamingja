@@ -10,6 +10,7 @@ A thin operator-facing CLI over the same core the hooks use. Subcommands:
     agent-rails locate QUERY       ranked code ranges to read next
     agent-rails locate-symbol NAME ranked definition-ish ranges
     agent-rails locate-edit QUERY  ranked ranges for a desired change
+    agent-rails budget ID [ACTION] inspect/add/reset session budget
     agent-rails install [HARNESS]  install hooks; no arg = all detected harnesses
     agent-rails init [...]         compose a CLAUDE.md + AGENTS.md symlink from profiles
     agent-rails pr-create ...      create a PR with a body file
@@ -401,24 +402,79 @@ def _copy_stdin_to_body_file(body_file) -> str | None:
 
 
 def _cmd_budget(args: argparse.Namespace) -> int:
-    sub = getattr(args, "budget_cmd", None)
-    if sub == "status":
-        state = _budget_read_state(args.session_id)
+    parts = list(getattr(args, "budget_args", []) or [])
+    self_approve = bool(getattr(args, "self_approve", False))
+    approve_subagent = bool(getattr(args, "approve_subagent", False))
+    if not parts and not self_approve and not approve_subagent:
+        args._parser.print_help()  # type: ignore[attr-defined]
+        return 0
+    if any(p in {"-h", "--help"} for p in parts):
+        args._parser.print_help()  # type: ignore[attr-defined]
+        return 0
+
+    filtered: list[str] = []
+    for part in parts:
+        if part == "--self":
+            self_approve = True
+        elif part == "--subagent":
+            approve_subagent = True
+        else:
+            filtered.append(part)
+    parts = filtered
+    if not parts:
+        print("error: missing budget session id", file=sys.stderr)
+        _print_budget_examples(file=sys.stderr)
+        return 2
+
+    if parts and parts[0] == "task-type":
+        return _cmd_budget_task_type(args, parts[1:])
+
+    session_id = parts[0]
+    action = parts[1] if len(parts) > 1 else "status"
+    value = parts[2] if len(parts) > 2 else None
+
+    if len(parts) > 3:
+        print("error: too many budget arguments", file=sys.stderr)
+        _print_budget_examples(file=sys.stderr)
+        return 2
+
+    if self_approve and action != "add":
+        print("error: --self is only valid with `add`", file=sys.stderr)
+        print(f"  Use: agent-rails budget {session_id} add 3 --self", file=sys.stderr)
+        return 2
+    if approve_subagent and action not in {"add", "subagent"}:
+        print("error: --subagent is only valid with `add`; otherwise use the `subagent` action", file=sys.stderr)
+        print(f"  Use: agent-rails budget {session_id} subagent", file=sys.stderr)
+        return 2
+
+    if action == "status":
+        if value is not None:
+            print("error: status does not take a value", file=sys.stderr)
+            print(f"  Use: agent-rails budget {session_id}", file=sys.stderr)
+            return 2
+        state = _budget_read_state(session_id)
         if not state:
-            print(f"no budget state found for session: {args.session_id}")
+            print(f"no budget state found for session: {session_id}")
+            _print_budget_next_steps(session_id)
             return 0
-        print(f"budget state for session: {args.session_id}")
+        print(f"budget state for session: {session_id}")
         for k, v in sorted(state.items()):
             print(f"  {k}: {v}")
+        _print_budget_next_steps(session_id)
         return 0
-    if sub == "approve":
-        add = max(1, args.add)
-        if getattr(args, "self_approve", False):
+
+    if action == "add":
+        add = _parse_budget_int(value, default=8, floor=1)
+        if add is None:
+            print("error: add requires a positive integer", file=sys.stderr)
+            print(f"  Use: agent-rails budget {session_id} add 20", file=sys.stderr)
+            return 2
+        if self_approve:
             cfg = load_config(os.getcwd())
             # Pass the wrapping budget cfg so self_approve sees both the
             # self_approve sub-dict AND checkpoint_at (used for replenishment math).
             result = _budget_self_approve(
-                args.session_id, add_tools=add, cfg=cfg.get("budget", {})
+                session_id, add_tools=add, cfg=cfg.get("budget", {})
             )
             if not result.get("ok"):
                 print(
@@ -426,64 +482,121 @@ def _cmd_budget(args: argparse.Namespace) -> int:
                     file=sys.stderr,
                 )
                 print(
-                    f"  Use: ! agent-rails budget approve {args.session_id} --add {add}",
+                    f"  Human approval: ! agent-rails budget {session_id} add {add}",
                     file=sys.stderr,
                 )
                 return 1
             state = result.get("state", {})
-            print(f"self-approved: session={args.session_id}")
+            print(f"self-approved: session={session_id}")
             print(f"  approved_tool_calls: {state.get('approved_tool_calls')}")
             print(f"  self_approve_times:  {state.get('self_approve_times')}")
             return 0
-        state = _budget_approve(args.session_id, add_tools=add, approve_subagent=args.subagent)
+        state = _budget_approve(session_id, add_tools=add, approve_subagent=approve_subagent)
         if not state:
-            print(f"error: could not update budget state for session: {args.session_id}", file=sys.stderr)
+            print(f"error: could not update budget state for session: {session_id}", file=sys.stderr)
+            print(f"  To clear bad state: agent-rails budget {session_id} reset", file=sys.stderr)
             return 1
-        print(f"approved: session={args.session_id}")
+        print(f"approved: session={session_id}")
         print(f"  approved_tool_calls: {state.get('approved_tool_calls')}")
         print(f"  subagent_approved:   {state.get('subagent_approved')}")
         return 0
-    if sub == "reset":
-        add = max(0, int(getattr(args, "add_tools", 0) or 0))
-        deleted = _budget_reset(args.session_id, add_tools=add)
+
+    if action == "subagent":
+        if value is not None:
+            print("error: subagent does not take a value", file=sys.stderr)
+            print(f"  Use: agent-rails budget {session_id} subagent", file=sys.stderr)
+            return 2
+        state = _budget_approve(session_id, add_tools=1, approve_subagent=True)
+        if not state:
+            print(f"error: could not update budget state for session: {session_id}", file=sys.stderr)
+            print(f"  To clear bad state: agent-rails budget {session_id} reset", file=sys.stderr)
+            return 1
+        print(f"approved: session={session_id}")
+        print(f"  approved_tool_calls: {state.get('approved_tool_calls')}")
+        print(f"  subagent_approved:   {state.get('subagent_approved')}")
+        return 0
+
+    if action == "reset":
+        add = _parse_budget_int(value, default=0, floor=0)
+        if add is None:
+            print("error: reset runway must be a non-negative integer", file=sys.stderr)
+            print(f"  Use: agent-rails budget {session_id} reset 20", file=sys.stderr)
+            return 2
+        deleted = _budget_reset(session_id, add_tools=add)
         if deleted:
-            print(f"reset: budget state cleared for session: {args.session_id}")
+            print(f"reset: budget state cleared for session: {session_id}")
         else:
-            print(f"reset: no budget state found for session: {args.session_id}")
+            print(f"reset: no budget state found for session: {session_id}")
         if add > 0:
             print(f"  pre-approved: {add} tool calls added above checkpoint_at for next session")
         return 0
-    if sub == "task-type":
-        action = getattr(args, "task_type_action", None)
-        cfg = load_config(os.getcwd())
-        budget_cfg = cfg.get("budget", {}) if isinstance(cfg, dict) else {}
-        if action == "list":
-            for name in _budget_known_task_types(budget_cfg):
-                print(name)
-            return 0
-        if action == "get":
-            current = _budget_get_task_type(args.session_id)
-            print(current if current else "(not set)")
-            return 0
-        if action == "set":
-            result = _budget_set_task_type(args.session_id, args.type_name, budget_cfg)
-            if not result.get("ok"):
-                print(
-                    f"error: task-type set rejected: {result.get('reason', 'unknown')}",
-                    file=sys.stderr,
-                )
-                return 1
-            state = result.get("state", {})
-            print(f"task-type: session={args.session_id}")
-            print(f"  task_type:           {state.get('task_type')}")
-            print(f"  approved_tool_calls: {state.get('approved_tool_calls')}")
-            return 0
-        # bare `budget task-type`: print help
-        args._parser.print_help()  # type: ignore[attr-defined]
+
+    print(f"error: unknown budget action: {action}", file=sys.stderr)
+    _print_budget_examples(file=sys.stderr)
+    return 2
+
+
+def _parse_budget_int(value: Optional[str], *, default: int, floor: int) -> Optional[int]:
+    if value is None:
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed < floor:
+        return None
+    return parsed
+
+
+def _print_budget_next_steps(session_id: str) -> None:
+    print("next:")
+    print(f"  agent-rails budget {session_id} add 20")
+    print(f"  agent-rails budget {session_id} reset")
+    print(f"  agent-rails budget {session_id} reset 20")
+
+
+def _print_budget_examples(*, file=None) -> None:
+    if file is None:
+        file = sys.stdout
+    print("examples:", file=file)
+    print("  agent-rails budget <session-id>", file=file)
+    print("  agent-rails budget <session-id> add 20", file=file)
+    print("  agent-rails budget <session-id> reset", file=file)
+    print("  agent-rails budget <session-id> reset 20", file=file)
+    print("  agent-rails budget <session-id> subagent", file=file)
+    print("  agent-rails budget <session-id> add 3 --self", file=file)
+
+
+def _cmd_budget_task_type(args: argparse.Namespace, parts: list[str]) -> int:
+    cfg = load_config(os.getcwd())
+    budget_cfg = cfg.get("budget", {}) if isinstance(cfg, dict) else {}
+    action = parts[0] if parts else None
+    if action == "list" and len(parts) == 1:
+        for name in _budget_known_task_types(budget_cfg):
+            print(name)
         return 0
-    # no sub-command: print usage
-    args._parser.print_help()  # type: ignore[attr-defined]
-    return 0
+    if action == "get" and len(parts) == 2:
+        current = _budget_get_task_type(parts[1])
+        print(current if current else "(not set)")
+        return 0
+    if action == "set" and len(parts) == 3:
+        result = _budget_set_task_type(parts[1], parts[2], budget_cfg)
+        if not result.get("ok"):
+            print(
+                f"error: task-type set rejected: {result.get('reason', 'unknown')}",
+                file=sys.stderr,
+            )
+            return 1
+        state = result.get("state", {})
+        print(f"task-type: session={parts[1]}")
+        print(f"  task_type:           {state.get('task_type')}")
+        print(f"  approved_tool_calls: {state.get('approved_tool_calls')}")
+        return 0
+    print("budget task-type usage:", file=sys.stderr)
+    print("  agent-rails budget task-type list", file=sys.stderr)
+    print("  agent-rails budget task-type get <session-id>", file=sys.stderr)
+    print("  agent-rails budget task-type set <session-id> <type>", file=sys.stderr)
+    return 2
 
 
 def _cmd_test_summary(args: argparse.Namespace) -> int:
@@ -1171,68 +1284,36 @@ def build_parser() -> argparse.ArgumentParser:
         func=lambda _a: (print(f"agent-rails {__version__}"), 0)[1]
     )
 
-    bgt = sub.add_parser("budget", help="inspect and approve session budget gates")
-    bgt_sub = bgt.add_subparsers(dest="budget_cmd")
-    bgt.set_defaults(func=_cmd_budget, _parser=bgt)
-
-    bgt_status = bgt_sub.add_parser("status", help="show current budget counters for a session")
-    bgt_status.add_argument("session_id", help="session ID shown in the block message")
-    bgt_status.set_defaults(func=_cmd_budget, budget_cmd="status")
-
-    bgt_approve = bgt_sub.add_parser("approve", help="extend tool-call budget (and optionally unblock a subagent)")
-    bgt_approve.add_argument("session_id", help="session ID shown in the block message")
-    bgt_approve.add_argument(
-        "--add",
-        type=int,
-        default=8,
-        metavar="N",
-        help="additional tool calls to grant (default: 8)",
+    bgt = sub.add_parser(
+        "budget",
+        help="inspect, add, or reset a session budget",
+        epilog=(
+            "examples:\n"
+            "  agent-rails budget <session-id>\n"
+            "  agent-rails budget <session-id> add 20\n"
+            "  agent-rails budget <session-id> reset\n"
+            "  agent-rails budget <session-id> reset 20\n"
+            "  agent-rails budget <session-id> subagent\n"
+            "  agent-rails budget <session-id> add 3 --self\n"
+            "  agent-rails budget task-type list\n"
+            "  agent-rails budget task-type set <session-id> <type>"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    bgt_approve.add_argument(
-        "--subagent",
-        action="store_true",
-        help="also unblock one subagent spawn",
-    )
-    bgt_approve.add_argument(
+    bgt.add_argument(
         "--self",
         action="store_true",
         dest="self_approve",
-        help="agent-initiated self-approve: validated against budget.self_approve config limits",
+        help=argparse.SUPPRESS,
     )
-    bgt_approve.set_defaults(func=_cmd_budget, budget_cmd="approve")
-
-    bgt_reset = bgt_sub.add_parser("reset", help="clear all budget counters for a session (hard-block recovery)")
-    bgt_reset.add_argument("session_id", help="session ID shown in the block message")
-    bgt_reset.add_argument(
-        "--add", dest="add_tools", type=int, default=0, metavar="N",
-        help="pre-approve N tool calls above checkpoint_at so the resumed session has runway before the next checkpoint",
+    bgt.add_argument(
+        "--subagent",
+        action="store_true",
+        dest="approve_subagent",
+        help=argparse.SUPPRESS,
     )
-    bgt_reset.set_defaults(func=_cmd_budget, budget_cmd="reset")
-
-    bgt_tt = bgt_sub.add_parser(
-        "task-type",
-        help="declare or inspect a session's task type (trivial/standard/debug/audit/explore)",
-    )
-    bgt_tt.set_defaults(func=_cmd_budget, budget_cmd="task-type", _parser=bgt_tt)
-    bgt_tt_sub = bgt_tt.add_subparsers(dest="task_type_action")
-
-    bgt_tt_set = bgt_tt_sub.add_parser(
-        "set",
-        help="declare the task type for a session; raises the budget ceiling to that bucket's checkpoint_at",
-    )
-    bgt_tt_set.add_argument("session_id", help="session ID shown in the block message")
-    bgt_tt_set.add_argument(
-        "type_name",
-        help="task type name (built-in: trivial, standard, debug, audit, explore; or any custom type declared in .agent-rails.json)",
-    )
-    bgt_tt_set.set_defaults(func=_cmd_budget, budget_cmd="task-type", task_type_action="set")
-
-    bgt_tt_get = bgt_tt_sub.add_parser("get", help="print a session's declared task type, or '(not set)'")
-    bgt_tt_get.add_argument("session_id", help="session ID shown in the block message")
-    bgt_tt_get.set_defaults(func=_cmd_budget, budget_cmd="task-type", task_type_action="get")
-
-    bgt_tt_list = bgt_tt_sub.add_parser("list", help="list the known task type names for this project's config")
-    bgt_tt_list.set_defaults(func=_cmd_budget, budget_cmd="task-type", task_type_action="list")
+    bgt.add_argument("budget_args", nargs=argparse.REMAINDER, metavar="...")
+    bgt.set_defaults(func=_cmd_budget, _parser=bgt)
 
     return p
 

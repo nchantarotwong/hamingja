@@ -341,7 +341,7 @@ def test_checkpoint_block_no_self_approve_when_disabled():
         bv = increment_and_check(SESSION, "Bash", False, _CFG_SA_DISABLED)
     assert bv.action == BLOCK
     assert "Self-approve" not in bv.reason
-    assert "! agent-rails budget approve" in bv.reason
+    assert f"! agent-rails budget {SESSION} add N" in bv.reason
 
 
 def test_checkpoint_block_no_self_approve_when_exhausted():
