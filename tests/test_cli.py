@@ -41,6 +41,8 @@ def test_commands_lists_workflow_wrappers():
     assert "Available agent-rails wrappers" in out
     assert "agent-rails pr-create --title <title> --body-file <path>" in out
     assert "agent-rails pr-merge <pr>" in out
+    assert "agent-rails ci-status [pr] --wait" in out
+    assert "agent-rails ci-preflight [pr]" in out
     assert "agent-rails ci-failures --pr <pr>" in out
     assert "sandbox escalation" in out
 
@@ -77,6 +79,8 @@ def test_workflow_subcommands_parse():
         ["pr-create", "--title", "T", "--body", "-", "--head", "topic"],
         ["post-merge-cleanup", "topic", "--force-delete", "--dry-run"],
         ["ci-status", "12", "--command-timeout", "10"],
+        ["ci-status", "12", "--wait", "--timeout", "120", "--poll", "5"],
+        ["ci-preflight", "12", "--command-timeout", "10"],
         ["ci-failures", "12", "--command-timeout", "10"],
         ["ci-failures", "--run", "456", "--command-timeout", "10"],
         ["test-summary", ".pytest_output.log"],

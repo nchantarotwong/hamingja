@@ -16,6 +16,8 @@ A thin operator-facing CLI over the same core the hooks use. Subcommands:
     agent-rails init [...]         compose a CLAUDE.md + AGENTS.md symlink from profiles
     agent-rails pr-create ...      create a PR with a body file
     agent-rails pr-merge PR        wait for CI checks, merge + poll + local cleanup
+    agent-rails ci-status          summarize PR checks
+    agent-rails ci-preflight       classify CI quota/infrastructure blocks
     agent-rails ci-failures        summarize failed CI logs
     agent-rails test-summary LOG   summarize saved pytest output
     agent-rails version
@@ -63,7 +65,7 @@ from .profiles import (
     read_profile,
 )
 from .templates import ROOT_TEMPLATE, read_template
-from .workflows import ci_failures, ci_status, cleanup_after_merge, create_pr, merge_pr, test_summary, timed_runner
+from .workflows import ci_failures, ci_preflight, ci_status, cleanup_after_merge, create_pr, merge_pr, test_summary, timed_runner
 
 
 def _cmd_report(args: argparse.Namespace) -> int:
@@ -114,6 +116,8 @@ _GLOBAL_WRAPPERS = [
     ("PR", "agent-rails pr-merge <pr> --skip-ci-reason <reason>"),
     ("PR", "agent-rails post-merge-cleanup [branch]"),
     ("CI", "agent-rails ci-status [pr]"),
+    ("CI", "agent-rails ci-status [pr] --wait"),
+    ("CI", "agent-rails ci-preflight [pr]"),
     ("CI", "agent-rails ci-failures <pr>"),
     ("CI", "agent-rails ci-failures --pr <pr>"),
     ("CI", "agent-rails ci-failures --run <run-id>"),
@@ -125,6 +129,7 @@ _REPO_WRAPPER_NAMES = {
     "pr-merge": "PR",
     "post-merge-cleanup": "PR",
     "ci-status": "CI",
+    "ci-preflight": "CI",
     "ci-failures": "CI",
     "test-summary": "Tests",
 }
@@ -473,7 +478,16 @@ def _cmd_post_merge_cleanup(args: argparse.Namespace) -> int:
 
 
 def _cmd_ci_status(args: argparse.Namespace) -> int:
-    return ci_status(args.pr, runner=timed_runner(args.command_timeout))
+    return ci_status(
+        args.pr,
+        runner=timed_runner(args.command_timeout),
+        wait_timeout_s=args.timeout if args.wait else 0,
+        poll_s=args.poll,
+    )
+
+
+def _cmd_ci_preflight(args: argparse.Namespace) -> int:
+    return ci_preflight(args.pr, runner=timed_runner(args.command_timeout))
 
 
 def _cmd_ci_failures(args: argparse.Namespace) -> int:
@@ -1337,6 +1351,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     cis = sub.add_parser("ci-status", help="summarize GitHub PR checks")
     cis.add_argument("pr", nargs="?", help="PR number, URL, or branch for `gh pr checks`")
+    cis.add_argument("--wait", action="store_true", help="poll with backoff until checks finish or timeout")
+    cis.add_argument("--timeout", type=int, default=600, help="seconds to wait with --wait (default: 600)")
+    cis.add_argument("--poll", type=float, default=10, help="initial seconds between --wait polls (default: 10; backs off up to 60)")
     cis.add_argument(
         "--command-timeout",
         type=float,
@@ -1344,6 +1361,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="seconds before one gh call times out (default: 30)",
     )
     cis.set_defaults(func=_cmd_ci_status)
+
+    cip = sub.add_parser("ci-preflight", help="classify GitHub CI quota/infrastructure readiness")
+    cip.add_argument("pr", nargs="?", help="PR number, URL, or branch for `gh pr checks`")
+    cip.add_argument(
+        "--command-timeout",
+        type=float,
+        default=30,
+        help="seconds before one gh call times out (default: 30)",
+    )
+    cip.set_defaults(func=_cmd_ci_preflight)
 
     cif = sub.add_parser("ci-failures", help="extract pytest-style failures from a failed GitHub run")
     cif.add_argument("pr_arg", nargs="?", help="PR number, URL, or branch shorthand for --pr")

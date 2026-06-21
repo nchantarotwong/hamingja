@@ -377,6 +377,8 @@ agent-rails pr-merge 123 --skip-ci-reason "GHA budget exhausted; local suite pas
 agent-rails post-merge-cleanup topic  # checkout main, pull --ff-only, branch -d topic
 agent-rails post-merge-cleanup topic --force-delete  # for squash/rebase-cleaned branches
 agent-rails ci-status 123             # compact PR check summary; flags Actions budget/quota blocks
+agent-rails ci-status 123 --wait      # poll with backoff until checks finish or timeout
+agent-rails ci-preflight 123          # classify CI quota/infrastructure readiness before reruns
 agent-rails ci-failures 123           # shorthand for --pr 123
 agent-rails ci-failures --pr 123      # failed-run log summary for the PR branch
 agent-rails ci-failures --run 456     # failed-run log summary for a run id
@@ -405,9 +407,15 @@ inspection proves there are no `.github/workflows/*.yml` or `*.yaml` files, it
 treats the repo as no-CI and skips the gate without an extra failed merge
 attempt.
 
+`ci-status` and `ci-preflight` classify failed Action runs that look like
+quota/infrastructure blocks, including runs where every failed job completed
+before any job steps were recorded. `ci-status --wait` polls with backoff so an
+agent does not burn repeated tool calls manually checking pending jobs.
+
 `ci-failures` summarizes pytest-style failures from both stdout and stderr of
 `gh run view --log-failed`, including GitHub timestamp-prefixed and ANSI-colored
-pytest summary lines.
+pytest summary lines. If failed logs are unavailable, it falls back to run
+metadata and reports no-step CI infrastructure/budget failures directly.
 
 The rule for project instructions is simple: run `agent-rails commands` before
 PR creation/merge/cleanup, CI status/failure extraction, or saved test-log
