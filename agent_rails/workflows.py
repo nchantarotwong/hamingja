@@ -13,6 +13,7 @@ import re
 import subprocess
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional, Sequence
 
@@ -47,6 +48,7 @@ CI_BUDGET_EXHAUSTED_PATTERNS = (
     re.compile(r"(actions|workflow) minutes (are |have been |were )?(exhausted|exceeded)", re.I),
     re.compile(r"(spending limit|included minutes) .{0,80}(reached|exhausted|exceeded) .{0,80}(github actions|actions)", re.I),
 )
+NO_STEP_FAILURE_MAX_SECONDS = 10.0
 
 
 def default_runner(args: Sequence[str], *, timeout_s: float = DEFAULT_COMMAND_TIMEOUT_S) -> RunResult:
@@ -537,23 +539,92 @@ def _pr_conflict_reason(pr: str, *, runner: Runner) -> Optional[str]:
     return None
 
 
-def ci_status(pr: Optional[str] = None, *, runner: Runner = default_runner) -> int:
-    checks, error = _fetch_checks(pr, runner=runner)
-    if error is not None:
+def ci_status(
+    pr: Optional[str] = None,
+    *,
+    runner: Runner = default_runner,
+    wait_timeout_s: int = 0,
+    poll_s: float = 10,
+    sleeper: Callable[[float], None] = time.sleep,
+) -> int:
+    deadline = time.monotonic() + max(0, wait_timeout_s)
+    backoff = max(0.1, poll_s)
+    printed_header = False
+    timed_out_wait = False
+    if wait_timeout_s > 0:
+        print("ci status", flush=True)
+        printed_header = True
+    while True:
+        checks, error = _fetch_checks(pr, runner=runner)
+        if error is not None and wait_timeout_s > 0 and _no_checks_reported(error) and time.monotonic() < deadline:
+            sleep_s = min(backoff, max(0, deadline - time.monotonic()))
+            print(
+                f"- waiting: no checks reported yet; timeout {wait_timeout_s}s; next poll in {sleep_s:g}s",
+                flush=True,
+            )
+            sleeper(sleep_s)
+            backoff = min(backoff * 2, 60.0)
+            continue
+        if error is not None:
+            if not printed_header:
+                print("ci status")
+            print(f"- error: {error}")
+            return 1
+        failing, pending = _classify_checks(checks)
+        if wait_timeout_s <= 0 or failing or not pending or time.monotonic() >= deadline:
+            timed_out_wait = wait_timeout_s > 0 and bool(pending) and not failing and time.monotonic() >= deadline
+            break
+        sleep_s = min(backoff, max(0, deadline - time.monotonic()))
+        print(
+            f"- waiting: {len(pending)}/{len(checks)} checks still running; timeout {wait_timeout_s}s; next poll in {sleep_s:g}s",
+            flush=True,
+        )
+        sleeper(sleep_s)
+        backoff = min(backoff * 2, 60.0)
+    failing, pending = _classify_checks(checks)
+    ci_block = _ci_blocked(failing, runner=runner)
+    if not printed_header:
         print("ci status")
+    print(f"- checks: {len(checks)} total, {len(failing)} failing, {len(pending)} pending")
+    if timed_out_wait:
+        print(f"- timeout: {len(pending)} check(s) still pending after {wait_timeout_s}s")
+    if ci_block:
+        print(f"- blocked: {ci_block}")
+    for c in failing[:20]:
+        print(_check_line("failed", c))
+    if ci_block:
+        return 2
+    if timed_out_wait:
+        return 1
+    return 1 if failing else 0
+
+
+def _no_checks_reported(error: str) -> bool:
+    return "no checks reported" in error
+
+
+def ci_preflight(pr: Optional[str] = None, *, runner: Runner = default_runner) -> int:
+    """Cheap CI readiness check that classifies quota/infrastructure blocks."""
+    checks, error = _fetch_checks(pr, runner=runner)
+    print("ci preflight")
+    if error is not None:
         print(f"- error: {error}")
         return 1
     failing, pending = _classify_checks(checks)
-    budget_blocked = _ci_budget_blocked(failing, runner=runner)
-    print("ci status")
+    ci_block = _ci_blocked(failing, runner=runner)
     print(f"- checks: {len(checks)} total, {len(failing)} failing, {len(pending)} pending")
-    if budget_blocked:
-        print("- blocked: actions_budget_exhausted")
-    for c in failing[:20]:
-        print(_check_line("failed", c))
-    if budget_blocked:
+    if ci_block:
+        print(f"- blocked: {ci_block}")
+        print("- next: confirm GitHub Actions budget/availability before rerunning CI")
         return 2
-    return 1 if failing else 0
+    if failing:
+        print("- result: failing checks look like ordinary CI failures")
+        return 1
+    if pending:
+        print("- result: checks are pending")
+        return 1
+    print("- result: CI is ready")
+    return 0
 
 
 def _ci_gate(
@@ -594,6 +665,11 @@ def _ci_gate(
         failing, pending = _classify_checks(checks)
         if failing:
             lines.append(f"- ci: {len(checks)} checks, {len(failing)} failing, {len(pending)} pending")
+            ci_block = _ci_blocked(failing, runner=runner)
+            if ci_block:
+                lines.append(f"- blocked: {ci_block}")
+                lines.append("- refusing to merge: CI appears unavailable; confirm GitHub Actions budget/availability before rerunning")
+                return 2
             for c in failing[:20]:
                 lines.append(_check_line("failed", c))
             lines.append("- refusing to merge: CI checks are failing; fix CI, or pass --skip-ci-reason with local validation")
@@ -658,7 +734,7 @@ def _repo_has_no_ci_workflows(root: Optional[Path] = None) -> bool:
         return False
 
 
-def _ci_budget_blocked(failing_checks: list[dict], *, runner: Runner) -> bool:
+def _ci_blocked(failing_checks: list[dict], *, runner: Runner) -> Optional[str]:
     run_ids: list[str] = []
     for check in failing_checks:
         link = check.get("link")
@@ -669,12 +745,56 @@ def _ci_budget_blocked(failing_checks: list[dict], *, runner: Runner) -> bool:
             run_ids.append(match.group(1))
     for run_id in run_ids:
         log = runner(["gh", "run", "view", run_id, "--log-failed"])
-        if log.returncode != 0:
-            continue
-        lines = f"{log.stdout}\n{log.stderr}".splitlines()
-        if any(_ci_budget_line_blocked(line) for line in lines):
-            return True
-    return False
+        if log.returncode == 0:
+            lines = f"{log.stdout}\n{log.stderr}".splitlines()
+            if any(_ci_budget_line_blocked(line) for line in lines):
+                return "actions_budget_exhausted"
+        else:
+            metadata_block = _ci_metadata_blocked(run_id, runner=runner)
+            if metadata_block:
+                return metadata_block
+    return None
+
+
+def _ci_metadata_blocked(run_id: str, *, runner: Runner) -> Optional[str]:
+    meta = runner(["gh", "run", "view", run_id, "--json", "status,conclusion,jobs,url,workflowName"])
+    if meta.returncode != 0:
+        return None
+    info = _json_object_from(meta)
+    if not isinstance(info, dict):
+        return None
+    jobs = info.get("jobs")
+    if not isinstance(jobs, list) or not jobs:
+        return None
+    failed_jobs = [job for job in jobs if isinstance(job, dict) and job.get("conclusion") == "failure"]
+    if not failed_jobs or len(failed_jobs) != len(jobs):
+        return None
+    if all(_job_failed_before_steps(job) for job in failed_jobs):
+        return "ci_infrastructure_or_budget_failure"
+    return None
+
+
+def _job_failed_before_steps(job: dict) -> bool:
+    if job.get("steps") != []:
+        return False
+    started = _parse_gh_time(job.get("startedAt"))
+    completed = _parse_gh_time(job.get("completedAt"))
+    if started is None or completed is None:
+        return False
+    duration = (completed - started).total_seconds()
+    return 0 <= duration <= NO_STEP_FAILURE_MAX_SECONDS
+
+
+def _parse_gh_time(value) -> Optional[datetime]:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
 
 
 def _ci_budget_line_blocked(line: str) -> bool:
@@ -811,6 +931,11 @@ def ci_failures(
     print("ci failures")
     print(f"- run: {title} #{run_id}" + (f" ({url})" if url else ""))
     if log.returncode != 0:
+        metadata_block = _ci_metadata_blocked(run_id, runner=runner)
+        if metadata_block:
+            print(f"- blocked: {metadata_block}")
+            print("- failed logs were unavailable, but run metadata shows jobs failed before any steps ran")
+            return 2
         print(f"- error: {_err(log)}")
         return log.returncode or 1
     summary = summarize_pytest_log(f"{log.stdout}\n{log.stderr}")

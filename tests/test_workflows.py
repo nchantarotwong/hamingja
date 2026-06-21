@@ -9,6 +9,7 @@ import os
 import sys
 import subprocess
 import tempfile
+import time
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -16,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from agent_rails.workflows import (  # noqa: E402
     RunResult,
+    ci_preflight,
     ci_status,
     ci_failures,
     cleanup_after_merge,
@@ -873,6 +875,32 @@ def test_merge_pr_refuses_when_ci_checks_failing():
     assert "failed: ci-required [FAILURE] (https://gha/runs/1)" in out
 
 
+def test_merge_pr_classifies_no_step_ci_failure_before_merge():
+    runner = FakeRunner([
+        PR_VIEW_OPEN,
+        RunResult(
+            CHECKS_CMD,
+            0,
+            '[{"name":"Python Contracts","state":"FAILURE","link":"https://github.test/actions/runs/456/job/789"}]',
+            "",
+        ),
+        RunResult(["gh", "run", "view", "456", "--log-failed"], 1, "", "log not found: 789"),
+        RunResult(
+            ["gh", "run", "view", "456", "--json", "status,conclusion,jobs,url,workflowName"],
+            0,
+            _no_step_failed_run_json(),
+            "",
+        ),
+    ])
+
+    rc, out = _capture(merge_pr, "12", runner=runner, sleeper=lambda _s: None, poll_s=0)
+
+    assert rc == 2
+    assert MERGE_CMD not in runner.calls
+    assert "blocked: ci_infrastructure_or_budget_failure" in out
+    assert "confirm GitHub Actions budget/availability" in out
+
+
 def test_merge_pr_waits_for_pending_ci_then_merges():
     runner = FakeRunner([
         PR_VIEW_OPEN,
@@ -1351,6 +1379,138 @@ def test_ci_status_classifies_actions_budget_exhaustion_from_failed_run_log():
     assert runner.calls[-1] == ["gh", "run", "view", "456", "--log-failed"]
 
 
+def _no_step_failed_run_json() -> str:
+    return (
+        '{"workflowName":"Validation","url":"https://ci/run","status":"completed","conclusion":"failure",'
+        '"jobs":['
+        '{"name":"Python Contracts","conclusion":"failure","startedAt":"2026-06-21T00:14:10Z",'
+        '"completedAt":"2026-06-21T00:14:13Z","steps":[]},'
+        '{"name":"Operator UI","conclusion":"failure","startedAt":"2026-06-21T00:14:10Z",'
+        '"completedAt":"2026-06-21T00:14:11Z","steps":[]}'
+        ']}'
+    )
+
+
+def test_ci_status_classifies_no_step_failed_run_as_infrastructure_or_budget_block():
+    runner = FakeRunner([
+        RunResult(
+            ["gh", "pr", "checks", "--json", "name,state,link"],
+            0,
+            '[{"name":"Python Contracts","state":"FAILURE","link":"https://github.test/actions/runs/456/job/789"}]',
+            "",
+        ),
+        RunResult(["gh", "run", "view", "456", "--log-failed"], 1, "", "log not found: 789"),
+        RunResult(
+            ["gh", "run", "view", "456", "--json", "status,conclusion,jobs,url,workflowName"],
+            0,
+            _no_step_failed_run_json(),
+            "",
+        ),
+    ])
+
+    rc, out = _capture(ci_status, runner=runner)
+
+    assert rc == 2
+    assert "blocked: ci_infrastructure_or_budget_failure" in out
+
+
+def test_ci_preflight_reports_no_step_failed_run_without_rerunning_ci():
+    runner = FakeRunner([
+        RunResult(
+            ["gh", "pr", "checks", "12", "--json", "name,state,link"],
+            0,
+            '[{"name":"Python Contracts","state":"FAILURE","link":"https://github.test/actions/runs/456/job/789"}]',
+            "",
+        ),
+        RunResult(["gh", "run", "view", "456", "--log-failed"], 1, "", "log not found: 789"),
+        RunResult(
+            ["gh", "run", "view", "456", "--json", "status,conclusion,jobs,url,workflowName"],
+            0,
+            _no_step_failed_run_json(),
+            "",
+        ),
+    ])
+
+    rc, out = _capture(ci_preflight, "12", runner=runner)
+
+    assert rc == 2
+    assert "ci preflight" in out
+    assert "blocked: ci_infrastructure_or_budget_failure" in out
+    assert "confirm GitHub Actions budget/availability" in out
+
+
+def test_ci_status_wait_polls_with_backoff_until_checks_finish():
+    sleeps = []
+    runner = FakeRunner([
+        RunResult(["gh", "pr", "checks", "--json", "name,state,link"], 0, '[{"name":"ci","state":"IN_PROGRESS"}]', ""),
+        RunResult(["gh", "pr", "checks", "--json", "name,state,link"], 0, '[{"name":"ci","state":"IN_PROGRESS"}]', ""),
+        RunResult(["gh", "pr", "checks", "--json", "name,state,link"], 0, '[{"name":"ci","state":"SUCCESS"}]', ""),
+    ])
+
+    rc, out = _capture(ci_status, runner=runner, wait_timeout_s=100, poll_s=5, sleeper=sleeps.append)
+
+    assert rc == 0
+    assert runner.calls.count(["gh", "pr", "checks", "--json", "name,state,link"]) == 3
+    assert sleeps == [5, 10]
+    assert "waiting: 1/1 checks still running; timeout 100s; next poll in 5s" in out
+    assert "waiting: 1/1 checks still running; timeout 100s; next poll in 10s" in out
+    assert "1 total, 0 failing, 0 pending" in out
+
+
+def test_ci_status_wait_treats_no_checks_reported_as_waitable():
+    sleeps = []
+    runner = FakeRunner([
+        RunResult(
+            ["gh", "pr", "checks", "12", "--json", "name,state,link"],
+            1,
+            "",
+            "no checks reported on the 'topic' branch",
+        ),
+        RunResult(
+            ["gh", "pr", "checks", "12", "--json", "name,state,link"],
+            0,
+            '[{"name":"ci","state":"SUCCESS"}]',
+            "",
+        ),
+    ])
+
+    rc, out = _capture(ci_status, "12", runner=runner, wait_timeout_s=100, poll_s=5, sleeper=sleeps.append)
+
+    assert rc == 0
+    assert sleeps == [5]
+    assert "waiting: no checks reported yet; timeout 100s; next poll in 5s" in out
+    assert "1 total, 0 failing, 0 pending" in out
+
+
+def test_ci_status_wait_times_out_when_checks_remain_pending():
+    sleeps = []
+    runner = FakeRunner([
+        RunResult(["gh", "pr", "checks", "--json", "name,state,link"], 0, '[{"name":"ci","state":"IN_PROGRESS"}]', ""),
+    ])
+
+    rc, out = _capture(ci_status, runner=runner, wait_timeout_s=0, poll_s=5, sleeper=sleeps.append)
+
+    assert rc == 0
+    assert sleeps == []
+    assert "1 total, 0 failing, 1 pending" in out
+
+    sleeps = []
+    runner = FakeRunner([
+        RunResult(["gh", "pr", "checks", "--json", "name,state,link"], 0, '[{"name":"ci","state":"IN_PROGRESS"}]', ""),
+        RunResult(["gh", "pr", "checks", "--json", "name,state,link"], 0, '[{"name":"ci","state":"IN_PROGRESS"}]', ""),
+    ])
+
+    def sleeper(seconds):
+        sleeps.append(seconds)
+        time.sleep(seconds)
+
+    rc, out = _capture(ci_status, runner=runner, wait_timeout_s=0.001, poll_s=5, sleeper=sleeper)
+
+    assert rc == 1
+    assert len(sleeps) == 1
+    assert "timeout: 1 check(s) still pending after 0.001s" in out
+
+
 def test_ci_status_scans_all_failed_action_runs_for_budget_exhaustion():
     checks = ",".join(
         f'{{"name":"test-{run_id}","state":"FAILURE","link":"https://github.test/actions/runs/{run_id}"}}'
@@ -1673,6 +1833,31 @@ def test_ci_failures_run_id_fetches_workflow_context():
     rc, out = _capture(ci_failures, run_id="456", runner=runner)
     assert rc == 1
     assert "tests #456 (https://ci/run)" in out
+
+
+def test_ci_failures_falls_back_to_no_step_metadata_when_logs_are_unavailable():
+    runner = FakeRunner([
+        RunResult(
+            ["gh", "run", "view", "456", "--json", "workflowName,url"],
+            0,
+            '{"workflowName":"Validation","url":"https://ci/run"}',
+            "",
+        ),
+        RunResult(["gh", "run", "view", "456", "--log-failed"], 1, "", "log not found: 789"),
+        RunResult(
+            ["gh", "run", "view", "456", "--json", "status,conclusion,jobs,url,workflowName"],
+            0,
+            _no_step_failed_run_json(),
+            "",
+        ),
+    ])
+
+    rc, out = _capture(ci_failures, run_id="456", runner=runner)
+
+    assert rc == 2
+    assert "Validation #456 (https://ci/run)" in out
+    assert "blocked: ci_infrastructure_or_budget_failure" in out
+    assert "jobs failed before any steps ran" in out
 
 
 def test_ci_failures_extracts_pytest_failures_from_stderr():
