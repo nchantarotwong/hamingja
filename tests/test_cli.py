@@ -1,6 +1,7 @@
 """CLI tests — report/status/version over the same core the hooks use."""
 import io
 import os
+import stat
 import sys
 import tempfile
 from contextlib import redirect_stderr, redirect_stdout
@@ -79,6 +80,9 @@ def test_workflow_subcommands_parse():
         ["ci-failures", "12", "--command-timeout", "10"],
         ["ci-failures", "--run", "456", "--command-timeout", "10"],
         ["test-summary", ".pytest_output.log"],
+        ["preflight"],
+        ["preflight", "--list"],
+        ["preflight", "full-suite-readiness", "--", "--strict"],
         ["code-atlas", ".", "--glob", "*.py", "--min-lines", "100"],
         ["repo-health", ".", "--min-lines", "1000", "--max-suggestions", "3"],
         ["locate", "pick directory endpoint", "--glob", "*.py"],
@@ -96,6 +100,111 @@ def test_workflow_subcommands_parse():
         args = parser.parse_args(argv)
         assert args.command == argv[0]
         assert callable(args.func)
+
+
+def test_commands_lists_repo_local_preflights():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = os.path.join(tmp, "repo")
+        preflight_dir = os.path.join(repo, ".agent-rails", "preflight")
+        os.makedirs(preflight_dir)
+        script = os.path.join(preflight_dir, "full-suite-readiness")
+        with open(script, "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\nexit 0\n")
+        os.chmod(script, os.stat(script).st_mode | stat.S_IXUSR)
+
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(repo)
+            out = _run(["commands"])
+        finally:
+            os.chdir(old_cwd)
+
+    assert "Preflight:" in out
+    assert "agent-rails preflight full-suite-readiness" in out
+
+
+def test_preflight_lists_and_runs_repo_script():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = os.path.join(tmp, "repo")
+        preflight_dir = os.path.join(repo, ".agent-rails", "preflight")
+        os.makedirs(preflight_dir)
+        script = os.path.join(preflight_dir, "echo-args")
+        out_file = os.path.join(repo, "out.txt")
+        with open(script, "w", encoding="utf-8") as f:
+            f.write(
+                "#!/bin/sh\n"
+                "printf '%s\\n' \"$AGENT_RAILS_REPO_ROOT\" \"$AGENT_RAILS_PREFLIGHT_NAME\" \"$@\" > out.txt\n"
+            )
+        os.chmod(script, os.stat(script).st_mode | stat.S_IXUSR)
+
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(repo)
+            out = _run(["preflight", "--list"])
+            assert "echo-args" in out
+            rc = main(["preflight", "echo-args", "--", "--strict", "x"])
+        finally:
+            os.chdir(old_cwd)
+
+        assert rc == 0
+        with open(out_file, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+        assert lines == [
+            os.path.realpath(repo),
+            "echo-args",
+            "--strict",
+            "x",
+        ]
+
+
+def test_preflight_rejects_unknown_and_non_executable():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = os.path.join(tmp, "repo")
+        preflight_dir = os.path.join(repo, ".agent-rails", "preflight")
+        os.makedirs(preflight_dir)
+        with open(os.path.join(preflight_dir, "not-executable"), "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\nexit 0\n")
+
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(repo)
+            err = io.StringIO()
+            with redirect_stderr(err):
+                rc = main(["preflight", "missing"])
+            assert rc == 2
+            assert "unknown repo-local preflight" in err.getvalue()
+
+            err = io.StringIO()
+            with redirect_stderr(err):
+                rc = main(["preflight", "not-executable"])
+            assert rc == 2
+            assert "not executable" in err.getvalue()
+        finally:
+            os.chdir(old_cwd)
+
+
+def test_preflight_rejects_symlink_escape():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = os.path.join(tmp, "repo")
+        preflight_dir = os.path.join(repo, ".agent-rails", "preflight")
+        os.makedirs(preflight_dir)
+        outside = os.path.join(tmp, "outside-preflight")
+        with open(outside, "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\nexit 0\n")
+        os.chmod(outside, os.stat(outside).st_mode | stat.S_IXUSR)
+        os.symlink(outside, os.path.join(preflight_dir, "escape"))
+
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(repo)
+            err = io.StringIO()
+            with redirect_stderr(err):
+                rc = main(["preflight", "escape"])
+        finally:
+            os.chdir(old_cwd)
+
+    assert rc == 2
+    assert "escapes the repo" in err.getvalue()
 
 
 def test_budget_short_form_status_shows_next_steps():

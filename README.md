@@ -381,6 +381,8 @@ agent-rails ci-failures 123           # shorthand for --pr 123
 agent-rails ci-failures --pr 123      # failed-run log summary for the PR branch
 agent-rails ci-failures --run 456     # failed-run log summary for a run id
 agent-rails test-summary .pytest_output.log
+agent-rails preflight --list          # list repo-owned readiness checks
+agent-rails preflight full-suite-readiness
 ```
 
 `pr-create` checks the current branch when `--head` is omitted. If the branch
@@ -423,6 +425,31 @@ Codex sandbox note: GitHub wrappers usually need network and cleanup wrappers
 may need `.git` writes. The Codex hook cannot upgrade sandbox permissions from
 inside a subprocess, so it nudges before these wrappers run; rerun the wrapper
 with sandbox escalation instead of first letting it fail in the sandbox.
+
+### Repo-local preflights
+
+Some expensive validation loops are repo-specific: one project may need a
+compiler freshness check before its full suite, while another may need schema
+drift detection or generated-artifact checks. Keep that policy in the repo, not
+in agent-rails, by adding executable scripts under `.agent-rails/preflight/`:
+
+```
+myrepo/
+  .agent-rails/
+    preflight/
+      full-suite-readiness
+```
+
+`agent-rails preflight` lists available scripts, and
+`agent-rails preflight <name>` runs the selected script from the repo root. The
+runner passes arguments through after `--`, sets `AGENT_RAILS_REPO_ROOT` and
+`AGENT_RAILS_PREFLIGHT_NAME`, and returns the script's exit code unchanged.
+Use exit `0` for ready, `1` for a blocking repo finding, and `2` for usage or
+environment failures.
+
+This keeps agent-rails generic: it owns discovery, path hygiene, argument
+forwarding, and consistent command shape. The target repo owns what "ready"
+means.
 
 ### Use from another repo
 
