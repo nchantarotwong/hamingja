@@ -5,6 +5,7 @@ A thin operator-facing CLI over the same core the hooks use. Subcommands:
     agent-rails report [--reset]   tuning summary: what fired, would-block rates
     agent-rails status [DIR]       resolved config for DIR (default: cwd)
     agent-rails commands           list workflow wrappers available here
+    agent-rails preflight [NAME]   list or run repo-owned preflight scripts
     agent-rails code-atlas [DIR]   map large files to bounded line ranges
     agent-rails repo-health [DIR]  show large-file retrieval cost
     agent-rails locate QUERY       ranked code ranges to read next
@@ -128,6 +129,8 @@ _REPO_WRAPPER_NAMES = {
     "test-summary": "Tests",
 }
 
+_PREFLIGHT_DIR = Path(".agent-rails") / "preflight"
+
 
 def _repo_wrapper_commands(root: Path) -> list[tuple[str, str]]:
     """Return repo-local scripts/agent wrappers, if this repo provides any."""
@@ -150,15 +153,59 @@ def _repo_wrapper_commands(root: Path) -> list[tuple[str, str]]:
     return out
 
 
+def _discover_repo_root(start: Path) -> Optional[Path]:
+    """Return the nearest repo-ish root for repo-local wrappers."""
+    path = start.resolve()
+    for candidate in (path, *path.parents):
+        if (candidate / ".git").exists() or (candidate / ".agent-rails").exists():
+            return candidate
+    return None
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _repo_preflight_scripts(root: Path) -> list[Path]:
+    """Return repo-local executable preflight scripts."""
+    scripts_dir = root / _PREFLIGHT_DIR
+    try:
+        children = sorted(scripts_dir.iterdir())
+    except OSError:
+        return []
+
+    scripts: list[Path] = []
+    for path in children:
+        try:
+            if path.is_file() and os.access(path, os.X_OK) and _is_within(path, root):
+                scripts.append(path)
+        except OSError:
+            continue
+    return scripts
+
+
+def _repo_preflight_commands(root: Path) -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
+    for path in _repo_preflight_scripts(root):
+        out.append(("Preflight", f"agent-rails preflight {path.name}"))
+    return out
+
+
 def _cmd_commands(args: argparse.Namespace) -> int:
+    root = _discover_repo_root(Path.cwd()) or Path.cwd()
     wrappers = list(_GLOBAL_WRAPPERS)
-    wrappers.extend(_repo_wrapper_commands(Path.cwd()))
-    by_category: dict[str, list[str]] = {"PR": [], "CI": [], "Tests": []}
+    wrappers.extend(_repo_wrapper_commands(root))
+    wrappers.extend(_repo_preflight_commands(root))
+    by_category: dict[str, list[str]] = {"PR": [], "CI": [], "Tests": [], "Preflight": []}
     for category, command in wrappers:
         by_category.setdefault(category, []).append(command)
 
     print("Available agent-rails wrappers for this repo:")
-    for category in ("PR", "CI", "Tests"):
+    for category in ("PR", "CI", "Tests", "Preflight"):
         commands = by_category.get(category) or []
         if not commands:
             continue
@@ -170,6 +217,67 @@ def _cmd_commands(args: argparse.Namespace) -> int:
     print("Use these before raw gh/git polling, PR cleanup, CI log scraping, or manual test-log parsing.")
     print("Codex: if a wrapper fails because of sandboxed network or .git writes, rerun that wrapper with sandbox escalation.")
     return 0
+
+
+def _print_preflight_list(root: Path) -> int:
+    scripts = _repo_preflight_scripts(root)
+    if not scripts:
+        print(f"No repo-local preflights found under {_PREFLIGHT_DIR}/.")
+        return 0
+
+    print("Repo-local preflights:")
+    for path in scripts:
+        print(f"  {path.name}")
+    return 0
+
+
+def _cmd_preflight(args: argparse.Namespace) -> int:
+    root = _discover_repo_root(Path.cwd())
+    if root is None:
+        print("error: could not find a repo root for repo-local preflights", file=sys.stderr)
+        return 2
+
+    if args.list or not args.name:
+        return _print_preflight_list(root)
+
+    name = args.name
+    if Path(name).name != name or name in {"", ".", ".."}:
+        print("error: preflight name must be a single script name", file=sys.stderr)
+        return 2
+
+    script = root / _PREFLIGHT_DIR / name
+    try:
+        if not script.is_file():
+            print(f"error: unknown repo-local preflight: {name}", file=sys.stderr)
+            return 2
+        if not _is_within(script, root):
+            print(f"error: repo-local preflight escapes the repo: {_PREFLIGHT_DIR / name}", file=sys.stderr)
+            return 2
+        if not os.access(script, os.X_OK):
+            print(f"error: repo-local preflight is not executable: {_PREFLIGHT_DIR / name}", file=sys.stderr)
+            return 2
+    except OSError as e:
+        print(f"error: could not inspect repo-local preflight {name}: {e}", file=sys.stderr)
+        return 2
+
+    forwarded = list(args.preflight_args or [])
+    if forwarded and forwarded[0] == "--":
+        forwarded = forwarded[1:]
+
+    env = dict(os.environ)
+    env["AGENT_RAILS_REPO_ROOT"] = str(root)
+    env["AGENT_RAILS_PREFLIGHT_NAME"] = name
+    try:
+        completed = subprocess.run(
+            [str(script), *forwarded],
+            cwd=str(root),
+            env=env,
+            check=False,
+        )
+    except OSError as e:
+        print(f"error: could not run repo-local preflight {name}: {e}", file=sys.stderr)
+        return 2
+    return completed.returncode
 
 
 def _cmd_code_atlas(args: argparse.Namespace) -> int:
@@ -1092,6 +1200,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     cmds = sub.add_parser("commands", help="list workflow wrappers available in this repo")
     cmds.set_defaults(func=_cmd_commands)
+
+    pfl = sub.add_parser("preflight", help="list or run repo-local preflight scripts")
+    pfl.add_argument("name", nargs="?", help="preflight script name under .agent-rails/preflight/")
+    pfl.add_argument("preflight_args", nargs=argparse.REMAINDER, metavar="ARG")
+    pfl.add_argument("--list", action="store_true", help="list repo-local preflights and exit")
+    pfl.set_defaults(func=_cmd_preflight)
 
     atlas = sub.add_parser("code-atlas", help="map large files to symbol/section line ranges")
     atlas.add_argument("dir", nargs="?", help="repo/directory to map (default: cwd)")
