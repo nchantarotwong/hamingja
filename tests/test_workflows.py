@@ -1457,7 +1457,8 @@ def test_ci_status_wait_polls_with_backoff_until_checks_finish():
     assert "1 total, 0 failing, 0 pending" in out
 
 
-def test_ci_status_wait_treats_no_checks_reported_as_waitable():
+def test_ci_status_wait_treats_no_checks_reported_as_waitable(monkeypatch):
+    monkeypatch.setattr("agent_rails.workflows._repo_has_no_ci_workflows", lambda: False)
     sleeps = []
     runner = FakeRunner([
         RunResult(
@@ -1480,6 +1481,32 @@ def test_ci_status_wait_treats_no_checks_reported_as_waitable():
     assert sleeps == [5]
     assert "waiting: no checks reported yet; timeout 100s; next poll in 5s" in out
     assert "1 total, 0 failing, 0 pending" in out
+
+
+def test_ci_status_wait_returns_after_grace_when_local_repo_has_no_ci(monkeypatch):
+    monkeypatch.setattr("agent_rails.workflows._repo_has_no_ci_workflows", lambda: True)
+    runner = FakeRunner([
+        RunResult(
+            ["gh", "pr", "checks", "12", "--json", "name,state,link"],
+            1,
+            "",
+            "no checks reported on the 'topic' branch",
+        ),
+        RunResult(
+            ["gh", "pr", "checks", "12", "--json", "name,state,link"],
+            1,
+            "",
+            "no checks reported on the 'topic' branch",
+        ),
+    ])
+
+    rc, out = _capture(ci_status, "12", runner=runner, wait_timeout_s=0.001, poll_s=5, sleeper=time.sleep)
+
+    assert rc == 0
+    assert runner.calls.count(["gh", "pr", "checks", "12", "--json", "name,state,link"]) == 2
+    assert "waiting: no checks reported yet; timeout 0.001s; next poll in" in out
+    assert "0 total, 0 failing, 0 pending" in out
+    assert "no GitHub Actions workflows found locally; treating missing checks as no CI" in out
 
 
 def test_ci_status_wait_times_out_when_checks_remain_pending():

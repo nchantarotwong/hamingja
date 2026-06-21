@@ -468,6 +468,7 @@ FAILING_CHECK_STATES = {"FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"}
 # required-check semantics (neutral/skipped do not block a merge).
 TERMINAL_CHECK_STATES = {"SUCCESS", "FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "SKIPPED", "NEUTRAL"}
 WORKFLOW_FILE_SUFFIXES = {".yml", ".yaml"}
+NO_CHECKS_GRACE_SECONDS = 60
 
 
 def _fetch_checks(pr: Optional[str], *, runner: Runner):
@@ -548,23 +549,36 @@ def ci_status(
     sleeper: Callable[[float], None] = time.sleep,
 ) -> int:
     deadline = time.monotonic() + max(0, wait_timeout_s)
+    no_checks_deadline = time.monotonic() + min(max(0, wait_timeout_s), NO_CHECKS_GRACE_SECONDS)
     backoff = max(0.1, poll_s)
     printed_header = False
     timed_out_wait = False
+    repo_has_no_ci_workflows: Optional[bool] = None
     if wait_timeout_s > 0:
         print("ci status", flush=True)
         printed_header = True
     while True:
         checks, error = _fetch_checks(pr, runner=runner)
-        if error is not None and wait_timeout_s > 0 and _no_checks_reported(error) and time.monotonic() < deadline:
-            sleep_s = min(backoff, max(0, deadline - time.monotonic()))
-            print(
-                f"- waiting: no checks reported yet; timeout {wait_timeout_s}s; next poll in {sleep_s:g}s",
-                flush=True,
-            )
-            sleeper(sleep_s)
-            backoff = min(backoff * 2, 60.0)
-            continue
+        if error is not None and wait_timeout_s > 0 and _no_checks_reported(error):
+            now = time.monotonic()
+            if now >= no_checks_deadline:
+                if repo_has_no_ci_workflows is None:
+                    repo_has_no_ci_workflows = _repo_has_no_ci_workflows()
+                if repo_has_no_ci_workflows:
+                    if not printed_header:
+                        print("ci status")
+                    print("- checks: 0 total, 0 failing, 0 pending")
+                    print("- no GitHub Actions workflows found locally; treating missing checks as no CI")
+                    return 0
+            if now < deadline:
+                sleep_s = min(backoff, max(0, deadline - now))
+                print(
+                    f"- waiting: no checks reported yet; timeout {wait_timeout_s}s; next poll in {sleep_s:g}s",
+                    flush=True,
+                )
+                sleeper(sleep_s)
+                backoff = min(backoff * 2, 60.0)
+                continue
         if error is not None:
             if not printed_header:
                 print("ci status")
@@ -647,7 +661,7 @@ def _ci_gate(
     # with no CI at all; give the former a short window to appear, then
     # refuse so the latter gets a fast, explicit answer instead of a
     # ci_timeout_s-long hang.
-    no_checks_deadline = time.monotonic() + min(max(0, ci_timeout_s), 60)
+    no_checks_deadline = time.monotonic() + min(max(0, ci_timeout_s), NO_CHECKS_GRACE_SECONDS)
     waiting_logged = False
     passed_fingerprint: Optional[tuple[tuple[str, str], ...]] = None
     while True:
