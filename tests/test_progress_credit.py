@@ -191,6 +191,65 @@ def test_progress_buys_headroom_past_a_checkpoint():
         assert budget.read_state(sid)["weighted_calls"] <= cfg["checkpoint_at"]
 
 
+def test_cap_limits_total_credit_within_a_window():
+    with temp_state():
+        sid = "sess-cap"
+        cfg = _budget_cfg()
+        for _ in range(30):  # tool_calls=30, weighted_calls=30
+            budget.increment_and_check(sid, "Edit", False, cfg)
+        budget.credit_progress(sid, 12, max_per_window=12, window=12)  # 30 -> 18
+        budget.credit_progress(sid, 12, max_per_window=12, window=12)  # capped: no relief
+        assert budget.read_state(sid)["weighted_calls"] == 18.0
+
+
+def test_cap_resets_once_the_window_advances():
+    with temp_state():
+        sid = "sess-cap2"
+        cfg = _budget_cfg()
+        for _ in range(30):
+            budget.increment_and_check(sid, "Edit", False, cfg)
+        budget.credit_progress(sid, 12, max_per_window=12, window=12)  # 30 -> 18
+        budget.credit_progress(sid, 12, max_per_window=12, window=12)  # capped
+        assert budget.read_state(sid)["weighted_calls"] == 18.0
+        for _ in range(13):  # advance past the window so the old credit ages out
+            budget.increment_and_check(sid, "Edit", False, cfg)  # wc 18 -> 31, tc 30 -> 43
+        budget.credit_progress(sid, 12, max_per_window=12, window=12)  # 31 -> 19
+        assert budget.read_state(sid)["weighted_calls"] == 19.0
+
+
+def test_cap_applies_partial_remaining_allowance():
+    # used=6 of cap=12 leaves 6; a 12-credit must apply only the 6 remaining.
+    with temp_state():
+        sid = "sess-partial"
+        cfg = _budget_cfg()
+        for _ in range(30):
+            budget.increment_and_check(sid, "Edit", False, cfg)
+        budget.credit_progress(sid, 6, max_per_window=12, window=12)   # 30 -> 24, used=6
+        budget.credit_progress(sid, 12, max_per_window=12, window=12)  # only 6 left -> 18
+        assert budget.read_state(sid)["weighted_calls"] == 18.0
+
+
+def test_cap_zero_means_unlimited():
+    with temp_state():
+        sid = "sess-nocap"
+        cfg = _budget_cfg()
+        for _ in range(30):
+            budget.increment_and_check(sid, "Edit", False, cfg)
+        budget.credit_progress(sid, 12, max_per_window=0, window=12)  # 30 -> 18
+        budget.credit_progress(sid, 12, max_per_window=0, window=12)  # 18 -> 6
+        assert budget.read_state(sid)["weighted_calls"] == 6.0
+
+
+def test_shipped_defaults_have_allowance_and_cap():
+    # Pin the shipped contract: subagents get a small allowance (cure for
+    # context poisoning is not taxed per spawn), and the credit cap is on.
+    from agent_rails.config import load_config
+    with temp_state() as d:
+        cfg = load_config(d)  # no project config in a fresh temp dir -> baseline
+        assert cfg["budget"]["max_subagents"] == 2
+        assert cfg["budget"]["progress"]["max_credit_per_window"] == 12
+
+
 def test_record_wires_credit_through_real_config():
     # Integration: drive the public record() path with a red->green pytest
     # sequence and confirm the live counter actually drops. Exercises real

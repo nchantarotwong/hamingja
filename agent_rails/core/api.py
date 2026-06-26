@@ -91,6 +91,16 @@ def _credit_observed_progress(session_id: str, cfg: dict) -> None:
         events = read_recent(session_id, window if window > 0 else 12)
         signal = assess_progress(events, budget_cfg)
         if signal is not None and signal.credit > 0:
-            credit_progress(session_id, signal.credit)
+            prog = budget_cfg.get("progress")
+            cap = 0.0
+            if isinstance(prog, dict):
+                try:
+                    cap = max(0.0, float(prog.get("max_credit_per_window", 0)))
+                except (TypeError, ValueError):
+                    cap = 0.0
+            credit_progress(
+                session_id, signal.credit,
+                max_per_window=cap, window=window if window > 0 else 12,
+            )
     except Exception:
         return

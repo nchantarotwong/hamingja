@@ -151,6 +151,11 @@ agent-rails budget <session-id> add 3 --self  # agent self-approve, if config al
 the next tool call starts from fresh counters. `reset N` also grants runway
 above the configured checkpoint for the resumed session.
 
+Subagent spawns get a small default allowance (`budget.max_subagents`, default
+2) so routine fan-out and fresh-context recovery from a poisoned main context
+are not taxed per spawn — the checkpoint only fires once spawns exceed the
+allowance, and `budget <session-id> subagent` approves one more.
+
 #### Progress crediting
 
 The budget counter is not a blind call counter — it meters *spend since
