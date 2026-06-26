@@ -151,6 +151,33 @@ agent-rails budget <session-id> add 3 --self  # agent self-approve, if config al
 the next tool call starts from fresh counters. `reset N` also grants runway
 above the configured checkpoint for the resumed session.
 
+Subagent spawns get a small default allowance (`budget.max_subagents`, default
+2) so routine fan-out and fresh-context recovery from a poisoned main context
+are not taxed per spawn — the checkpoint only fires once spawns exceed the
+allowance, and `budget <session-id> subagent` approves one more.
+
+#### Progress crediting
+
+The budget counter is not a blind call counter — it meters *spend since
+progress*. Observed verification credits the live counter back down, so a
+session that keeps converging earns headroom and rarely checkpoints while a
+stalled one re-checkpoints fast. This is what keeps the gate from punishing a
+model that simply takes more, smaller tool calls: granular *productive* work
+earns its calls back; granular *spinning* does not. Credit comes only from
+outcomes the agent cannot fake from narration:
+
+- a test or build going **red→green** (strongest),
+- a real **error streak breaking** on a success,
+- a **clean validation** run with nothing already failing (smallest).
+
+Tool success alone, a novel command, or a self-asserted "done" earn nothing —
+crediting those would refuel exactly the doom loop the budget exists to catch
+(green-while-wrong is the most expensive failure class). Credit only ever
+*lowers* pressure, and the `repetition` / `oscillation` / `error_streak`
+detectors still block independently, so a false-positive credit cannot carry a
+loop past them. Tune the credit magnitudes or disable the whole behavior under
+`budget.progress` in config.
+
 ## Graduated response, not a kill switch
 
 * **nudge** — inject an advisory into the agent's context ("3rd identical call;

@@ -18,7 +18,7 @@ Progress is **not**:
 
 Default working shape:
 - pick the smallest credible next step, do it, observe the result, decide again
-- run the test/build loop frequently; long stretches of edits without a check are a smell
+- run the test/build loop frequently; long stretches of edits without a check are a smell. The budget gate credits observed progress — a failing test going green, a real error streak breaking — back as headroom, so a converging session is not throttled and a stalled one checkpoints sooner; running a real check is how you earn runway, not how you spend it
 - keep diffs minimal — refactors, renames, "while I'm here" cleanup go in separate commits or get dropped
 - when an attempt fails, decide before the next attempt whether you have new information; if not, stop and re-plan instead of retrying
 - when a standard tool, semantic navigator, generated-artifact validator, or freshness guard fails, fix that leverage point first or make the fallback explicit to the user; do not silently replace it with a weaker grep/manual inspection path

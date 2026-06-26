@@ -14,9 +14,11 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from .audit import log_verdict
+from .budget import credit_progress
 from .engine import evaluate
 from .events import ToolEvent
-from .state import append_event
+from .progress import assess_progress
+from .state import append_event, read_recent
 from ..config import load_config
 from ..detectors.base import ALLOW, BLOCK, Verdict
 
@@ -66,5 +68,39 @@ def record(
         if cfg.get("mode") == "off":
             return  # opted-out repo: stay fully inert, record nothing
         append_event(ToolEvent.record(session_id, tool, args, ok, output=output))
+        _credit_observed_progress(session_id, cfg)
+    except Exception:
+        return
+
+
+def _credit_observed_progress(session_id: str, cfg: dict) -> None:
+    """Assess observed progress from the just-recorded event and relieve budget.
+
+    Best-effort and fully isolated: any failure here must never affect
+    recording, and a credit can only ever LOWER budget pressure, never raise it.
+    Skipped when the budget is disabled (nothing to credit against).
+    """
+    try:
+        budget_cfg = cfg.get("budget") if isinstance(cfg, dict) else None
+        if not isinstance(budget_cfg, dict) or not budget_cfg.get("enabled", True):
+            return
+        try:
+            window = int(cfg.get("window", 12))
+        except (TypeError, ValueError):
+            window = 12
+        events = read_recent(session_id, window if window > 0 else 12)
+        signal = assess_progress(events, budget_cfg)
+        if signal is not None and signal.credit > 0:
+            prog = budget_cfg.get("progress")
+            cap = 0.0
+            if isinstance(prog, dict):
+                try:
+                    cap = max(0.0, float(prog.get("max_credit_per_window", 0)))
+                except (TypeError, ValueError):
+                    cap = 0.0
+            credit_progress(
+                session_id, signal.credit,
+                max_per_window=cap, window=window if window > 0 else 12,
+            )
     except Exception:
         return

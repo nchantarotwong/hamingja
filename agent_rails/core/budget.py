@@ -170,6 +170,7 @@ def _default_state(checkpoint_at: int) -> dict:
         "subagent_approved": False,
         "self_approve_times": 0,
         "task_type": None,
+        "credit_log": [],
     }
 
 
@@ -203,6 +204,16 @@ def _load_locked(fh, checkpoint_at: int) -> dict:
         v = data.get("task_type")
         if isinstance(v, str) and v.strip():
             state["task_type"] = v.strip()
+        v = data.get("credit_log")
+        if isinstance(v, list):
+            log = []
+            for item in v:
+                if (isinstance(item, list) and len(item) == 2
+                        and isinstance(item[0], int)
+                        and isinstance(item[1], (int, float))
+                        and not isinstance(item[1], bool)):
+                    log.append([item[0], float(item[1])])
+            state["credit_log"] = log
     except Exception:
         pass
     return state
@@ -797,6 +808,80 @@ def reset(session_id: str, add_tools: int = 0) -> bool:
         return deleted
     except Exception:
         return False
+
+
+def credit_progress(
+    session_id: str,
+    credit: float,
+    max_per_window: float = 0.0,
+    window: int = 0,
+) -> dict:
+    """Relieve budget pressure by an observed-progress credit.
+
+    Decrements the live ``weighted_calls`` counter (clamped at 0), which is what
+    both the checkpoint and hard-limit gates compare against. This is the
+    positive counterpart to ``increment_and_check``: spend accrues per call,
+    observed progress pays it back, so a converging session keeps earning
+    headroom while a stalled one re-checkpoints.
+
+    ``tool_calls`` (the raw count) is deliberately NOT touched — it anchors the
+    approval ceiling (``approve`` sets it relative to ``tool_calls``) and the
+    detector history, so productive work keeps its ceiling rising while the live
+    counter falls. Credit only ever LOWERS pressure; it can never block a call.
+
+    Cap: when ``max_per_window > 0`` and ``window > 0``, the total credit applied
+    within the trailing ``window`` tool calls is capped at ``max_per_window``.
+    This bounds how far progress can defer oversight, so an agent cannot
+    indefinitely farm cheap validations to outrun every checkpoint — within any
+    window, at most one cap's worth of relief. The per-credit ledger is pruned
+    to the window on each call so it stays bounded.
+
+    Fail-open: returns {} on any error or when there is no state to credit.
+    """
+    try:
+        c = float(credit)
+        if c <= 0:
+            return {}
+        path = _budget_path(session_id)
+        if not path.exists():
+            return {}  # nothing spent yet — nothing to credit
+        with path.open("a+", encoding="utf-8") as fh:
+            _lock(fh, exclusive=True)
+            try:
+                state = _load_locked(fh, _DEFAULTS["checkpoint_at"])
+                tc = int(state.get("tool_calls", 0))
+                effective = c
+                if max_per_window > 0 and window > 0:
+                    cutoff = tc - int(window)
+                    log = [
+                        e for e in state.get("credit_log", [])
+                        if isinstance(e, list) and len(e) == 2 and e[0] > cutoff
+                    ]
+                    used = sum(float(e[1]) for e in log)
+                    allowable = max(0.0, float(max_per_window) - used)
+                    effective = min(c, allowable)
+                    if effective > 0:
+                        log.append([tc, effective])
+                    # Defensive bound: pruning by window normally keeps this
+                    # tiny, but a misconfigured window larger than the session
+                    # would never prune. Cap length so state can't bloat.
+                    if len(log) > 256:
+                        log = log[-256:]
+                    state["credit_log"] = log
+                if effective <= 0:
+                    # Cap exhausted for this window: persist the pruned ledger
+                    # but apply no relief.
+                    _save_locked(fh, state)
+                    return dict(state)
+                state["weighted_calls"] = max(
+                    0.0, float(state.get("weighted_calls", 0.0)) - effective
+                )
+                _save_locked(fh, state)
+                return dict(state)
+            finally:
+                _unlock(fh)
+    except Exception:
+        return {}
 
 
 def read_state(session_id: str) -> dict:

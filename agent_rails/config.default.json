@@ -6,13 +6,21 @@
     "checkpoint_at": 12,
     "hard_block_at": 20,
     "max_large_reads": 2,
-    "max_subagents": 0,
+    "max_subagents": 2,
     "self_approve": {
       "enabled": true,
       "max_add": 3,
       "max_times_per_session": 2,
       "replenish_every": 15,
       "requires_checkpoint": true
+    },
+    "progress": {
+      "enabled": true,
+      "test_recovery_credit": 12,
+      "streak_broken_credit": 6,
+      "clean_validation_credit": 3,
+      "streak_broken_min": 2,
+      "max_credit_per_window": 12
     }
   },
   "window": 12,
