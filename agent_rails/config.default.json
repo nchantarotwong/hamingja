@@ -13,6 +13,13 @@
       "max_times_per_session": 2,
       "replenish_every": 15,
       "requires_checkpoint": true
+    },
+    "progress": {
+      "enabled": true,
+      "test_recovery_credit": 12,
+      "streak_broken_credit": 6,
+      "clean_validation_credit": 3,
+      "streak_broken_min": 2
     }
   },
   "window": 12,

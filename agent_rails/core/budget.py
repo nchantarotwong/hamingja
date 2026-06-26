@@ -799,6 +799,44 @@ def reset(session_id: str, add_tools: int = 0) -> bool:
         return False
 
 
+def credit_progress(session_id: str, credit: float) -> dict:
+    """Relieve budget pressure by an observed-progress credit.
+
+    Decrements the live ``weighted_calls`` counter (clamped at 0), which is what
+    both the checkpoint and hard-limit gates compare against. This is the
+    positive counterpart to ``increment_and_check``: spend accrues per call,
+    observed progress pays it back, so a converging session keeps earning
+    headroom while a stalled one re-checkpoints.
+
+    ``tool_calls`` (the raw count) is deliberately NOT touched — it anchors the
+    approval ceiling (``approve`` sets it relative to ``tool_calls``) and the
+    detector history, so productive work keeps its ceiling rising while the live
+    counter falls. Credit only ever LOWERS pressure; it can never block a call.
+
+    Fail-open: returns {} on any error or when there is no state to credit.
+    """
+    try:
+        c = float(credit)
+        if c <= 0:
+            return {}
+        path = _budget_path(session_id)
+        if not path.exists():
+            return {}  # nothing spent yet — nothing to credit
+        with path.open("a+", encoding="utf-8") as fh:
+            _lock(fh, exclusive=True)
+            try:
+                state = _load_locked(fh, _DEFAULTS["checkpoint_at"])
+                state["weighted_calls"] = max(
+                    0.0, float(state.get("weighted_calls", 0.0)) - c
+                )
+                _save_locked(fh, state)
+                return dict(state)
+            finally:
+                _unlock(fh)
+    except Exception:
+        return {}
+
+
 def read_state(session_id: str) -> dict:
     """Return current budget state (read-only). Returns {} on any error."""
     try:
