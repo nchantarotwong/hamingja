@@ -394,6 +394,60 @@ def _sa_remaining(
     return max(0, max_times - effective_used)
 
 
+def _reading_pct(reading, key: str):
+    """Read a percent field off a QuotaReading-like object or dict. None if absent
+    or not a real number. bool is rejected (isinstance(True, int) is True)."""
+    if reading is None:
+        return None
+    v = getattr(reading, key, None)
+    if v is None and isinstance(reading, dict):
+        v = reading.get(key)
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    return float(v)
+
+
+def _quota_relief(reading, cfg: dict):
+    """Return (window_pct, weekly_pct) when the real quota signal says there is
+    plenty of headroom, else None.
+
+    Relief is deliberately conservative: it requires BOTH the rolling-window and
+    the weekly used-percent to be known AND below ``quota_relief_below_pct``
+    (default 50; set 0 to disable). A missing/null rate-limit (context-only
+    reading) yields no relief, so the plain call-count gate stands. Relief only
+    ever RELAXES the soft checkpoint — it never touches the hard limit — so a
+    stale or wrong reading cannot remove the ultimate backstop.
+    """
+    try:
+        below = cfg.get("quota_relief_below_pct", 50) if isinstance(cfg, dict) else 50
+        below = float(below)
+        if not (0 < below <= 100):
+            return None
+        w = _reading_pct(reading, "window_used_pct")
+        k = _reading_pct(reading, "weekly_used_pct")
+        if w is None or k is None:
+            return None
+        if w < below and k < below:
+            return (w, k)
+        return None
+    except Exception:
+        return None
+
+
+def _context_fill_threshold(cfg: dict) -> float:
+    """Context-fill nudge threshold as a percent, or 0.0 to disable.
+
+    ``context_nudge_pct`` default 80; out-of-range / non-numeric disables the
+    nudge (returns 0.0) rather than firing spuriously.
+    """
+    try:
+        v = cfg.get("context_nudge_pct", 80) if isinstance(cfg, dict) else 80
+        v = float(v)
+        return v if 0 < v <= 100 else 0.0
+    except Exception:
+        return 0.0
+
+
 def _fmt_calls(weighted: float, raw: int) -> str:
     """Format weighted/raw for messages. Shows just one number if they match
     (i.e. no weights are configured), else "weighted (raw N)"."""
@@ -471,6 +525,7 @@ def increment_and_check(
     tool: str,
     is_large_read: bool,
     cfg: dict,
+    quota_reading=None,
 ) -> BudgetVerdict:
     """Atomically increment counters, persist, and return a verdict. Fail-open.
 
@@ -478,6 +533,15 @@ def increment_and_check(
     compare against. tool_calls remains the raw count and is unaffected by
     per-tool weights — it keeps tripwire history aligned and provides a
     stable "calls so far" number for messages.
+
+    ``quota_reading`` is an optional harness-supplied snapshot of the *real*
+    subscription quota (see ``adapters/codex/quota.QuotaReading``): a
+    QuotaReading-like object or dict exposing ``window_used_pct`` /
+    ``weekly_used_pct``. When present and both are comfortably low, the SOFT
+    checkpoint is deferred — the call counter is only a proxy, and the real
+    signal says there is headroom. It never defers the hard limit and never
+    blocks; a None/absent/stale reading falls back to the pure call-count gate,
+    so this is a fail-open relaxation only.
     """
     try:
         nudge_at = _cfg_int(cfg, "nudge_at")
@@ -559,8 +623,20 @@ def increment_and_check(
                 f"  ! agent-rails budget {session_id} subagent",
             )
 
-        # Soft checkpoint block
+        # Soft checkpoint block — deferred when the real quota signal shows
+        # headroom (the call counter is then a false positive). The hard limit
+        # above is intentionally NOT relieved, so a wrong reading can't remove
+        # the ultimate backstop.
         if wc > approved_tc:
+            relief = _quota_relief(quota_reading, cfg)
+            if relief is not None:
+                w_pct, k_pct = relief
+                return BudgetVerdict(
+                    NUDGE,
+                    f"[agent-rails budget] Checkpoint deferred at {_fmt_calls(wc, tc)} weighted "
+                    f"calls{type_tag}: real quota is low (window {w_pct:.0f}%, weekly {k_pct:.0f}%). "
+                    f"Hard limit at {hard_block_at} still applies.",
+                )
             sa_enabled, sa_max_add, sa_max_times, sa_replenish = _sa_cfg(
                 cfg.get("self_approve")
             )
@@ -604,6 +680,20 @@ def increment_and_check(
                 f"- +N tools to [specific reason — what the next tool will prove]\n\n"
                 f"Approve:\n"
                 f"  ! agent-rails budget {session_id} add N",
+            )
+
+        # Context-fill advisory (nudge only). A nearly-full context window is
+        # re-sent every turn — a real CLI cost even when the call count is low —
+        # so this is checked ahead of the call-count nudges. Populated by the
+        # Claude transcript probe and the Codex rollout alike.
+        ctx_pct = _reading_pct(quota_reading, "context_used_pct")
+        ctx_thresh = _context_fill_threshold(cfg)
+        if ctx_pct is not None and ctx_thresh > 0 and ctx_pct >= ctx_thresh:
+            return BudgetVerdict(
+                NUDGE,
+                f"[agent-rails budget] Context ~{ctx_pct:.0f}% full{type_tag}. A full "
+                f"context is re-sent every turn — wrap up, /compact, or start a fresh "
+                f"session before it degrades and gets expensive.",
             )
 
         # Large-read nudge (over quota but not blocking)

@@ -50,6 +50,24 @@ def _is_budget_command(tool: str, tool_input: object) -> bool:
     return cmd.startswith("agent-rails budget")
 
 
+def _read_quota_safe(session_id: str, cwd, budget_cfg: dict):
+    """Fetch the Claude context-fill reading, fail-open to None.
+
+    Isolated so a probe error (missing transcript, parse failure) can never
+    affect the gate — the budget check falls back to the call-count-only path.
+    Claude has no persisted rate-limit signal, so this reading carries only
+    context occupancy (an advisory nudge, never checkpoint relief).
+    """
+    try:
+        from agent_rails.adapters.claude_code.quota import read_quota  # noqa: PLC0415
+        window = 200_000
+        if isinstance(budget_cfg, dict):
+            window = budget_cfg.get("context_window_tokens", window)
+        return read_quota(session_id, cwd, window)
+    except Exception:
+        return None
+
+
 def _large_read_line_count(tool: str, args: object) -> int:
     """Compatibility wrapper for existing tests/imports."""
     return large_read_line_count(tool, args)
@@ -118,7 +136,10 @@ def main() -> int:
                 if isinstance(budget_cfg, dict) and budget_cfg.get("enabled", True):
                     if not _is_budget_command(tool, tool_input):
                         is_large = _large_read_line_count(tool, tool_input) > 0
-                        bv = budget_check(session_id, tool, is_large, budget_cfg)
+                        reading = _read_quota_safe(session_id, cwd, budget_cfg)
+                        bv = budget_check(
+                            session_id, tool, is_large, budget_cfg, quota_reading=reading
+                        )
                         if bv.action == BUDGET_BLOCK:
                             _emit_deny(bv.reason)
                             return 0
