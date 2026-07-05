@@ -15,8 +15,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from agent_rails.adapters.read_advisory import large_read_advisory  # noqa: E402
+from agent_rails.adapters.read_advisory import large_read_advisory, large_read_line_count  # noqa: E402
 from agent_rails.core.api import check  # noqa: E402
+from agent_rails.core.budget import BLOCK as BUDGET_BLOCK  # noqa: E402
+from agent_rails.core.budget import NUDGE as BUDGET_NUDGE  # noqa: E402
+from agent_rails.core.budget import increment_and_check as budget_check  # noqa: E402
 from agent_rails.detectors.base import BLOCK, NUDGE  # noqa: E402
 
 
@@ -101,6 +104,32 @@ def _contains_agent_rails_wrapper(command: str) -> str:
     return ""
 
 
+def _is_budget_command(tool: str, tool_input) -> bool:
+    """True for Bash calls that are agent-rails budget commands.
+
+    Exempt from the budget gate so the agent can self-approve or query status
+    without consuming a metered slot that triggers another checkpoint block.
+    Mirrors the Claude adapter, but resolves the command through Codex's several
+    possible arg shapes.
+    """
+    if str(tool).strip() != "Bash":
+        return False
+    return _command_from(tool_input).startswith("agent-rails budget")
+
+
+def _read_quota_safe(session_id: str):
+    """Fetch the real Codex quota reading, fail-open to None.
+
+    Isolated so a probe error (missing rollout, parse failure) can never affect
+    the gate — the budget check simply falls back to the call-count-only path.
+    """
+    try:
+        from agent_rails.adapters.codex.quota import read_quota  # noqa: PLC0415
+        return read_quota(session_id)
+    except Exception:
+        return None
+
+
 def _codex_escalation_context(tool: str, tool_input) -> str:
     if str(tool) != "Bash":
         return ""
@@ -144,18 +173,57 @@ def main() -> int:
 
         if verdict.action == BLOCK:
             _emit_deny(verdict.reason)
-        elif verdict.action == NUDGE:
+            return 0
+
+        # --- budget gate ---
+        # Runs after detectors so a detector block takes priority. Fed the real
+        # Codex quota reading so a low subscription window defers the soft
+        # checkpoint instead of blocking on a proxy call count. Always fails open.
+        budget_nudge = ""
+        try:
+            from agent_rails.config import load_config  # noqa: PLC0415
+            cfg = load_config(cwd)
+            if cfg.get("mode") != "off":
+                budget_cfg = cfg.get("budget")
+                if isinstance(budget_cfg, dict) and budget_cfg.get("enabled", True):
+                    if not _is_budget_command(tool, tool_input):
+                        try:
+                            is_large = large_read_line_count(tool, tool_input) > 0
+                        except Exception:
+                            is_large = False
+                        reading = _read_quota_safe(session_id)
+                        bv = budget_check(
+                            session_id, tool, is_large, budget_cfg, quota_reading=reading
+                        )
+                        if bv.action == BUDGET_BLOCK:
+                            _emit_deny(bv.reason)
+                            return 0
+                        if bv.action == BUDGET_NUDGE:
+                            budget_nudge = bv.reason
+        except Exception:
+            pass  # budget gate always fails open
+
+        # Assemble advisory nudges. A detector or budget nudge carries the
+        # escalation/read advisories with it; with neither, the original
+        # escalation-else-read behavior is preserved.
+        nudge_parts: list[str] = []
+        if verdict.action == NUDGE:
             context = verdict.reason
             if getattr(verdict, "would_block", False):
                 context = (
                     "[observe] This call WOULD BE BLOCKED if this detector "
                     "were enforcing. " + context
                 )
+            nudge_parts.append(context)
+        if budget_nudge:
+            nudge_parts.append(budget_nudge)
+
+        if nudge_parts:
             if escalation_context:
-                context = context + "\n\n" + escalation_context
+                nudge_parts.append(escalation_context)
             if read_advisory:
-                context = context + "\n\n" + read_advisory
-            _emit_nudge(context)
+                nudge_parts.append(read_advisory)
+            _emit_nudge("\n\n".join(nudge_parts))
         elif escalation_context:
             _emit_nudge(escalation_context)
         elif read_advisory:

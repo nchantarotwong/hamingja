@@ -460,3 +460,120 @@ def test_replenish_every_zero_disables_replenishment():
     rejected = self_approve(SESSION, add_tools=1, cfg=cfg)
     assert rejected["ok"] is False
     assert "exhausted" in rejected["reason"]
+
+
+# ---------------------------------------------------------------------------
+# Quota-aware checkpoint relief (fail-open input from a harness quota probe)
+# ---------------------------------------------------------------------------
+
+class _Reading:
+    """QuotaReading-like stand-in (the real one lives in adapters/codex/quota)."""
+
+    def __init__(self, window_used_pct=None, weekly_used_pct=None):
+        self.window_used_pct = window_used_pct
+        self.weekly_used_pct = weekly_used_pct
+
+
+def _drive_to_checkpoint(session, cfg, reading=None):
+    """Run one call past checkpoint_at and return that call's verdict."""
+    # checkpoint fires when weighted > approved (== checkpoint_at) -> the
+    # (checkpoint_at + 1)th unit-weight call.
+    verdict = None
+    for _ in range(cfg["checkpoint_at"] + 1):
+        verdict = increment_and_check(session, "Edit", False, cfg, quota_reading=reading)
+    return verdict
+
+
+def test_none_reading_preserves_checkpoint_block():
+    # Regression guard: default (no reading) must behave exactly as before.
+    v = _drive_to_checkpoint("q-none", _CFG, reading=None)
+    assert v.action == BLOCK
+    assert "Checkpoint" in v.reason
+
+
+def test_low_quota_defers_checkpoint():
+    v = _drive_to_checkpoint("q-low", _CFG, reading=_Reading(6.0, 30.0))
+    assert v.action == NUDGE
+    assert "deferred" in v.reason.lower()
+    assert "window 6%" in v.reason and "weekly 30%" in v.reason
+
+
+def test_high_quota_does_not_defer():
+    # Either axis above the threshold -> no relief, checkpoint stands.
+    v = _drive_to_checkpoint("q-high", _CFG, reading=_Reading(6.0, 90.0))
+    assert v.action == BLOCK
+
+
+def test_partial_reading_no_relief():
+    # weekly unknown (null rate_limits path) -> conservative: no relief.
+    v = _drive_to_checkpoint("q-partial", _CFG, reading=_Reading(6.0, None))
+    assert v.action == BLOCK
+
+
+def test_dict_reading_supported():
+    v = _drive_to_checkpoint("q-dict", _CFG, reading={"window_used_pct": 5.0, "weekly_used_pct": 10.0})
+    assert v.action == NUDGE
+    assert "deferred" in v.reason.lower()
+
+
+def test_relief_disabled_by_zero_threshold():
+    cfg = dict(_CFG, quota_relief_below_pct=0)
+    v = _drive_to_checkpoint("q-disabled", cfg, reading=_Reading(1.0, 1.0))
+    assert v.action == BLOCK
+
+
+def test_relief_never_bypasses_hard_limit():
+    # Low quota must NOT relieve the hard limit — it is the ultimate backstop.
+    v = None
+    for _ in range(_CFG["hard_block_at"] + 1):
+        v = increment_and_check("q-hard", "Edit", False, _CFG, quota_reading=_Reading(1.0, 1.0))
+    assert v.action == BLOCK
+    assert "Hard limit" in v.reason
+
+
+def test_bool_pct_rejected_no_relief():
+    # isinstance(True, int) is True; used_percent=True must not read as 1.0%.
+    v = _drive_to_checkpoint("q-bool", _CFG, reading=_Reading(True, True))
+    assert v.action == BLOCK
+
+
+# ---------------------------------------------------------------------------
+# Context-fill nudge (advisory; fed by either harness's quota reading)
+# ---------------------------------------------------------------------------
+
+class _CtxReading:
+    def __init__(self, context_used_pct=None, window_used_pct=None, weekly_used_pct=None):
+        self.context_used_pct = context_used_pct
+        self.window_used_pct = window_used_pct
+        self.weekly_used_pct = weekly_used_pct
+
+
+def test_high_context_fill_nudges():
+    v = increment_and_check("ctx-hi", "Read", False, _CFG, quota_reading=_CtxReading(85.0))
+    assert v.action == NUDGE
+    assert "Context ~85% full" in v.reason
+
+
+def test_low_context_fill_no_nudge():
+    v = increment_and_check("ctx-lo", "Read", False, _CFG, quota_reading=_CtxReading(20.0))
+    assert v.action == ALLOW
+
+
+def test_context_nudge_disabled_by_out_of_range():
+    cfg = dict(_CFG, context_nudge_pct=0)
+    v = increment_and_check("ctx-off", "Read", False, cfg, quota_reading=_CtxReading(99.0))
+    assert v.action == ALLOW
+
+
+def test_context_nudge_never_overrides_block():
+    # A checkpoint block must take priority over a context nudge.
+    r = _CtxReading(99.0)
+    v = None
+    for _ in range(_CFG["checkpoint_at"] + 1):
+        v = increment_and_check("ctx-block", "Edit", False, _CFG, quota_reading=r)
+    assert v.action == BLOCK
+
+
+def test_none_reading_no_context_nudge():
+    v = increment_and_check("ctx-none", "Read", False, _CFG, quota_reading=None)
+    assert v.action == ALLOW

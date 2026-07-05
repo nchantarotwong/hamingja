@@ -178,6 +178,34 @@ detectors still block independently, so a false-positive credit cannot carry a
 loop past them. Tune the credit magnitudes or disable the whole behavior under
 `budget.progress` in config.
 
+#### Quota-aware gating (real subscription limits)
+
+The call counter is a *proxy* for spend. On a Claude/Codex CLI subscription the
+real scarce resource is the rate-limit window, not dollars-per-token — so where
+the harness records its own quota, agent-rails reads it and gates on the real
+signal instead of the proxy. Each adapter ships a fail-open probe that tails the
+harness's own session log; a missing or unreadable signal falls straight back to
+the call-count gate, so this can only ever *relax* or *add advisory*, never block
+on its own.
+
+- **Codex** logs server-side rate limits in its session rollout: a 5-hour
+  rolling window (`primary`) and a weekly cap (`secondary`) as a used-percent.
+  When both are comfortably low, a soft checkpoint is **deferred** — the counter
+  is a false positive when real quota is plentiful. Relief never touches the hard
+  limit, and the `repetition`/`oscillation`/`error_streak` detectors still block
+  independently. Tune with `budget.quota_relief_below_pct` (default 50; `0`
+  disables).
+- **Claude Code** does not persist a rate-limit percent (it lives on API
+  response headers), so its probe reports only **context occupancy** from the
+  transcript's per-message `usage`. A nearly-full context window is re-sent every
+  turn — a real cost even at a low call count — so agent-rails emits a
+  context-fill nudge past `budget.context_nudge_pct` (default 80; `0` disables).
+  Occupancy is estimated against `budget.context_window_tokens` (default
+  200000); an over-large real window only under-reports, never over-blocks.
+
+Context-fill nudging applies to both harnesses (Codex reports occupancy too);
+checkpoint relief applies only where the rate-limit signal exists (Codex today).
+
 ## Graduated response, not a kill switch
 
 * **nudge** — inject an advisory into the agent's context ("3rd identical call;
