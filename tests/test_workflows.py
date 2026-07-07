@@ -1720,6 +1720,107 @@ def test_ci_failures_pr_scopes_to_head_branch():
     assert "failing test: tests/foo_test.py::test_bar" in out
 
 
+def test_ci_failures_falls_back_to_failed_job_logs_when_log_failed_has_no_pytest():
+    runner = FakeRunner([
+        RunResult(["gh", "run", "view", "456", "--json", "workflowName,url"], 0, '{"workflowName":"tests","url":"https://ci/run"}', ""),
+        RunResult(["gh", "run", "view", "456", "--log-failed"], 0, "job failed, see raw logs\n", ""),
+        RunResult(
+            ["gh", "run", "view", "456", "--json", "jobs"],
+            0,
+            '{"jobs":['
+            '{"databaseId":111,"name":"unit","conclusion":"failure"},'
+            '{"databaseId":222,"name":"lint","conclusion":"success"}'
+            ']}',
+            "",
+        ),
+        RunResult(
+            ["gh", "run", "view", "456", "--job", "111", "--log"],
+            0,
+            "2026-07-07T00:00:00Z unit\tFAILED tests/raw_test.py::test_raw - AssertionError: raw\n",
+            "",
+        ),
+    ])
+
+    rc, out = _capture(ci_failures, run_id="456", runner=runner)
+
+    assert rc == 1
+    assert "fallback: scanned failed job logs" in out
+    assert "failing test: tests/raw_test.py::test_raw - AssertionError: raw" in out
+    assert ["gh", "run", "view", "456", "--job", "222", "--log"] not in runner.calls
+
+
+def test_ci_failures_fallback_scans_multiple_failed_jobs():
+    runner = FakeRunner([
+        RunResult(["gh", "run", "view", "456", "--json", "workflowName,url"], 0, '{"workflowName":"tests","url":null}', ""),
+        RunResult(["gh", "run", "view", "456", "--log-failed"], 0, "no structured pytest here\n", ""),
+        RunResult(
+            ["gh", "run", "view", "456", "--json", "jobs"],
+            0,
+            '{"jobs":['
+            '{"databaseId":111,"conclusion":"failure"},'
+            '{"databaseId":222,"conclusion":"failure"}'
+            ']}',
+            "",
+        ),
+        RunResult(
+            ["gh", "run", "view", "456", "--job", "111", "--log"],
+            0,
+            "FAILED tests/a_test.py::test_a\n",
+            "",
+        ),
+        RunResult(
+            ["gh", "run", "view", "456", "--job", "222", "--log"],
+            0,
+            "FAILED tests/b_test.py::test_b\n",
+            "",
+        ),
+    ])
+
+    rc, out = _capture(ci_failures, run_id="456", runner=runner)
+
+    assert rc == 1
+    assert "failing test: tests/a_test.py::test_a" in out
+    assert "failing test: tests/b_test.py::test_b" in out
+
+
+def test_ci_failures_fallback_surfaces_trace_lines_without_failed_summary():
+    runner = FakeRunner([
+        RunResult(["gh", "run", "view", "456", "--json", "workflowName,url"], 0, '{"workflowName":"tests","url":null}', ""),
+        RunResult(["gh", "run", "view", "456", "--log-failed"], 0, "no structured pytest here\n", ""),
+        RunResult(
+            ["gh", "run", "view", "456", "--json", "jobs"],
+            0,
+            '{"jobs":[{"databaseId":111,"conclusion":"failure"}]}',
+            "",
+        ),
+        RunResult(
+            ["gh", "run", "view", "456", "--job", "111", "--log"],
+            0,
+            "2026-07-07T00:00:00Z unit\tE   AssertionError: raw details only\n",
+            "",
+        ),
+    ])
+
+    rc, out = _capture(ci_failures, run_id="456", runner=runner)
+
+    assert rc == 1
+    assert "fallback: scanned failed job logs" in out
+    assert "error line: E   AssertionError: raw details only" in out
+
+
+def test_ci_failures_fallback_fails_open_on_malformed_jobs():
+    runner = FakeRunner([
+        RunResult(["gh", "run", "view", "456", "--json", "workflowName,url"], 0, '{"workflowName":"tests","url":null}', ""),
+        RunResult(["gh", "run", "view", "456", "--log-failed"], 0, "no structured pytest here\n", ""),
+        RunResult(["gh", "run", "view", "456", "--json", "jobs"], 0, '{"jobs":{}}', ""),
+    ])
+
+    rc, out = _capture(ci_failures, run_id="456", runner=runner)
+
+    assert rc == 1
+    assert "failed log fetched, but no pytest-style failures were extracted" in out
+
+
 def test_ci_failures_rejects_malformed_pr_view_without_crashing():
     runner = FakeRunner([
         RunResult(["gh", "pr", "view", "12", "--json", "headRefName"], 0, "[]", ""),

@@ -953,11 +953,54 @@ def ci_failures(
         print(f"- error: {_err(log)}")
         return log.returncode or 1
     summary = summarize_pytest_log(f"{log.stdout}\n{log.stderr}")
-    if not summary.failures and not summary.errors:
+    if not _test_summary_has_signal(summary):
+        fallback = _failed_job_log_summary(run_id, runner=runner)
+        if fallback is not None and _test_summary_has_signal(fallback):
+            print("- fallback: scanned failed job logs")
+            _emit_test_summary(fallback)
+            return 1
         print("- failed log fetched, but no pytest-style failures were extracted")
         return 1
     _emit_test_summary(summary)
     return 1
+
+
+def _test_summary_has_signal(summary: TestSummary) -> bool:
+    return bool(summary.failures or summary.errors or summary.trace_lines)
+
+
+def _failed_job_log_summary(run_id: str, *, runner: Runner) -> Optional[TestSummary]:
+    """Fetch raw logs for failed jobs in one run and summarize pytest failures.
+
+    This is deliberately scoped to the run id `ci_failures` already selected,
+    then narrowed again to jobs whose metadata says `conclusion == failure`.
+    It is a fallback for cases where `gh run view --log-failed` returns wrapper
+    metadata but omits the raw test output we need.
+    """
+    meta = runner(["gh", "run", "view", run_id, "--json", "jobs"])
+    if meta.returncode != 0:
+        return None
+    info = _json_object_from(meta)
+    if info is None:
+        return None
+    jobs = info.get("jobs")
+    if not isinstance(jobs, list):
+        return None
+
+    chunks: list[str] = []
+    for job in jobs:
+        if not isinstance(job, dict) or job.get("conclusion") != "failure":
+            continue
+        job_id = job.get("databaseId")
+        if not _valid_run_id(job_id):
+            continue
+        job_log = runner(["gh", "run", "view", run_id, "--job", str(job_id), "--log"])
+        if job_log.returncode != 0:
+            continue
+        chunks.append(f"{job_log.stdout}\n{job_log.stderr}")
+    if not chunks:
+        return None
+    return summarize_pytest_log("\n".join(chunks))
 
 
 @dataclass
