@@ -15,6 +15,7 @@ _STATE_DIR = tempfile.mkdtemp(prefix="agent-rails-codex-test-")
 
 from agent_rails.core.events import ERROR, OK, ToolEvent  # noqa: E402
 from agent_rails.core.state import append_event, read_recent  # noqa: E402
+from agent_rails.adapters.codex.tripwire import _is_budget_command  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TRIPWIRE = os.path.join(ROOT, "agent_rails", "adapters", "codex", "tripwire.py")
@@ -167,6 +168,18 @@ def test_codex_tripwire_skips_escalation_nudge_when_already_escalated():
     p = _run_script(TRIPWIRE, payload)
     assert p.returncode == 0
     assert p.stdout == ""
+
+
+def test_codex_tripwire_recognizes_timeout_wrapped_budget_command():
+    assert _is_budget_command(
+        "Bash",
+        {"command": "timeout 30 agent-rails budget codex-session add 3 --self"},
+    ) is True
+    assert _is_budget_command(
+        "Bash",
+        {"command": "timeout 30 /usr/local/bin/agent-rails budget codex-session"},
+    ) is True
+    assert _is_budget_command("Bash", {"command": "timeout 30 agent-rails status"}) is False
 
 
 def test_codex_tripwire_nudges_large_unscoped_read_to_locate():

@@ -784,10 +784,34 @@ def self_approve(session_id: str, add_tools: int, cfg: dict) -> dict:
                 pass
 
         path = _budget_path(session_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a+", encoding="utf-8") as fh:
+        if not path.exists():
+            return {
+                "ok": False,
+                "reason": f"no budget state found for session: {session_id}",
+                "state": {},
+            }
+        with path.open("r+", encoding="utf-8") as fh:
             _lock(fh, exclusive=True)
             try:
+                fh.seek(0)
+                raw = fh.read()
+                if not raw.strip():
+                    return {
+                        "ok": False,
+                        "reason": f"no budget state found for session: {session_id}",
+                        "state": {},
+                    }
+                try:
+                    data = json.loads(raw)
+                except Exception:
+                    data = None
+                if not isinstance(data, dict):
+                    return {
+                        "ok": False,
+                        "reason": f"malformed budget state for session: {session_id}; use human approval",
+                        "state": {},
+                    }
+                fh.seek(0)
                 state = _load_locked(fh, checkpoint_at)
                 times_used = state.get("self_approve_times", 0)
                 remaining = _sa_remaining(
