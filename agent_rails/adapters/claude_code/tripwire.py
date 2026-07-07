@@ -33,6 +33,8 @@ from agent_rails.core.budget import BLOCK as BUDGET_BLOCK  # noqa: E402
 from agent_rails.core.budget import NUDGE as BUDGET_NUDGE  # noqa: E402
 from agent_rails.core.budget import increment_and_check as budget_check  # noqa: E402
 from agent_rails.detectors.base import BLOCK, NUDGE  # noqa: E402
+from agent_rails.ledger import advisory_for_tool as ledger_advisory  # noqa: E402
+from agent_rails.ledger import discover_root as ledger_root  # noqa: E402
 
 
 def _is_budget_command(tool: str, tool_input: object) -> bool:
@@ -76,6 +78,14 @@ def _large_read_line_count(tool: str, args: object) -> int:
 def _large_read_advisory(tool: str, args: object) -> str | None:
     """Compatibility wrapper for existing tests/imports."""
     return large_read_advisory(tool, args)
+
+
+def _ledger_advisory(tool: str, args: object, cwd) -> str:
+    try:
+        root = ledger_root(Path(cwd) if cwd else Path.cwd())
+        return ledger_advisory(root, tool, args)
+    except Exception:
+        return ""
 
 
 def _emit_deny(reason: str) -> None:
@@ -149,10 +159,17 @@ def main() -> int:
             pass  # budget gate always fails open
 
         if nudge_parts:
+            ledger_context = _ledger_advisory(tool, tool_input, cwd)
+            if ledger_context:
+                nudge_parts.append(ledger_context)
             _emit_nudge("\n\n".join(nudge_parts))
             return 0
 
         # ALLOW: emit pre-read advisory for unscoped large-file reads
+        ledger_context = _ledger_advisory(tool, tool_input, cwd)
+        if ledger_context:
+            _emit_nudge(ledger_context)
+            return 0
         advisory = _large_read_advisory(tool, tool_input)
         if advisory:
             _emit_nudge(advisory)
