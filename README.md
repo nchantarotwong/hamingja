@@ -58,6 +58,23 @@ paths print bounded line ranges and read commands.
 split-name hints. Repo-specific helpers such as `refs.sh` can still be better
 expert tools, but these commands are available everywhere.
 
+### Ruled-out ledger
+
+```bash
+agent-rails ledger add --kind ruled-out --claim "..." --evidence "..." --falsifier "..." --scope path/to/file
+agent-rails ledger check
+agent-rails ledger relevant path/to/file
+agent-rails ledger reverify <slug> [--timeout 60]
+agent-rails ledger retire <slug>
+```
+
+The ledger records negative knowledge in `.ledger/`: falsified hypotheses,
+dead ends, and non-obvious constraints with evidence and file-hash expiry.
+`ledger check` refreshes the one-line index and marks records `STALE` when a
+pinned file has drifted. Malformed records are ignored rather than blocking
+the workflow. The installed PreToolUse tripwire also surfaces relevant records
+as advisory context before edit/write tools touch a scoped path.
+
 ### Claude Code
 
 ```bash

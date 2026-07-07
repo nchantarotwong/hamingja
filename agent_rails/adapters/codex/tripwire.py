@@ -21,6 +21,8 @@ from agent_rails.core.budget import BLOCK as BUDGET_BLOCK  # noqa: E402
 from agent_rails.core.budget import NUDGE as BUDGET_NUDGE  # noqa: E402
 from agent_rails.core.budget import increment_and_check as budget_check  # noqa: E402
 from agent_rails.detectors.base import BLOCK, NUDGE  # noqa: E402
+from agent_rails.ledger import advisory_for_tool as ledger_advisory  # noqa: E402
+from agent_rails.ledger import discover_root as ledger_root  # noqa: E402
 
 
 _ESCALATED_WRAPPERS = {
@@ -155,6 +157,14 @@ def _codex_escalation_context(tool: str, tool_input) -> str:
     )
 
 
+def _ledger_context(tool: str, tool_input, cwd) -> str:
+    try:
+        root = ledger_root(Path(cwd) if cwd else Path.cwd())
+        return ledger_advisory(root, tool, tool_input)
+    except Exception:
+        return ""
+
+
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
@@ -177,6 +187,7 @@ def main() -> int:
             read_advisory = large_read_advisory(tool, tool_input) or ""
         except Exception:
             read_advisory = ""
+        ledger_context = _ledger_context(tool, tool_input, cwd)
 
         if verdict.action == BLOCK:
             _emit_deny(verdict.reason)
@@ -228,11 +239,15 @@ def main() -> int:
         if nudge_parts:
             if escalation_context:
                 nudge_parts.append(escalation_context)
+            if ledger_context:
+                nudge_parts.append(ledger_context)
             if read_advisory:
                 nudge_parts.append(read_advisory)
             _emit_nudge("\n\n".join(nudge_parts))
         elif escalation_context:
             _emit_nudge(escalation_context)
+        elif ledger_context:
+            _emit_nudge(ledger_context)
         elif read_advisory:
             _emit_nudge(read_advisory)
     except Exception:

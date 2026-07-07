@@ -11,6 +11,7 @@ A thin operator-facing CLI over the same core the hooks use. Subcommands:
     agent-rails locate QUERY       ranked code ranges to read next
     agent-rails locate-symbol NAME ranked definition-ish ranges
     agent-rails locate-edit QUERY  ranked ranges for a desired change
+    agent-rails ledger ...          manage repo-local ruled-out records
     agent-rails budget ID [ACTION] inspect/add/reset session budget
     agent-rails install [HARNESS]  install hooks; no arg = all detected harnesses
     agent-rails init [...]         compose a CLAUDE.md + AGENTS.md symlink from profiles
@@ -57,6 +58,12 @@ from .core.budget import read_state as _budget_read_state
 from .core.budget import reset as _budget_reset
 from .core.budget import self_approve as _budget_self_approve
 from .core.budget import set_task_type as _budget_set_task_type
+from .ledger import add_record as _ledger_add
+from .ledger import check_records as _ledger_check
+from .ledger import discover_root as _ledger_root
+from .ledger import relevant_records as _ledger_relevant
+from .ledger import retire as _ledger_retire
+from .ledger import reverify as _ledger_reverify
 from .locator import format_locations, locate
 from .profiles import (
     ALL_PROFILES,
@@ -332,6 +339,63 @@ def _cmd_locate(args: argparse.Namespace) -> int:
     except Exception:
         print("No likely targets found.")
     return 0
+
+
+def _cmd_ledger(args: argparse.Namespace) -> int:
+    root = _ledger_root(Path(args.dir) if getattr(args, "dir", None) else Path.cwd())
+    action = getattr(args, "ledger_action", None)
+    if action == "add":
+        result = _ledger_add(
+            root,
+            kind=args.kind,
+            claim=args.claim,
+            evidence=args.evidence,
+            falsifier=args.falsifier or "",
+            scope=args.scope or [],
+            cost=args.cost or "",
+            body=args.body or "",
+            slug=args.slug or "",
+        )
+        if not result.ok:
+            print(f"error: {result.message}", file=sys.stderr)
+            return 2
+        print(result.message)
+        if result.record is not None:
+            print(f"{result.record.path.relative_to(root)}")
+        return 0
+    if action == "check":
+        recs, stale = _ledger_check(root)
+        print(f"checked {len(recs)} ledger record(s); stale: {stale}")
+        for rec in recs:
+            if rec.stale:
+                print(f"STALE {rec.slug}: {rec.claim}")
+        return 0
+    if action == "relevant":
+        recs = _ledger_relevant(root, args.paths or [])
+        if not recs:
+            print("No relevant ledger records.")
+            return 0
+        for rec in recs:
+            state = " STALE" if rec.stale else ""
+            print(f"{rec.slug}{state} ({rec.kind}): {rec.claim}")
+            print(f"  scope: {', '.join(rec.scope)}")
+        return 0
+    if action == "reverify":
+        result = _ledger_reverify(root, args.slug, timeout=args.timeout)
+        if not result.ok:
+            print(f"error: {result.message}", file=sys.stderr)
+            return 2
+        print(result.message)
+        return 0
+    if action == "retire":
+        result = _ledger_retire(root, args.slug, reason=args.reason or "")
+        if not result.ok:
+            print(f"error: {result.message}", file=sys.stderr)
+            return 2
+        print(result.message)
+        return 0
+    print("error: missing ledger action", file=sys.stderr)
+    return 2
 
 
 _HARNESS_ALIASES = {"claude": "claude_code"}
@@ -1255,6 +1319,37 @@ def build_parser() -> argparse.ArgumentParser:
     loc_edit = sub.add_parser("locate-edit", help="rank ranges likely relevant to a desired code change")
     add_locate_args(loc_edit)
     loc_edit.set_defaults(func=_cmd_locate, symbol=False)
+
+    led = sub.add_parser(
+        "ledger",
+        help="manage repo-local ruled-out records under .ledger/",
+    )
+    led.add_argument("--dir", help="repo/directory containing .ledger/ (default: nearest repo root)")
+    led_sub = led.add_subparsers(dest="ledger_action")
+    led_add = led_sub.add_parser("add", help="deposit an evidence-backed ruled-out/dead-end/constraint record")
+    led_add.add_argument("--kind", required=True, choices=["ruled-out", "dead-end", "constraint"])
+    led_add.add_argument("--claim", required=True, help="the belief or path future agents should not re-walk")
+    led_add.add_argument("--evidence", required=True, help="observation that killed the claim")
+    led_add.add_argument("--falsifier", help="command or precise observation to re-run")
+    led_add.add_argument("--scope", action="append", required=True, help="repo-relative path this record applies to; repeatable")
+    led_add.add_argument("--cost", help="rough session cost, for example '~30min'")
+    led_add.add_argument("--body", help="optional free-text elaboration")
+    led_add.add_argument("--slug", help="optional kebab-case-ish record slug")
+    led_add.set_defaults(func=_cmd_ledger)
+    led_check = led_sub.add_parser("check", help="refresh blob pins and flag stale records in LEDGER.md")
+    led_check.set_defaults(func=_cmd_ledger)
+    led_rel = led_sub.add_parser("relevant", help="show records whose scope intersects paths")
+    led_rel.add_argument("paths", nargs="+", help="repo-relative paths")
+    led_rel.set_defaults(func=_cmd_ledger)
+    led_rev = led_sub.add_parser("reverify", help="run a record falsifier; re-pin on failure, retire on success")
+    led_rev.add_argument("slug", help="record slug")
+    led_rev.add_argument("--timeout", type=float, default=60.0, help="seconds before the falsifier times out (default: 60)")
+    led_rev.set_defaults(func=_cmd_ledger)
+    led_ret = led_sub.add_parser("retire", help="delete a live record and leave a tombstone in LEDGER.md")
+    led_ret.add_argument("slug", help="record slug")
+    led_ret.add_argument("--reason", help="optional retirement reason")
+    led_ret.set_defaults(func=_cmd_ledger)
+    led.set_defaults(func=_cmd_ledger)
 
     ins = sub.add_parser(
         "install",

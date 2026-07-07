@@ -27,6 +27,13 @@ def _run(argv) -> str:
     return buf.getvalue()
 
 
+def _run_err(argv) -> tuple[int, str]:
+    buf = io.StringIO()
+    with redirect_stderr(buf):
+        rc = main(argv)
+    return rc, buf.getvalue()
+
+
 def test_version():
     assert "agent-rails" in _run(["version"])
 
@@ -92,6 +99,11 @@ def test_workflow_subcommands_parse():
         ["locate", "pick directory endpoint", "--glob", "*.py"],
         ["locate-symbol", "do_GET", "--max-results", "3"],
         ["locate-edit", "where should I add repo root field?", "--context-lines", "40"],
+        ["ledger", "add", "--kind", "constraint", "--claim", "C", "--evidence", "E", "--scope", "x.py"],
+        ["ledger", "check"],
+        ["ledger", "relevant", "x.py"],
+        ["ledger", "reverify", "record-slug", "--timeout", "5"],
+        ["ledger", "retire", "record-slug"],
         ["budget", "session-123"],
         ["budget", "session-123", "add", "20"],
         ["budget", "session-123", "add", "3", "--self"],
@@ -125,6 +137,199 @@ def test_commands_lists_repo_local_preflights():
 
     assert "Preflight:" in out
     assert "agent-rails preflight full-suite-readiness" in out
+
+
+def test_ledger_add_check_relevant_and_stale():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = os.path.join(tmp, "repo")
+        os.makedirs(repo)
+        src = os.path.join(repo, "x.py")
+        with open(src, "w", encoding="utf-8") as f:
+            f.write("VALUE = 1\n")
+
+        out = _run([
+            "ledger",
+            "--dir",
+            repo,
+            "add",
+            "--kind",
+            "ruled-out",
+            "--claim",
+            "Changing VALUE fixes the failure",
+            "--evidence",
+            "The focused test still failed after VALUE changed.",
+            "--falsifier",
+            "false",
+            "--scope",
+            "x.py",
+            "--cost",
+            "~10min",
+        ])
+        assert "added changing-value-fixes-the-failure" in out
+        record_path = os.path.join(repo, ".ledger", "changing-value-fixes-the-failure.md")
+        assert os.path.exists(record_path)
+
+        relevant = _run(["ledger", "--dir", repo, "relevant", "x.py"])
+        assert "Changing VALUE fixes the failure" in relevant
+
+        with open(src, "w", encoding="utf-8") as f:
+            f.write("VALUE = 2\n")
+        checked = _run(["ledger", "--dir", repo, "check"])
+        assert "stale: 1" in checked
+        with open(os.path.join(repo, ".ledger", "LEDGER.md"), encoding="utf-8") as f:
+            assert "[STALE]" in f.read()
+
+
+def test_ledger_reverify_repins_on_failing_falsifier_and_retires_on_passing_falsifier():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = os.path.join(tmp, "repo")
+        os.makedirs(repo)
+        with open(os.path.join(repo, "x.py"), "w", encoding="utf-8") as f:
+            f.write("VALUE = 1\n")
+
+        _run([
+            "ledger",
+            "--dir",
+            repo,
+            "add",
+            "--kind",
+            "ruled-out",
+            "--claim",
+            "Dead hypothesis",
+            "--evidence",
+            "A falsifier killed it.",
+            "--falsifier",
+            "false",
+            "--scope",
+            "x.py",
+        ])
+        out = _run(["ledger", "--dir", repo, "reverify", "dead-hypothesis"])
+        assert "re-pinned dead-hypothesis" in out
+        assert os.path.exists(os.path.join(repo, ".ledger", "dead-hypothesis.md"))
+
+        with open(os.path.join(repo, ".ledger", "dead-hypothesis.md"), "r", encoding="utf-8") as f:
+            text = f.read()
+        with open(os.path.join(repo, ".ledger", "dead-hypothesis.md"), "w", encoding="utf-8") as f:
+            f.write(text.replace("falsifier: |\n  false", "falsifier: |\n  true"))
+        out = _run(["ledger", "--dir", repo, "reverify", "dead-hypothesis"])
+        assert "retired dead-hypothesis" in out
+        assert not os.path.exists(os.path.join(repo, ".ledger", "dead-hypothesis.md"))
+        with open(os.path.join(repo, ".ledger", "LEDGER.md"), encoding="utf-8") as f:
+            assert "Retired records:" in f.read()
+
+
+def test_ledger_reverify_timeout_keeps_record():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = os.path.join(tmp, "repo")
+        os.makedirs(repo)
+        with open(os.path.join(repo, "x.py"), "w", encoding="utf-8") as f:
+            f.write("VALUE = 1\n")
+        _run([
+            "ledger",
+            "--dir",
+            repo,
+            "add",
+            "--kind",
+            "ruled-out",
+            "--claim",
+            "Slow falsifier",
+            "--evidence",
+            "A timeout should not retire the record.",
+            "--falsifier",
+            "python3 -c 'import time; time.sleep(2)'",
+            "--scope",
+            "x.py",
+        ])
+
+        rc, err = _run_err(["ledger", "--dir", repo, "reverify", "slow-falsifier", "--timeout", "1"])
+        assert rc == 2
+        assert "timed out" in err
+        assert os.path.exists(os.path.join(repo, ".ledger", "slow-falsifier.md"))
+
+
+def test_ledger_retire_and_malformed_records_fail_open():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = os.path.join(tmp, "repo")
+        os.makedirs(repo)
+        with open(os.path.join(repo, "x.py"), "w", encoding="utf-8") as f:
+            f.write("VALUE = 1\n")
+        os.makedirs(os.path.join(repo, ".ledger"))
+        with open(os.path.join(repo, ".ledger", "bad.md"), "w", encoding="utf-8") as f:
+            f.write("---\nkind: ruled-out\nclaim: missing evidence\n---\n")
+
+        checked = _run(["ledger", "--dir", repo, "check"])
+        assert "checked 0 ledger record(s)" in checked
+        relevant = _run(["ledger", "--dir", repo, "relevant", "x.py"])
+        assert "No relevant ledger records." in relevant
+
+        _run([
+            "ledger",
+            "--dir",
+            repo,
+            "add",
+            "--kind",
+            "constraint",
+            "--claim",
+            "Do not infer from generated output",
+            "--evidence",
+            "The source test is the authority.",
+            "--scope",
+            "x.py",
+        ])
+        out = _run(["ledger", "--dir", repo, "retire", "do-not-infer-from-generated-output", "--reason", "graduated"])
+        assert "retired do-not-infer-from-generated-output" in out
+        with open(os.path.join(repo, ".ledger", "LEDGER.md"), encoding="utf-8") as f:
+            index = f.read()
+        assert "Retired records:" in index
+        assert "graduated" in index
+
+
+def test_ledger_record_without_valid_while_is_stale_loud():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = os.path.join(tmp, "repo")
+        os.makedirs(os.path.join(repo, ".ledger"))
+        with open(os.path.join(repo, "x.py"), "w", encoding="utf-8") as f:
+            f.write("VALUE = 1\n")
+        with open(os.path.join(repo, ".ledger", "pinless.md"), "w", encoding="utf-8") as f:
+            f.write(
+                "---\n"
+                "kind: constraint\n"
+                "claim: >\n"
+                "  Pinless records must not look live.\n"
+                "evidence: >\n"
+                "  There is no expiry pin.\n"
+                "scope:\n"
+                "  - x.py\n"
+                "---\n"
+            )
+
+        checked = _run(["ledger", "--dir", repo, "check"])
+        assert "stale: 1" in checked
+        with open(os.path.join(repo, ".ledger", "LEDGER.md"), encoding="utf-8") as f:
+            assert "pinless [STALE]" in f.read()
+
+
+def test_ledger_rejects_scope_that_escapes_repo():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = os.path.join(tmp, "repo")
+        os.makedirs(repo)
+        rc, err = _run_err([
+            "ledger",
+            "--dir",
+            repo,
+            "add",
+            "--kind",
+            "constraint",
+            "--claim",
+            "Outside file matters",
+            "--evidence",
+            "This should not be accepted.",
+            "--scope",
+            "../outside.txt",
+        ])
+        assert rc == 2
+        assert "at least one --scope path is required" in err
+        assert not os.path.exists(os.path.join(repo, ".ledger"))
 
 
 def test_preflight_lists_and_runs_repo_script():

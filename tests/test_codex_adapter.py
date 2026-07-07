@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -16,6 +17,7 @@ _STATE_DIR = tempfile.mkdtemp(prefix="agent-rails-codex-test-")
 from agent_rails.core.events import ERROR, OK, ToolEvent  # noqa: E402
 from agent_rails.core.state import append_event, read_recent  # noqa: E402
 from agent_rails.adapters.codex.tripwire import _is_budget_command  # noqa: E402
+from agent_rails.ledger import add_record  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TRIPWIRE = os.path.join(ROOT, "agent_rails", "adapters", "codex", "tripwire.py")
@@ -217,6 +219,34 @@ def test_codex_tripwire_no_large_read_nudge_for_scoped_read():
     p = _run_script(TRIPWIRE, payload)
     assert p.returncode == 0
     assert p.stdout == ""
+
+
+def test_codex_tripwire_surfaces_relevant_ledger_record_for_write():
+    _reset_state_env()
+    d = _proj({"x.py": "VALUE = 1\n"})
+    result = add_record(
+        Path(d),
+        kind="constraint",
+        claim="Do not edit VALUE to fix the parser",
+        evidence="The parser test failed with VALUE unchanged.",
+        scope=["x.py"],
+    )
+    assert result.ok
+    payload = {
+        "hook_event_name": "PreToolUse",
+        "session_id": "codex-ledger-write",
+        "cwd": d,
+        "tool_name": "Write",
+        "tool_input": {"file_path": os.path.join(d, "x.py"), "content": "VALUE = 2\n"},
+    }
+    p = _run_script(TRIPWIRE, payload)
+    assert p.returncode == 0
+    out = json.loads(p.stdout)
+    hso = out["hookSpecificOutput"]
+    assert hso["hookEventName"] == "PreToolUse"
+    assert "permissionDecision" not in hso
+    assert "Ruled-out ledger" in hso["additionalContext"]
+    assert "Do not edit VALUE" in hso["additionalContext"]
 
 
 def test_codex_bash_payload_variants_hash_distinct_commands():
