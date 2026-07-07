@@ -114,7 +114,14 @@ def _is_budget_command(tool: str, tool_input) -> bool:
     """
     if str(tool).strip() != "Bash":
         return False
-    return _command_from(tool_input).startswith("agent-rails budget")
+    try:
+        tokens = shlex.split(_command_from(tool_input))
+    except ValueError:
+        return False
+    for i, tok in enumerate(tokens[:-1]):
+        if tok.rsplit("/", 1)[-1] == "agent-rails" and tokens[i + 1] == "budget":
+            return True
+    return False
 
 
 def _read_quota_safe(session_id: str):

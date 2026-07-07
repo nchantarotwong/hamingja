@@ -280,6 +280,23 @@ def test_self_approve_works_within_limits():
     assert result["state"]["approved_tool_calls"] >= 13 + 2
 
 
+def test_self_approve_rejects_nonexistent_session():
+    result = self_approve("mistyped-session", add_tools=2, cfg=_SA_CFG)
+
+    assert result["ok"] is False
+    assert "no budget state found" in result["reason"]
+    assert read_state("mistyped-session") == {}
+
+
+def test_self_approve_rejects_malformed_state():
+    _budget_path(SESSION).write_text("not-json", encoding="utf-8")
+
+    result = self_approve(SESSION, add_tools=2, cfg=_SA_CFG)
+
+    assert result["ok"] is False
+    assert "malformed budget state" in result["reason"]
+
+
 def test_self_approve_rejects_oversized_add():
     result = self_approve(SESSION, add_tools=5, cfg=_SA_CFG)
     assert result["ok"] is False
@@ -312,6 +329,8 @@ def test_self_approve_bad_cfg_fails_open():
 
 
 def test_self_approve_increments_counter():
+    for _ in range(13):
+        increment_and_check(SESSION, "Bash", False, _CFG)
     result1 = self_approve(SESSION, add_tools=1, cfg=_SA_CFG)
     assert result1["ok"] is True
     result2 = self_approve(SESSION, add_tools=1, cfg=_SA_CFG)

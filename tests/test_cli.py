@@ -258,6 +258,20 @@ def test_budget_short_form_rejects_flag_without_session():
     assert "missing budget session id" in err.getvalue()
 
 
+def test_budget_self_approve_rejects_nonexistent_session():
+    session = "cli-budget-mistyped-self"
+    budget_reset(session)
+    err = io.StringIO()
+
+    with redirect_stderr(err):
+        rc = main(["budget", session, "add", "3", "--self"])
+
+    assert rc == 1
+    assert "self-approve rejected" in err.getvalue()
+    assert "no budget state found" in err.getvalue()
+    assert budget_read_state(session) == {}
+
+
 def test_pr_create_body_dash_reads_stdin_and_writes_temp_body():
     calls = []
 
