@@ -126,6 +126,28 @@ def _is_budget_command(tool: str, tool_input) -> bool:
     return False
 
 
+def _budget_tool_name(tool: str, tool_input) -> str:
+    """Return the tool name to meter for this call.
+
+    Recognized agent-rails ledger commands get command-family names so the
+    budget layer can discount guardrail bookkeeping without exempting all Bash.
+    Any parse failure or unrecognized command falls back to the original tool.
+    """
+    try:
+        if str(tool).strip() != "Bash":
+            return str(tool)
+        tokens = shlex.split(_command_from(tool_input))
+        for i, tok in enumerate(tokens[:-2]):
+            if tok.rsplit("/", 1)[-1] == "agent-rails" and tokens[i + 1] == "ledger":
+                action = tokens[i + 2]
+                if action in {"add", "check", "relevant", "retire", "reverify"}:
+                    return f"Bash:agent-rails ledger {action}"
+                return str(tool)
+        return str(tool)
+    except Exception:
+        return str(tool)
+
+
 def _read_quota_safe(session_id: str):
     """Fetch the real Codex quota reading, fail-open to None.
 
@@ -210,8 +232,9 @@ def main() -> int:
                         except Exception:
                             is_large = False
                         reading = _read_quota_safe(session_id)
+                        budget_tool = _budget_tool_name(tool, tool_input)
                         bv = budget_check(
-                            session_id, tool, is_large, budget_cfg, quota_reading=reading
+                            session_id, budget_tool, is_large, budget_cfg, quota_reading=reading
                         )
                         if bv.action == BUDGET_BLOCK:
                             _emit_deny(bv.reason)

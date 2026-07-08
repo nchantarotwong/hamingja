@@ -23,7 +23,9 @@ Config keys (from cfg dict, typically cfg["budget"]):
                    weighted_calls counter. Missing tools fall back to
                    weights["_default"] then to 1.0. Built-in defaults give
                    read-class tools (Read/Glob/Grep/LS/etc.) a 0.5 cost so
-                   orientation reads don't burn budget like edits.
+                   orientation reads don't burn budget like edits. Adapters may
+                   pass command-family tool names for recognized shell calls
+                   such as "Bash:agent-rails ledger relevant".
   disable_default_weights:
                    bool — when true, skip built-in weight discounts. Explicit
                    weights still win, then weights["_default"] / default_weight.
@@ -92,6 +94,16 @@ _DEFAULT_WEIGHTS: dict[str, float] = {
     # some cost on them).
     "WebFetch": 0.75,
     "WebSearch": 0.75,
+    # agent-rails ledger bookkeeping. The adapters classify these recognized
+    # Bash commands into synthetic tool names so the public budget API stays
+    # harness-neutral. Read-only/orientation commands are free; mutations are
+    # cheap but nonzero; reverify stays full-price because it can execute an
+    # arbitrary falsifier command.
+    "Bash:agent-rails ledger check": 0.0,
+    "Bash:agent-rails ledger relevant": 0.0,
+    "Bash:agent-rails ledger add": 0.2,
+    "Bash:agent-rails ledger retire": 0.2,
+    "Bash:agent-rails ledger reverify": 1.0,
 }
 
 # Built-in per-bucket budget overrides. None of these apply unless the agent

@@ -49,6 +49,25 @@ def test_is_budget_command_non_bash():
     assert tripwire._is_budget_command("Read", {"command": "agent-rails budget s"}) is False
 
 
+@pytest.mark.parametrize("tool_input,expected", [
+    ({"command": "agent-rails ledger check"}, "Bash:agent-rails ledger check"),
+    ({"command": "agent-rails ledger relevant agent_rails/core/budget.py"}, "Bash:agent-rails ledger relevant"),
+    ({"command": "timeout 30 agent-rails ledger add --claim x"}, "Bash:agent-rails ledger add"),
+    ({"command": "/usr/local/bin/agent-rails ledger retire old-claim"}, "Bash:agent-rails ledger retire"),
+    ({"command": "agent-rails ledger reverify old-claim"}, "Bash:agent-rails ledger reverify"),
+    ({"command": "agent-rails ledger unknown"}, "Bash"),
+    ({"command": "agent-rails ledger"}, "Bash"),
+    ({"command": "agent-rails report"}, "Bash"),
+    ({"command": "agent-rails ledger 'unterminated"}, "Bash"),
+])
+def test_budget_tool_name_for_ledger_commands(tool_input, expected):
+    assert tripwire._budget_tool_name("Bash", tool_input) == expected
+
+
+def test_budget_tool_name_non_bash_is_unchanged():
+    assert tripwire._budget_tool_name("Read", {"command": "agent-rails ledger check"}) == "Read"
+
+
 # ---------------------------------------------------------------------------
 # _read_quota_safe — always fail-open
 # ---------------------------------------------------------------------------
@@ -157,3 +176,33 @@ def test_budget_command_is_exempt(gate_env, monkeypatch, capsys):
     }
     _, out = _run_main(payload, monkeypatch, capsys)
     assert out.get("hookSpecificOutput", {}).get("permissionDecision") != "deny"
+
+
+def test_ledger_relevant_uses_zero_weight(gate_env, monkeypatch, capsys):
+    for _ in range(20):
+        payload = {
+            "session_id": SID,
+            "tool_name": "Bash",
+            "tool_input": {"command": "agent-rails ledger relevant agent_rails/core/budget.py"},
+            "cwd": str(gate_env),
+        }
+        _, out = _run_main(payload, monkeypatch, capsys)
+        assert out.get("hookSpecificOutput", {}).get("permissionDecision") != "deny"
+    state = budget_mod.read_state(SID)
+    assert state["tool_calls"] == 20
+    assert state["weighted_calls"] == 0.0
+
+
+def test_ledger_add_uses_low_nonzero_weight(gate_env, monkeypatch, capsys):
+    for _ in range(10):
+        payload = {
+            "session_id": SID,
+            "tool_name": "Bash",
+            "tool_input": {"command": "agent-rails ledger add --claim x --evidence y --falsifier z"},
+            "cwd": str(gate_env),
+        }
+        _, out = _run_main(payload, monkeypatch, capsys)
+        assert out.get("hookSpecificOutput", {}).get("permissionDecision") != "deny"
+    state = budget_mod.read_state(SID)
+    assert state["tool_calls"] == 10
+    assert state["weighted_calls"] == pytest.approx(2.0)
