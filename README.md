@@ -195,6 +195,12 @@ detectors still block independently, so a false-positive credit cannot carry a
 loop past them. Tune the credit magnitudes or disable the whole behavior under
 `budget.progress` in config.
 
+The same weighted counter discounts known cheap tools. Read-class tools cost
+less than edits, and `agent-rails ledger check` / `ledger relevant` are free
+because they are guardrail orientation. `ledger add` and `ledger retire` cost a
+small nonzero amount; `ledger reverify` stays full-cost because it can execute a
+falsifier command.
+
 #### Quota-aware gating (real subscription limits)
 
 The call counter is a *proxy* for spend. On a Claude/Codex CLI subscription the

@@ -74,6 +74,19 @@ def test_tool_weight_unknown_tool_defaults_to_one():
     assert _tool_weight("Edit", {}) == 1.0
 
 
+def test_builtin_weights_cover_ledger_command_families():
+    assert _tool_weight("Bash:agent-rails ledger check", {}) == 0.0
+    assert _tool_weight("Bash:agent-rails ledger relevant", {}) == 0.0
+    assert _tool_weight("Bash:agent-rails ledger add", {}) == pytest.approx(0.2)
+    assert _tool_weight("Bash:agent-rails ledger retire", {}) == pytest.approx(0.2)
+    assert _tool_weight("Bash:agent-rails ledger reverify", {}) == 1.0
+
+
+def test_ledger_command_weight_user_override_wins():
+    cfg = {"weights": {"Bash:agent-rails ledger add": 0.05}}
+    assert _tool_weight("Bash:agent-rails ledger add", cfg) == pytest.approx(0.05)
+
+
 def test_tool_weight_user_override_beats_builtin():
     cfg = {"weights": {"Read": 0.1}}
     assert _tool_weight("Read", cfg) == pytest.approx(0.1)
@@ -110,6 +123,22 @@ def test_weighted_calls_increment_by_tool_weight():
     state = read_state(SESSION)
     assert state["tool_calls"] == 6
     assert state["weighted_calls"] == pytest.approx(3.0)
+
+
+def test_ledger_read_commands_do_not_spend_weighted_budget():
+    for _ in range(10):
+        increment_and_check(SESSION, "Bash:agent-rails ledger relevant", False, _CFG)
+    state = read_state(SESSION)
+    assert state["tool_calls"] == 10
+    assert state["weighted_calls"] == 0.0
+
+
+def test_ledger_add_spends_low_nonzero_weighted_budget():
+    for _ in range(5):
+        increment_and_check(SESSION, "Bash:agent-rails ledger add", False, _CFG)
+    state = read_state(SESSION)
+    assert state["tool_calls"] == 5
+    assert state["weighted_calls"] == pytest.approx(1.0)
 
 
 def test_reads_dont_trip_checkpoint_when_writes_would_have():

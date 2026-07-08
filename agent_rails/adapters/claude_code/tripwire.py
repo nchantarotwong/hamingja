@@ -22,6 +22,7 @@ FAIL-OPEN: any error path prints nothing and exits 0, so the call proceeds.
 from __future__ import annotations
 
 import json
+import shlex
 import sys
 from pathlib import Path
 
@@ -50,6 +51,30 @@ def _is_budget_command(tool: str, tool_input: object) -> bool:
         return False
     cmd = str(tool_input.get("command") or "").lstrip()
     return cmd.startswith("agent-rails budget")
+
+
+def _budget_tool_name(tool: str, tool_input: object) -> str:
+    """Return the tool name to meter for this call.
+
+    Recognized agent-rails ledger commands get command-family names so the
+    budget layer can discount guardrail bookkeeping without exempting all Bash.
+    Any parse failure or unrecognized command falls back to the original tool.
+    """
+    try:
+        if str(tool).strip() != "Bash":
+            return str(tool)
+        if not isinstance(tool_input, dict):
+            return str(tool)
+        tokens = shlex.split(str(tool_input.get("command") or ""))
+        for i, tok in enumerate(tokens[:-2]):
+            if tok.rsplit("/", 1)[-1] == "agent-rails" and tokens[i + 1] == "ledger":
+                action = tokens[i + 2]
+                if action in {"add", "check", "relevant", "retire", "reverify"}:
+                    return f"Bash:agent-rails ledger {action}"
+                return str(tool)
+        return str(tool)
+    except Exception:
+        return str(tool)
 
 
 def _read_quota_safe(session_id: str, cwd, budget_cfg: dict):
@@ -147,8 +172,9 @@ def main() -> int:
                     if not _is_budget_command(tool, tool_input):
                         is_large = _large_read_line_count(tool, tool_input) > 0
                         reading = _read_quota_safe(session_id, cwd, budget_cfg)
+                        budget_tool = _budget_tool_name(tool, tool_input)
                         bv = budget_check(
-                            session_id, tool, is_large, budget_cfg, quota_reading=reading
+                            session_id, budget_tool, is_large, budget_cfg, quota_reading=reading
                         )
                         if bv.action == BUDGET_BLOCK:
                             _emit_deny(bv.reason)
