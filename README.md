@@ -84,9 +84,10 @@ as advisory context before edit/write tools touch a scoped path.
 agent-rails install claude
 ```
 
-Merges three hooks into `~/.claude/settings.json` — a `PreToolUse` tripwire and
+Merges five hooks into `~/.claude/settings.json` — a `PreToolUse` tripwire,
 a recorder on both `PostToolUse` (success) and `PostToolUseFailure` (failure, so
-error detection is by event, not by parsing an undocumented result shape). The
+error detection is by event, not by parsing an undocumented result shape), and
+`SubagentStart` / `SubagentStop` lifecycle recorders. The
 merge preserves your other hooks, is idempotent, self-heals a moved repo path,
 and backs up only when it actually changes something. Default mode is `observe`,
 so nothing is blocked until you flip to `enforce`.
@@ -97,8 +98,9 @@ so nothing is blocked until you flip to `enforce`.
 agent-rails install codex
 ```
 
-Merges two hooks into `~/.codex/hooks.json` — a `PreToolUse` tripwire and a
-`PostToolUse` recorder. The merge preserves your other hooks, is idempotent,
+Merges four hooks into `~/.codex/hooks.json` — a `PreToolUse` tripwire, a
+`PostToolUse` recorder, and `SubagentStart` / `SubagentStop` lifecycle
+recorders. The merge preserves your other hooks, is idempotent,
 self-heals a moved repo path, and backs up only when it actually changes
 something. Codex may ask you to review/trust the new hooks with `/hooks`.
 Default mode is `observe`, so nothing is blocked until you flip to `enforce`.
@@ -176,12 +178,16 @@ agent-rails recover <session-id> reset        # clear detector history; preserve
 the next tool call starts from fresh counters. `reset N` also grants runway
 above the configured checkpoint for the resumed session.
 
-Subagent spawns use a conservative monotonic allowance
-(`budget.max_subagents`, default 1) because current hooks cannot reliably prove
-child completion and lineage. Once the allowance is spent,
+Subagent spawns retain a conservative monotonic allowance
+(`budget.max_subagents`, default 1) because lifecycle start hooks cannot deny a
+spawn and neither runtime exposes parent-agent lineage. Once the allowance is spent,
 `budget <session-id> subagent` grants exactly one additional spawn. Static
-capability manifests keep this limitation explicit; active-child accounting
-must remain observe-only until adapter fixtures prove completion visibility.
+capability manifests keep this limitation explicit. Both runtimes now expose
+stable child identity and completion events, so agent-rails also tracks active
+children at session scope and advises above `delegation.max_active_children`
+(default 1). Inspect that state with `agent-rails delegation <session-id>`.
+If a runtime exits before emitting completion, clear stale advisory state with
+`agent-rails delegation <session-id> reset`.
 
 #### Progress crediting
 

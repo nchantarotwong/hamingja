@@ -6,6 +6,7 @@
 #   PreToolUse        -> tripwire.py  (allow / nudge / block)
 #   PostToolUse       -> record.py    (record success, heuristic fallback)
 #   PostToolUseFailure-> record.py    (record failure, authoritative)
+#   SubagentStart/Stop-> delegation.py (identity + active-child lifecycle)
 # all for matcher "*".
 #
 # Behavior:
@@ -25,6 +26,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 SETTINGS="${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
 PRE="$REPO_ROOT/agent_rails/adapters/claude_code/tripwire.py"
 POST="$REPO_ROOT/agent_rails/adapters/claude_code/record.py"
+LIFECYCLE="$REPO_ROOT/agent_rails/adapters/delegation.py"
 
 PYBIN="$(command -v python3 || command -v python || true)"
 if [ -z "$PYBIN" ]; then
@@ -46,10 +48,10 @@ mkdir -p "$(dirname "$SETTINGS")"
 BACKUP="$SETTINGS.bak.$(date +%s).$$"
 cp "$SETTINGS" "$BACKUP"
 
-RESULT="$("$PYBIN" - "$SETTINGS" "$PRE" "$POST" "$PYBIN" <<'PY'
+RESULT="$("$PYBIN" - "$SETTINGS" "$PRE" "$POST" "$LIFECYCLE" "$PYBIN" <<'PY'
 import json, os, sys
 
-settings_path, pre, post, pybin = sys.argv[1:5]
+settings_path, pre, post, lifecycle, pybin = sys.argv[1:6]
 
 try:
     with open(settings_path, encoding="utf-8") as fh:
@@ -96,6 +98,8 @@ def upsert(event, script):
 upsert("PreToolUse", pre)
 upsert("PostToolUse", post)
 upsert("PostToolUseFailure", post)
+upsert("SubagentStart", lifecycle)
+upsert("SubagentStop", lifecycle)
 
 after = json.dumps(cfg, sort_keys=True)
 if after == before:
@@ -119,4 +123,4 @@ fi
 echo "mode:     observe (nothing is blocked until you set mode=enforce)"
 echo
 echo "Opt out per repo: touch .agent-rails-off in that project's root."
-echo "Uninstall: remove the three agent-rails hook entries (or restore a backup)."
+echo "Uninstall: remove the five agent-rails hook entries (or restore a backup)."

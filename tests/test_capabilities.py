@@ -6,7 +6,7 @@ from agent_rails.adapters.codex import CAPABILITIES as CODEX_CAPABILITIES
 def test_first_class_manifests_are_versioned_and_runtime_specific():
     codex = manifest("codex")
     claude = manifest("claude_code")
-    assert codex["version"] == claude["version"] == 1
+    assert codex["version"] == claude["version"] == 2
     assert codex["quota_probe"] is True
     assert claude["quota_probe"] is False
     assert codex["pre_tool_enforcement"] == "partial"

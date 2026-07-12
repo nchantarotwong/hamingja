@@ -426,6 +426,22 @@ def test_project_can_relax_rescoped_budget_stop_but_not_tighten():
     _no_env(body)
 
 
+def test_project_can_only_raise_delegation_concurrency():
+    def lower():
+        d = _proj({".agent-rails.json": json.dumps({
+            "delegation": {"max_active_children": 0},
+        })})
+        assert load_config(d)["delegation"]["max_active_children"] == 1
+    _no_env(lower)
+
+    def raise_limit():
+        d = _proj({".agent-rails.json": json.dumps({
+            "delegation": {"max_active_children": 4},
+        })})
+        assert load_config(d)["delegation"]["max_active_children"] == 4
+    _no_env(raise_limit)
+
+
 def test_project_can_raise_self_approve_max_add():
     def body():
         d = _proj({".agent-rails.json": json.dumps(

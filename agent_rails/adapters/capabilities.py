@@ -10,20 +10,21 @@ from copy import deepcopy
 
 _MANIFESTS = {
     "codex": {
-        "version": 1,
+        "version": 2,
         "runtime": "codex",
         "pre_tool_enforcement": "partial",
         "post_tool_outcomes": "partial",
         "quota_probe": True,
         "quota_ttl_seconds": 300,
         "context_probe": True,
-        "delegation_spawn": False,
-        "delegation_completion": False,
+        "delegation_spawn": True,
+        "delegation_completion": True,
+        "delegation_identity": True,
         "delegation_lineage": False,
         "delegation_fallback": "monotonic_grants",
     },
     "claude_code": {
-        "version": 1,
+        "version": 2,
         "runtime": "claude_code",
         "pre_tool_enforcement": "full",
         "post_tool_outcomes": "full",
@@ -31,7 +32,8 @@ _MANIFESTS = {
         "quota_ttl_seconds": None,
         "context_probe": True,
         "delegation_spawn": True,
-        "delegation_completion": False,
+        "delegation_completion": True,
+        "delegation_identity": True,
         "delegation_lineage": False,
         "delegation_fallback": "monotonic_grants",
     },
@@ -64,17 +66,28 @@ def delegation_observation(runtime: str, payload: object) -> dict | None:
     try:
         if not isinstance(payload, dict):
             return None
-        if runtime == "claude_code" and str(payload.get("tool_name")) in {"Task", "Agent"}:
+        if runtime in {"codex", "claude_code"} and payload.get("hook_event_name") in {
+            "SubagentStart", "SubagentStop",
+        }:
+            agent_id = payload.get("agent_id")
+            agent_type = payload.get("agent_type")
+            session_id = payload.get("session_id")
+            if (not isinstance(agent_id, str) or not agent_id
+                    or not isinstance(agent_type, str) or not agent_type
+                    or not isinstance(session_id, str) or not session_id):
+                return None
             return {
-                "event": "spawn",
-                "spawn_observed": True,
-                "identity_observed": False,
-                "completion_observed": False,
+                "event": "spawn" if payload["hook_event_name"] == "SubagentStart" else "complete",
+                "agent_id": agent_id,
+                "agent_type": agent_type,
+                "session_id": session_id,
+                "turn_id": payload.get("turn_id") if isinstance(payload.get("turn_id"), str) else "",
+                "spawn_observed": payload["hook_event_name"] == "SubagentStart",
+                "identity_observed": True,
+                "completion_observed": payload["hook_event_name"] == "SubagentStop",
                 "lineage_observed": False,
-                "enforcement": "monotonic_grants",
+                "enforcement": "session_concurrency_advisory",
             }
-        # Codex collaboration events are not part of the current tool-hook
-        # contract. Never infer them from an arbitrary tool name.
         return None
     except Exception:
         return None

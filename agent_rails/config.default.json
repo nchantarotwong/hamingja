@@ -36,6 +36,9 @@
       "max_credit_per_window": 12
     }
   },
+  "delegation": {
+    "max_active_children": 1
+  },
   "window": 12,
   "detectors": {
     "repetition": {

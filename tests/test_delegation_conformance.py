@@ -1,32 +1,54 @@
 from agent_rails.adapters.capabilities import delegation_observation, manifest
 
 
-def test_claude_task_proves_spawn_but_not_identity_completion_or_lineage():
+def test_claude_lifecycle_proves_identity_and_completion_not_lineage():
     observation = delegation_observation("claude_code", {
-        "tool_name": "Task",
-        "tool_input": {"prompt": "bounded review"},
+        "hook_event_name": "SubagentStart",
+        "session_id": "parent",
+        "agent_id": "agent-1",
+        "agent_type": "Explore",
+        "turn_id": "",
     })
     assert observation == {
         "event": "spawn",
+        "agent_id": "agent-1",
+        "agent_type": "Explore",
+        "session_id": "parent",
+        "turn_id": "",
         "spawn_observed": True,
-        "identity_observed": False,
+        "identity_observed": True,
         "completion_observed": False,
         "lineage_observed": False,
-        "enforcement": "monotonic_grants",
+        "enforcement": "session_concurrency_advisory",
     }
-    assert manifest("claude_code")["delegation_fallback"] == "monotonic_grants"
+    stopped = delegation_observation("claude_code", {
+        "hook_event_name": "SubagentStop", "session_id": "parent",
+        "agent_id": "agent-1", "agent_type": "Explore",
+    })
+    assert stopped["completion_observed"] is True
+    assert manifest("claude_code")["delegation_completion"] is True
 
 
-def test_codex_tool_hook_cannot_claim_collaboration_lineage():
+def test_codex_lifecycle_proves_identity_but_not_parent_lineage():
     payload = {
         "tool_name": "collaboration.spawn_agent",
         "parent_agent_id": "parent",
         "child_agent_id": "child",
     }
     assert delegation_observation("codex", payload) is None
+    observed = delegation_observation("codex", {
+        "hook_event_name": "SubagentStart",
+        "session_id": "parent",
+        "agent_id": "agent-2",
+        "agent_type": "review",
+        "turn_id": "turn-1",
+    })
+    assert observed["agent_id"] == "agent-2"
+    assert observed["lineage_observed"] is False
     caps = manifest("codex")
-    assert caps["delegation_spawn"] is False
-    assert caps["delegation_completion"] is False
+    assert caps["delegation_spawn"] is True
+    assert caps["delegation_completion"] is True
+    assert caps["delegation_identity"] is True
     assert caps["delegation_lineage"] is False
 
 

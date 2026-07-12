@@ -327,6 +327,14 @@ def _restrict_merge(baseline: dict, project) -> dict:
                         merged[tkey] = max(current, proposed)  # raise only
                 if merged:
                     tt[key] = merged
+    pdelegation = project.get("delegation")
+    if isinstance(pdelegation, dict):
+        delegation = out.setdefault("delegation", {})
+        if "max_active_children" in pdelegation:
+            delegation["max_active_children"] = max(
+                _to_int(delegation.get("max_active_children"), 1),
+                _to_int(pdelegation.get("max_active_children"), 1),
+            )
     return out
 
 
