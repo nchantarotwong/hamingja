@@ -11,6 +11,7 @@ def test_first_class_manifests_are_versioned_and_runtime_specific():
     assert claude["quota_probe"] is False
     assert codex["pre_tool_enforcement"] == "partial"
     assert claude["pre_tool_enforcement"] == "full"
+    assert codex["delegation_fallback"] == "monotonic_grants"
     assert CODEX_CAPABILITIES == codex
     assert CLAUDE_CAPABILITIES == claude
 

@@ -25,6 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from agent_rails.core.api import record  # noqa: E402
+from agent_rails.adapters.progress import record_workflow_progress  # noqa: E402
 
 
 def _looks_like_error(result) -> bool:
@@ -62,6 +63,7 @@ def main() -> int:
             ok = not _looks_like_error(result)
 
         record(session_id, tool, tool_input, ok, project_dir=cwd, output=result)
+        record_workflow_progress(session_id, tool, tool_input, result, project_dir=cwd)
     except Exception:
         pass  # never let recording surface an error to the agent
 

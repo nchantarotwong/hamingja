@@ -20,6 +20,7 @@ _MANIFESTS = {
         "delegation_spawn": False,
         "delegation_completion": False,
         "delegation_lineage": False,
+        "delegation_fallback": "monotonic_grants",
     },
     "claude_code": {
         "version": 1,
@@ -32,6 +33,7 @@ _MANIFESTS = {
         "delegation_spawn": True,
         "delegation_completion": False,
         "delegation_lineage": False,
+        "delegation_fallback": "monotonic_grants",
     },
 }
 
@@ -55,3 +57,24 @@ def manifest(runtime: str, downgrades: dict | None = None) -> dict:
         return base
     except Exception:
         return {}
+
+
+def delegation_observation(runtime: str, payload: object) -> dict | None:
+    """Return only delegation facts the runtime payload actually proves."""
+    try:
+        if not isinstance(payload, dict):
+            return None
+        if runtime == "claude_code" and str(payload.get("tool_name")) in {"Task", "Agent"}:
+            return {
+                "event": "spawn",
+                "spawn_observed": True,
+                "identity_observed": False,
+                "completion_observed": False,
+                "lineage_observed": False,
+                "enforcement": "monotonic_grants",
+            }
+        # Codex collaboration events are not part of the current tool-hook
+        # contract. Never infer them from an arbitrary tool name.
+        return None
+    except Exception:
+        return None
