@@ -39,8 +39,11 @@ class LifecycleResult:
 
 
 def _lifecycle(sink, operation: str, state: str, exit_code: int, **kwargs) -> int:
-    if isinstance(sink, list):
-        sink.append(LifecycleResult(1, operation, state, exit_code, **kwargs))
+    try:
+        if isinstance(sink, list):
+            sink.append(LifecycleResult(1, operation, state, exit_code, **kwargs))
+    except Exception:
+        pass  # structured reporting must never change the workflow result
     return exit_code
 
 

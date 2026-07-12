@@ -38,10 +38,13 @@ def _standalone_wrapper(tool_input: object, operation: object) -> bool:
         if not command or any(token in command for token in (";", "|", "&", "`", "$", ">", "<", "\n")):
             return False
         parts = shlex.split(command)
-        index = next(
-            i for i, part in enumerate(parts)
-            if PurePath(part).name == "agent-rails"
-        )
+        index = 0
+        if parts and PurePath(parts[0]).name == "timeout":
+            if len(parts) < 3 or not parts[1].rstrip("smh").replace(".", "", 1).isdigit():
+                return False
+            index = 2
+        if index >= len(parts) or PurePath(parts[index]).name != "agent-rails":
+            return False
         expected = {"ci_status": "ci-status", "pr_create": "pr-create", "pr_merge": "pr-merge"}.get(operation)
         return expected is not None and parts[index + 1] == expected and "--json" in parts[index + 2:]
     except Exception:

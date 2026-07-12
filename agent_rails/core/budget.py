@@ -624,6 +624,7 @@ def increment_and_check(
     cfg: dict,
     quota_reading=None,
     mechanical_signal: bool = False,
+    unattended_signal: bool = False,
 ) -> BudgetVerdict:
     """Atomically increment counters, persist, and return a verdict. Fail-open.
 
@@ -705,9 +706,10 @@ def increment_and_check(
         except (TypeError, ValueError):
             stall_window = 30.0
         since_progress = wc - float(state.get("weighted_at_last_progress", 0.0))
-        positive_danger = bool(mechanical_signal) or _quota_scarce(quota_reading, cfg)
+        positive_danger = mechanical_signal is True or _quota_scarce(quota_reading, cfg)
         if (stop_enabled and wc > hard_block_at and wc > approved_tc
-                and since_progress >= stall_window and (unconditional or positive_danger)):
+                and since_progress >= stall_window
+                and (unconditional or (positive_danger and unattended_signal is True))):
             hard_msg = (
                 f"[agent-rails budget] Hard limit: {_fmt_calls(wc, tc)}/{hard_block_at} weighted calls{type_tag}.\n\n"
                 f"Extend the budget:\n"

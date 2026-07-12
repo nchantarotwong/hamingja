@@ -660,7 +660,8 @@ def test_mechanical_signal_arms_rescoped_operator_stop():
     for _ in range(4):
         increment_and_check("mechanical-stop", "Edit", False, cfg)
     v = increment_and_check(
-        "mechanical-stop", "Edit", False, cfg, mechanical_signal=True
+        "mechanical-stop", "Edit", False, cfg,
+        mechanical_signal=True, unattended_signal=True,
     )
     assert v.action == BLOCK
     assert v.response == "operator_stop"
@@ -671,9 +672,32 @@ def test_fresh_scarcity_arms_rescoped_operator_stop():
     for _ in range(4):
         increment_and_check("scarce-stop", "Edit", False, cfg)
     v = increment_and_check(
-        "scarce-stop", "Edit", False, cfg, quota_reading=_Reading(90.0, 20.0)
+        "scarce-stop", "Edit", False, cfg,
+        quota_reading=_Reading(90.0, 20.0), unattended_signal=True,
     )
     assert v.action == BLOCK
+
+
+def test_positive_danger_without_unattended_proof_cannot_stop():
+    cfg = _rescoped_cfg(checkpoint_at=2, hard_block_at=4)
+    for _ in range(4):
+        increment_and_check("attended-danger", "Edit", False, cfg)
+    v = increment_and_check(
+        "attended-danger", "Edit", False, cfg,
+        quota_reading=_Reading(99.0, 99.0), mechanical_signal=True,
+    )
+    assert v.action != BLOCK
+
+
+def test_malformed_evidence_flags_cannot_arm_operator_stop():
+    cfg = _rescoped_cfg(checkpoint_at=2, hard_block_at=4)
+    for _ in range(4):
+        increment_and_check("bad-stop-flags", "Edit", False, cfg)
+    v = increment_and_check(
+        "bad-stop-flags", "Edit", False, cfg,
+        mechanical_signal="true", unattended_signal="true",  # type: ignore[arg-type]
+    )
+    assert v.action != BLOCK
 
 
 def test_malformed_quota_cannot_arm_operator_stop():

@@ -238,11 +238,15 @@ never imply scarcity and cannot arm a denial.
   `budget.quota_relief_below_pct` (default 50; `0` disables).
 
 The default operator stop is not an unconditional call ceiling. It requires
-work beyond the configured hard ceiling and stall window plus positive danger
-evidence: either a strong mechanical non-convergence signature or fresh measured
-quota scarcity. Call volume alone only advises. Trusted configuration may set
+work beyond the configured hard ceiling and stall window, proven unattended
+work, plus positive danger evidence: either a strong mechanical non-convergence
+signature or fresh measured quota scarcity. Call volume alone only advises.
+Trusted configuration may set
 `budget.operator_stop.unconditional: true`; repository configuration may relax
-or disable the stop but cannot tighten it.
+or disable the stop but cannot tighten it. Current Codex and Claude tool hooks
+do not prove operator-turn recency, so the conditional stop fails open to
+advisory behavior there until an adapter can supply that evidence.
+
 - **Claude Code** does not persist a rate-limit percent (it lives on API
   response headers), so its probe reports only **context occupancy** from the
   transcript's per-message `usage`. A nearly-full context window is re-sent every

@@ -70,6 +70,18 @@ def test_wrapper_pipeline_cannot_farm_lifecycle_credit(tmp_path, monkeypatch):
     assert record_workflow_progress(sid, "Bash", args, result, str(tmp_path)) is False
 
 
+def test_arbitrary_executable_prefix_cannot_spoof_wrapper(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    sid = "adapter-prefix-progress"
+    _seed(sid)
+    args = {"command": "fake-runner agent-rails pr-merge 12 --json"}
+    result = {"stdout": json.dumps({
+        "schema_version": 1, "operation": "pr_merge", "state": "merged",
+    })}
+    record(sid, "Bash", args, True, project_dir=str(tmp_path), output=result)
+    assert record_workflow_progress(sid, "Bash", args, result, str(tmp_path)) is False
+
+
 def test_stale_previous_event_cannot_anchor_current_wrapper(tmp_path, monkeypatch):
     monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
     sid = "adapter-stale-anchor"

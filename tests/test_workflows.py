@@ -1333,6 +1333,18 @@ def test_ci_status_exposes_pending_without_treating_it_as_unknown():
     assert outcome[0].pending == 1
 
 
+def test_throwing_lifecycle_sink_does_not_change_workflow_result():
+    class ThrowingList(list):
+        def append(self, value):
+            raise RuntimeError("broken telemetry")
+
+    runner = FakeRunner([RunResult(
+        ["gh", "pr", "checks", "--json", "name,state,link"], 0, "[]", "",
+    )])
+    rc, _ = _capture(ci_status, runner=runner, outcome=ThrowingList())
+    assert rc == 0
+
+
 def test_ci_status_rejects_malformed_check_items_without_crashing():
     runner = FakeRunner([
         RunResult(
