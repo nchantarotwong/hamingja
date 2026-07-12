@@ -51,6 +51,30 @@ def test_summarize_separates_would_block():
     assert s["blocks"] == 1
     assert s["by_detector"]["repetition"]["would_block"] == 1
     assert s["by_detector"]["error_streak"]["block"] == 1
+    assert s["by_response"] == {"observe": 3}
+    assert isinstance(s["first_ts"], float)
+    assert s["last_ts"] >= s["first_ts"]
+
+
+def test_summarize_malformed_timestamp_does_not_break_aggregates():
+    result = summarize([{
+        "session_id": "s", "detector": "repetition", "action": "nudge",
+        "response": "advise", "ts": "bad",
+    }])
+    assert result["total"] == 1
+    assert result["by_response"] == {"advise": 1}
+    assert result["first_ts"] is None
+
+
+def test_summarize_bounds_corrupt_labels_and_nonfinite_time():
+    result = summarize([{
+        "session_id": ["unhashable"], "detector": "x" * 1000,
+        "action": "nudge", "response": "y" * 1000, "ts": float("inf"),
+    }])
+    assert result["total"] == 1
+    assert len(next(iter(result["by_detector"]))) == 128
+    assert len(next(iter(result["by_response"]))) == 128
+    assert result["first_ts"] is None
 
 
 def test_corrupt_line_is_skipped():

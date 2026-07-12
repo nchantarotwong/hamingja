@@ -40,11 +40,13 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import math
 import os
 import re
 import subprocess
 import sys
 import tempfile
+import time
 from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Optional
@@ -81,12 +83,39 @@ from .templates import ROOT_TEMPLATE, read_template
 from .workflows import ci_failures, ci_preflight, ci_status, cleanup_after_merge, create_pr, merge_pr, test_summary, timed_runner
 
 
+def _nonnegative_finite_float(value: str) -> float:
+    try:
+        result = float(value)
+    except (TypeError, ValueError) as exc:
+        raise argparse.ArgumentTypeError("must be a number") from exc
+    if not math.isfinite(result) or result < 0:
+        raise argparse.ArgumentTypeError("must be a finite non-negative number")
+    return result
+
+
 def _cmd_report(args: argparse.Namespace) -> int:
     if args.reset:
         clear_audit()
         print("audit log cleared.")
         return 0
     entries = read_audit()
+    since_hours = getattr(args, "since_hours", None)
+    if since_hours is not None:
+        try:
+            hours = float(since_hours)
+            if not math.isfinite(hours) or hours < 0:
+                entries = []
+                hours = 0.0
+            cutoff = time.time() - hours * 3600
+            entries = [
+                entry for entry in entries if isinstance(entry, dict)
+                and isinstance(entry.get("ts"), (int, float))
+                and not isinstance(entry.get("ts"), bool)
+                and math.isfinite(float(entry.get("ts")))
+                and float(entry.get("ts")) >= cutoff
+            ]
+        except Exception:
+            entries = []
     if args.json:
         print(json.dumps(summarize(entries), indent=2, sort_keys=True))
         return 0
@@ -103,11 +132,18 @@ def _cmd_report(args: argparse.Namespace) -> int:
     print(f"  nudges:        {s['nudges']}")
     print(f"  would-block:   {s['would_blocks']}   (become BLOCKS when the relevant mode is enforce)")
     print(f"  blocks:        {s['blocks']}   (already enforced)")
+    if since_hours is not None:
+        print(f"  window:        last {since_hours:g} hour(s)")
     print()
     print(f"  {'detector':<16} {'nudge':>7} {'would-block':>13} {'block':>7}")
     print(f"  {'-' * 16} {'-' * 7} {'-' * 13} {'-' * 7}")
     for det, c in sorted(s["by_detector"].items()):
         print(f"  {det:<16} {c['nudge']:>7} {c['would_block']:>13} {c['block']:>7}")
+    if s["by_response"]:
+        print()
+        print("  response shapes: " + ", ".join(
+            f"{name}={count}" for name, count in sorted(s["by_response"].items())
+        ))
     return 0
 
 
@@ -1477,7 +1513,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     rep = sub.add_parser("report", help="tuning summary of recorded verdicts")
     rep.add_argument("--reset", action="store_true", help="clear the audit log")
-    rep.add_argument("--json", action="store_true", help="emit the raw summary as JSON")
+    rep.add_argument(
+        "--since-hours", type=_nonnegative_finite_float, metavar="HOURS",
+        help="summarize only timestamped local audit entries from the recent window",
+    )
+    rep.add_argument("--json", action="store_true", help="emit the aggregate summary as JSON")
     rep.set_defaults(func=_cmd_report)
 
     st = sub.add_parser("status", help="show resolved config for a directory")
