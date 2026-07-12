@@ -56,7 +56,9 @@ contents; `locate` consults that map first, then combines ripgrep hits when
 available with path/name relevance and simple block-boundary expansion. Both
 paths print bounded line ranges and read commands.
 `repo-health` surfaces large files, approximate unscoped-read token cost, and
-split-name hints. Repo-specific helpers such as `refs.sh` can still be better
+language-matched split-name hints. Generated/build/vendor trees are excluded;
+generated files elsewhere are labeled and receive no source-split advice.
+Repo-specific helpers such as `refs.sh` can still be better
 expert tools, but these commands are available everywhere.
 
 ### Ruled-out ledger

@@ -122,6 +122,32 @@ def test_repo_health_reports_large_files_and_split_hints(tmp_path):
     assert "pick_directory.py" in out
 
 
+def test_repo_health_split_hints_preserve_source_language(tmp_path):
+    path = tmp_path / "service.ts"
+    path.write_text("\n".join([
+        "class RequestRouter {}",
+        "function parseRequest() {}",
+        *[f"// filler {i}" for i in range(1000)],
+    ]), encoding="utf-8")
+    health = repo_health(tmp_path, min_lines=1000)
+    assert "requestrouter.ts" in health[0].suggestions
+    assert all(not item.endswith(".py") for item in health[0].suggestions)
+
+
+def test_generated_artifact_is_labeled_without_split_advice(tmp_path):
+    path = tmp_path / "schema.generated.ts"
+    path.write_text("\n".join([
+        "// AUTO-GENERATED; DO NOT EDIT",
+        "class GeneratedSchema {}",
+        *[f"// filler {i}" for i in range(1000)],
+    ]), encoding="utf-8")
+    health = repo_health(tmp_path, min_lines=1000)
+    out = format_repo_health(health, root=tmp_path)
+    assert health[0].generated is True
+    assert health[0].suggestions == []
+    assert "generated artifact; source split advice suppressed" in out
+
+
 def test_repo_health_reports_large_files_without_symbols(tmp_path):
     path = tmp_path / "notes.md"
     path.write_text("\n".join(f"plain line {i}" for i in range(1000)), encoding="utf-8")

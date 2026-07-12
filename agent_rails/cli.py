@@ -315,6 +315,7 @@ def _cmd_code_atlas(args: argparse.Namespace) -> int:
                 "files": [{
                     "path": str(item.path.relative_to(resolved)),
                     "line_count": item.line_count,
+                    "generated": item.generated,
                     "entries": [vars(entry) for entry in item.entries],
                 } for item in atlas],
             }, sort_keys=True))
@@ -345,6 +346,7 @@ def _cmd_repo_health(args: argparse.Namespace) -> int:
                     "path": str(item.path.relative_to(resolved)),
                     "line_count": item.line_count,
                     "estimated_tokens": item.estimated_tokens,
+                    "generated": item.generated,
                     "suggestions": item.suggestions,
                 } for item in health],
             }, sort_keys=True))
