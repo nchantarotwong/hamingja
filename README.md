@@ -32,6 +32,7 @@ agent-rails install           # installs for every harness it detects under ~/
 agent-rails install claude    # Claude Code   (alias for claude_code)
 agent-rails install codex     # Codex
 agent-rails install all       # both, regardless of what's already set up
+agent-rails uninstall all     # remove only agent-rails hooks; preserve others
 ```
 
 `agent-rails install` runs the bundled installer; with no argument it picks
@@ -42,6 +43,10 @@ resolved config for any directory, `agent-rails report` shows what has fired,
 `agent-rails locate` ranks small line ranges to inspect before reading large
 files, and `agent-rails init` generates a `CLAUDE.md` (+ `AGENTS.md` symlink)
 for the project's soft workflow rails.
+
+`agent-rails uninstall claude|codex|all` removes only recognized agent-rails
+hook commands, preserves every unrelated hook and setting, writes a backup only
+when it changes a file, and refuses to rewrite malformed configuration.
 
 ### Code locator
 
@@ -794,6 +799,9 @@ suite uses synthetic fixtures only.
 
 The architectural decisions and implementation record live in the
 [completed rescope document](docs/codex-claude-partner-rails-rescope.md).
+Release preparation is documented in the
+[release checklist](docs/release-checklist.md); notable changes are collected
+in [CHANGELOG.md](CHANGELOG.md).
 
 Known boundaries are explicit: Codex hook interception is partial; Claude does
 not expose subscription quota percentages; neither inline hook contract exposes

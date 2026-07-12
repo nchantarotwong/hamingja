@@ -1,6 +1,7 @@
 include LICENSE
 include NOTICE
 include README.md
+include CHANGELOG.md
 include agent_rails/config.default.json
 include agent_rails/adapters/claude_code/install.sh
 include agent_rails/adapters/codex/install.sh

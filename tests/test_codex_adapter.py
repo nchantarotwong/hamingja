@@ -289,6 +289,14 @@ def test_codex_install_merges_and_is_idempotent():
                     "matcher": "Bash",
                     "hooks": [{"type": "command", "command": "python /tmp/tripwire.py"}],
                 }],
+                "SubagentStart": [{
+                    "matcher": "*",
+                    "hooks": [{
+                        "type": "command",
+                        "command": "python /old/agent_rails/adapters/delegation.py",
+                        "statusMessage": "Recording agent-rails subagent start",
+                    }],
+                }],
             }
         }, f)
     env = os.environ.copy()
@@ -308,8 +316,24 @@ def test_codex_install_merges_and_is_idempotent():
     assert len(cfg["hooks"]["SubagentStop"]) == 1
     assert len(cfg["hooks"]["UserPromptSubmit"]) == 1
     assert "adapters/delegation.py" in cfg["hooks"]["SubagentStart"][0]["hooks"][0]["command"]
+    assert "/old/" not in cfg["hooks"]["SubagentStart"][0]["hooks"][0]["command"]
     assert cfg["hooks"]["PreToolUse"][0]["hooks"][0]["command"] == "python /tmp/tripwire.py"
     assert "already up to date" in second.stdout
+
+
+def test_codex_install_refuses_malformed_hooks():
+    d = tempfile.mkdtemp(prefix="agent-rails-codex-malformed-")
+    hooks_path = os.path.join(d, "hooks.json")
+    with open(hooks_path, "w", encoding="utf-8") as f:
+        f.write("not-json")
+    env = os.environ.copy()
+    env["CODEX_HOOKS"] = hooks_path
+    result = subprocess.run(["bash", INSTALL], text=True, capture_output=True, env=env)
+    assert result.returncode != 0
+    assert "refusing to modify malformed" in result.stderr
+    with open(hooks_path, encoding="utf-8") as f:
+        assert f.read() == "not-json"
+    assert not [name for name in os.listdir(d) if name.startswith("hooks.json.bak.")]
 
 
 if __name__ == "__main__":

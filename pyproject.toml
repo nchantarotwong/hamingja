@@ -1,14 +1,15 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-rails"
-version = "0.1.0"
-description = "Harness-neutral guardrails for LLM coding agents — detect and interrupt doom-loop / context-poisoning before it burns tokens."
+dynamic = ["version"]
+description = "Fail-open partner rails for Codex and Claude Code."
 readme = "README.md"
-requires-python = ">=3.9"
-license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "Nels Chantarotwong" }]
 keywords = ["llm", "agent", "guardrails", "claude-code", "codex", "safety"]
 
@@ -19,10 +20,15 @@ agent-rails = "agent_rails.cli:main"
 test = ["pytest>=9"]
 
 [project.urls]
-Homepage = "https://github.com/"
+Homepage = "https://github.com/nchantarotwong/agent-rails"
+Repository = "https://github.com/nchantarotwong/agent-rails.git"
+Issues = "https://github.com/nchantarotwong/agent-rails/issues"
 
 [tool.setuptools.packages.find]
 include = ["agent_rails*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "agent_rails.__version__"}
 
 [tool.setuptools.package-data]
 agent_rails = ["config.default.json"]

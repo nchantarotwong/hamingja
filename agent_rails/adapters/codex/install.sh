@@ -6,6 +6,7 @@
 #   PreToolUse  -> tripwire.py  (allow / nudge / block)
 #   PostToolUse -> record.py    (record success/error from tool_response)
 #   SubagentStart/Stop -> delegation.py (identity + active-child lifecycle)
+#   UserPromptSubmit -> operator_turn.py (prompt-free operator recency)
 # for matcher "*".
 #
 # Behavior:
@@ -13,8 +14,8 @@
 #   * Idempotent AND self-healing: an existing entry that references our script
 #     by basename is UPDATED in place, so moving the repo refreshes the path.
 #   * Backs up hooks.json ONLY when a change is actually written.
-#   * Default agent-rails mode is "observe" - nothing is blocked until
-#     AGENT_RAILS_MODE=enforce or trusted config sets mode=enforce.
+#   * Default detector mode is "observe"; operator resource authority is
+#     configured separately.
 #
 # Override the hooks path with CODEX_HOOKS=/path/to/hooks.json.
 set -euo pipefail
@@ -47,6 +48,7 @@ mkdir -p "$(dirname "$HOOKS")"
 BACKUP="$HOOKS.bak.$(date +%s).$$"
 cp "$HOOKS" "$BACKUP"
 
+set +e
 RESULT="$("$PYBIN" - "$HOOKS" "$PRE" "$POST" "$LIFECYCLE" "$OPERATOR" "$PYBIN" <<'PY'
 import json, os, sys
 
@@ -55,17 +57,22 @@ hooks_path, pre, post, lifecycle, operator, pybin = sys.argv[1:7]
 try:
     with open(hooks_path, encoding="utf-8") as fh:
         cfg = json.load(fh)
-    if not isinstance(cfg, dict):
-        cfg = {}
-except Exception:
-    cfg = {}
+except Exception as exc:
+    print(f"error: refusing to modify malformed hooks config: {exc}", file=sys.stderr)
+    raise SystemExit(2)
+if not isinstance(cfg, dict):
+    print("error: refusing to modify hooks config whose top level is not an object", file=sys.stderr)
+    raise SystemExit(2)
 
 before = json.dumps(cfg, sort_keys=True)
 
 hooks = cfg.get("hooks")
-if not isinstance(hooks, dict):
+if hooks is None:
     hooks = {}
     cfg["hooks"] = hooks
+elif not isinstance(hooks, dict):
+    print("error: refusing to modify config whose hooks field is not an object", file=sys.stderr)
+    raise SystemExit(2)
 
 
 def quote(p):
@@ -125,6 +132,16 @@ else:
     print("CHANGED")
 PY
 )"
+RC=$?
+set -e
+if [ "$RC" -ne 0 ]; then
+    if [ "$RC" -eq 2 ]; then
+        rm -f "$BACKUP"
+    else
+        echo "backup preserved after installer failure: $BACKUP" >&2
+    fi
+    exit "$RC"
+fi
 
 if [ "$RESULT" = "CHANGED" ]; then
     echo "updated:  $HOOKS"
@@ -134,8 +151,8 @@ else
     echo "no change: $HOOKS already up to date"
 fi
 
-echo "mode:     observe (nothing is blocked until you set mode=enforce)"
+echo "detectors: observe by default (operator resource authority is separate)"
 echo
 echo "Review/trust hooks in Codex with /hooks if prompted."
 echo "Opt out per repo: touch .agent-rails-off in that project's root."
-echo "Uninstall: remove the five agent-rails hook entries (or restore a backup)."
+echo "Uninstall: agent-rails uninstall codex"

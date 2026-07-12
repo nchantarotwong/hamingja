@@ -7,6 +7,7 @@
 #   PostToolUse       -> record.py    (record success, heuristic fallback)
 #   PostToolUseFailure-> record.py    (record failure, authoritative)
 #   SubagentStart/Stop-> delegation.py (identity + active-child lifecycle)
+#   UserPromptSubmit  -> operator_turn.py (prompt-free operator recency)
 # all for matcher "*".
 #
 # Behavior:
@@ -16,8 +17,8 @@
 #     refreshes the path instead of leaving a dead duplicate.
 #   * Backs up settings ONLY when a change is actually written (no backup litter
 #     on no-op re-runs).
-#   * Default mode is "observe" — nothing is blocked until you set
-#     "mode": "enforce" in config/config.default.json (or via AGENT_RAILS_MODE).
+#   * Default detector mode is "observe"; operator resource authority is
+#     configured separately.
 #
 # Override the settings path with CLAUDE_SETTINGS=/path/to/settings.json.
 set -euo pipefail
@@ -49,6 +50,7 @@ mkdir -p "$(dirname "$SETTINGS")"
 BACKUP="$SETTINGS.bak.$(date +%s).$$"
 cp "$SETTINGS" "$BACKUP"
 
+set +e
 RESULT="$("$PYBIN" - "$SETTINGS" "$PRE" "$POST" "$LIFECYCLE" "$OPERATOR" "$PYBIN" <<'PY'
 import json, os, sys
 
@@ -57,17 +59,22 @@ settings_path, pre, post, lifecycle, operator, pybin = sys.argv[1:7]
 try:
     with open(settings_path, encoding="utf-8") as fh:
         cfg = json.load(fh)
-    if not isinstance(cfg, dict):
-        cfg = {}
-except Exception:
-    cfg = {}
+except Exception as exc:
+    print(f"error: refusing to modify malformed settings: {exc}", file=sys.stderr)
+    raise SystemExit(2)
+if not isinstance(cfg, dict):
+    print("error: refusing to modify settings whose top level is not an object", file=sys.stderr)
+    raise SystemExit(2)
 
 before = json.dumps(cfg, sort_keys=True)
 
 hooks = cfg.get("hooks")
-if not isinstance(hooks, dict):
+if hooks is None:
     hooks = {}
     cfg["hooks"] = hooks
+elif not isinstance(hooks, dict):
+    print("error: refusing to modify settings whose hooks field is not an object", file=sys.stderr)
+    raise SystemExit(2)
 
 
 def quote(p):
@@ -89,7 +96,10 @@ def upsert(event, script):
         if not isinstance(hk, list):
             continue
         for h in hk:
-            if isinstance(h, dict) and base in str(h.get("command", "")):
+            if not isinstance(h, dict):
+                continue
+            cmd_text = str(h.get("command", "")).replace("\\", "/")
+            if base in cmd_text and "agent_rails/adapters/" in cmd_text:
                 h["command"] = cmd
                 h["type"] = "command"
                 return
@@ -113,6 +123,16 @@ else:
     print("CHANGED")
 PY
 )"
+RC=$?
+set -e
+if [ "$RC" -ne 0 ]; then
+    if [ "$RC" -eq 2 ]; then
+        rm -f "$BACKUP"
+    else
+        echo "backup preserved after installer failure: $BACKUP" >&2
+    fi
+    exit "$RC"
+fi
 
 if [ "$RESULT" = "CHANGED" ]; then
     echo "updated:  $SETTINGS"
@@ -122,7 +142,7 @@ else
     echo "no change: $SETTINGS already up to date"
 fi
 
-echo "mode:     observe (nothing is blocked until you set mode=enforce)"
+echo "detectors: observe by default (operator resource authority is separate)"
 echo
 echo "Opt out per repo: touch .agent-rails-off in that project's root."
-echo "Uninstall: remove the six agent-rails hook entries (or restore a backup)."
+echo "Uninstall: agent-rails uninstall claude"

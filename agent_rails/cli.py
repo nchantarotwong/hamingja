@@ -14,6 +14,7 @@ A thin operator-facing CLI over the same core the hooks use. Subcommands:
     agent-rails ledger ...          manage repo-local ruled-out records
     agent-rails budget ID [ACTION] inspect/add/reset session budget
     agent-rails install [HARNESS]  install hooks; no arg = all detected harnesses
+    agent-rails uninstall [HARNESS] remove only agent-rails hooks; preserve others
     agent-rails init [...]         compose a CLAUDE.md + AGENTS.md symlink from profiles
     agent-rails pr-create ...      create a PR with a body file
     agent-rails pr-merge PR        wait for CI checks, merge + poll + local cleanup
@@ -43,6 +44,8 @@ import json
 import math
 import os
 import re
+import shutil
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -537,6 +540,113 @@ def _cmd_install(args: argparse.Namespace) -> int:
         return _run_installs(list(_KNOWN_HARNESSES))
     actual = _HARNESS_ALIASES.get(harness, harness)
     return _run_installs([actual])
+
+
+_AGENT_RAILS_HOOK_SCRIPTS = {
+    "tripwire.py", "record.py", "delegation.py", "operator_turn.py",
+}
+
+
+def _is_agent_rails_hook(value: object) -> bool:
+    try:
+        if not isinstance(value, dict):
+            return False
+        command = str(value.get("command", "")).replace("\\", "/")
+        try:
+            command_parts = shlex.split(command)
+        except ValueError:
+            command_parts = []
+        path_match = (
+            "agent_rails/adapters/" in command
+            and any(Path(part).name in _AGENT_RAILS_HOOK_SCRIPTS for part in command_parts)
+        )
+        return path_match
+    except Exception:
+        return False
+
+
+def _uninstall_path(harness: str) -> Path:
+    if harness == "claude_code":
+        override = os.environ.get("CLAUDE_SETTINGS")
+        return Path(override) if override else Path.home() / ".claude" / "settings.json"
+    override = os.environ.get("CODEX_HOOKS")
+    return Path(override) if override else Path.home() / ".codex" / "hooks.json"
+
+
+def _uninstall_one(harness: str) -> int:
+    path = _uninstall_path(harness)
+    if not path.exists():
+        print(f"no change: {path} does not exist")
+        return 0
+    try:
+        cfg = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(cfg, dict):
+            raise ValueError("top-level config is not an object")
+        hooks = cfg.get("hooks")
+        if hooks is None:
+            print(f"no change: {path} has no hooks")
+            return 0
+        if not isinstance(hooks, dict):
+            raise ValueError("hooks is not an object")
+        changed = False
+        for event in list(hooks):
+            entries = hooks.get(event)
+            if not isinstance(entries, list):
+                continue
+            kept_entries = []
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    kept_entries.append(entry)
+                    continue
+                commands = entry.get("hooks")
+                if not isinstance(commands, list):
+                    kept_entries.append(entry)
+                    continue
+                kept_commands = [item for item in commands if not _is_agent_rails_hook(item)]
+                if len(kept_commands) != len(commands):
+                    changed = True
+                if kept_commands:
+                    clean_entry = dict(entry)
+                    clean_entry["hooks"] = kept_commands
+                    kept_entries.append(clean_entry)
+            if kept_entries:
+                hooks[event] = kept_entries
+            elif entries:
+                hooks.pop(event, None)
+        if not changed:
+            print(f"no change: {path} has no agent-rails hooks")
+            return 0
+        backup = Path(f"{path}.bak.uninstall.{int(time.time())}.{os.getpid()}")
+        shutil.copy2(path, backup)
+        path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+        print(f"updated:  {path}")
+        print(f"backup:   {backup}")
+        return 0
+    except Exception as exc:
+        print(f"error: refusing to modify malformed hook config {path}: {exc}", file=sys.stderr)
+        return 1
+
+
+def _cmd_uninstall(args: argparse.Namespace) -> int:
+    harness = args.harness
+    if harness is None:
+        detected = _detect_harnesses(Path.home())
+        if not detected:
+            print("no installed harness config detected")
+            return 0
+        targets = detected
+    elif harness == "all":
+        targets = list(_KNOWN_HARNESSES)
+    else:
+        targets = [_HARNESS_ALIASES.get(harness, harness)]
+    rc = 0
+    for index, target in enumerate(targets):
+        if len(targets) > 1:
+            if index:
+                print()
+            print(f"--- uninstalling for {target} ---")
+        rc = max(rc, _uninstall_one(target))
+    return rc
 
 
 def _cmd_pr_create_text(args: argparse.Namespace) -> int:
@@ -1506,7 +1616,7 @@ def _preview_action_for(path: Path, force: bool) -> str:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="agent-rails",
-        description="Harness-neutral guardrails for LLM coding agents.",
+        description="Fail-open partner rails for Codex and Claude Code.",
     )
     p.add_argument("--version", action="version", version=f"agent-rails {__version__}")
     sub = p.add_subparsers(dest="command")
@@ -1612,6 +1722,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="harness to install for; omit to auto-detect ~/.claude and ~/.codex",
     )
     ins.set_defaults(func=_cmd_install)
+
+    unins = sub.add_parser(
+        "uninstall",
+        help="remove only agent-rails hooks while preserving other harness config",
+    )
+    unins.add_argument(
+        "harness", nargs="?",
+        choices=["claude", "claude_code", "codex", "all"],
+        help="harness to uninstall; omit to use detected ~/.claude and ~/.codex",
+    )
+    unins.set_defaults(func=_cmd_uninstall)
 
     prc = sub.add_parser(
         "pr-create",

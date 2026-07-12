@@ -5,6 +5,7 @@ import stat
 import sys
 import tempfile
 from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -52,6 +53,49 @@ def test_commands_lists_workflow_wrappers():
     assert "agent-rails ci-preflight [pr]" in out
     assert "agent-rails ci-failures --pr <pr>" in out
     assert "sandbox escalation" in out
+
+
+def test_uninstall_preserves_other_hooks_and_is_idempotent(tmp_path, monkeypatch):
+    claude = tmp_path / "settings.json"
+    codex = tmp_path / "hooks.json"
+    for path in (claude, codex):
+        path.write_text(__import__("json").dumps({"hooks": {
+            "PreToolUse": [{"matcher": "*", "hooks": [
+                {"type": "command", "command": "echo keep"},
+                {"type": "command", "command": "echo labeled", "statusMessage": "Checking agent-rails"},
+                {"type": "command", "command": "python /repo/agent_rails/adapters/codex/notrecord.py"},
+                {"type": "command", "command": 'python "/repo/agent_rails/adapters/codex/tripwire.py"'},
+            ]}],
+            "Stop": [{"hooks": [{"type": "command", "command": "echo stop"}]}],
+        }}), encoding="utf-8")
+    monkeypatch.setenv("CLAUDE_SETTINGS", str(claude))
+    monkeypatch.setenv("CODEX_HOOKS", str(codex))
+
+    assert main(["uninstall", "all"]) == 0
+    for path in (claude, codex):
+        cfg = __import__("json").loads(path.read_text(encoding="utf-8"))
+        assert cfg["hooks"]["PreToolUse"][0]["hooks"] == [
+            {"type": "command", "command": "echo keep"},
+            {"type": "command", "command": "echo labeled", "statusMessage": "Checking agent-rails"},
+            {"type": "command", "command": "python /repo/agent_rails/adapters/codex/notrecord.py"},
+        ]
+        assert "Stop" in cfg["hooks"]
+        assert len(list(tmp_path.glob(f"{path.name}.bak.uninstall.*"))) == 1
+
+    assert main(["uninstall", "all"]) == 0
+    assert len(list(tmp_path.glob("*.bak.uninstall.*"))) == 2
+
+
+def test_uninstall_refuses_malformed_config(tmp_path, monkeypatch):
+    hooks = tmp_path / "hooks.json"
+    hooks.write_text("not-json", encoding="utf-8")
+    monkeypatch.setenv("CODEX_HOOKS", str(hooks))
+    err = io.StringIO()
+    with redirect_stderr(err):
+        rc = main(["uninstall", "codex"])
+    assert rc == 1
+    assert "refusing to modify malformed" in err.getvalue()
+    assert hooks.read_text(encoding="utf-8") == "not-json"
 
 
 def test_report_empty():

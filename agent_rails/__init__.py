@@ -1,4 +1,4 @@
-"""agent-rails — harness-neutral guardrails for LLM coding agents.
+"""agent-rails — fail-open partner rails for Codex and Claude Code.
 
 The core question every detector answers is "is this agent flailing rather
 than making progress?" — and the architecture keeps that question separate
@@ -9,9 +9,8 @@ from any particular agent harness:
     adapters/    thin per-harness glue (claude_code, generic, ...) — the I/O
 
 Add a guardrail = a new file in detectors/. Add a harness = a new folder in
-adapters/. Everything fails OPEN: any internal error defaults to allowing the
-tool call, never blocking it. A guardrail that bricks your sessions is worse
-than no guardrail.
+adapters/. Guardrail evaluation fails OPEN: internal uncertainty defaults to
+allowing the tool call, never inventing a denial.
 """
 
 __version__ = "0.1.0"
