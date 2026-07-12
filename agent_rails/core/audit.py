@@ -44,6 +44,14 @@ def log_verdict(session_id: str, tool: str, verdict: Verdict, cap: int = 5000) -
             "would_block": bool(getattr(verdict, "would_block", False)),
             "response": str(getattr(verdict, "response", "observe")),
         }
+        recovery = getattr(verdict, "recovery", None)
+        if isinstance(recovery, dict):
+            detector = recovery.get("detector")
+            signature = recovery.get("signature")
+            if isinstance(detector, str) and detector:
+                entry["recovery_detector"] = detector[:128]
+            if isinstance(signature, str) and signature:
+                entry["recovery_signature"] = signature[:1000]
         path = _audit_file()
         with path.open("a+", encoding="utf-8") as fh:
             _lock(fh, exclusive=True)

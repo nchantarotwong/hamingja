@@ -549,13 +549,16 @@ def _cmd_pr_create_text(args: argparse.Namespace) -> int:
     )
 
 
-def _workflow_json(operation: str, state: str, rc: int, detail: str = "") -> None:
+def _workflow_json(operation: str, state: str, rc: int, detail: str = "",
+                   *, resumable: bool = False, next_action: str = "") -> None:
     print(json.dumps({
         "schema_version": 1,
         "operation": operation,
         "state": state,
         "exit_code": rc,
         "detail": detail[:1000],
+        "resumable": bool(resumable),
+        "next_action": next_action[:500],
     }, sort_keys=True))
 
 
@@ -569,11 +572,15 @@ def _cmd_pr_create(args: argparse.Namespace) -> int:
         with redirect_stdout(captured):
             rc = _cmd_pr_create_text(args)
     except KeyboardInterrupt:
-        _workflow_json("pr_create", "interrupted", 130, "safe to rerun")
+        _workflow_json("pr_create", "interrupted", 130, "safe to rerun", resumable=True, next_action="rerun the same command")
         return 130
     state = outcome[-1].state if outcome else ("created" if rc == 0 else "failed")
     detail = outcome[-1].detail if outcome else captured.getvalue()
-    _workflow_json("pr_create", state, rc, detail)
+    _workflow_json(
+        "pr_create", state, rc, detail,
+        resumable=outcome[-1].resumable if outcome else rc != 0,
+        next_action=outcome[-1].next_action if outcome else ("fix the reported input, then rerun" if rc else ""),
+    )
     return rc
 
 
@@ -605,13 +612,17 @@ def _cmd_pr_merge(args: argparse.Namespace) -> int:
         with redirect_stdout(captured):
             rc = _cmd_pr_merge_text(args)
     except KeyboardInterrupt:
-        _workflow_json("pr_merge", "interrupted", 130, "safe to rerun; wrapper rechecks PR state")
+        _workflow_json("pr_merge", "interrupted", 130, "safe to rerun; wrapper rechecks PR state", resumable=True, next_action="rerun; wrapper rechecks PR state")
         return 130
     state = outcome[-1].state if outcome else (
         "merged" if rc == 0 else ("blocked" if rc == 2 else "failed")
     )
     detail = outcome[-1].detail if outcome else captured.getvalue()
-    _workflow_json("pr_merge", state, rc, detail)
+    _workflow_json(
+        "pr_merge", state, rc, detail,
+        resumable=outcome[-1].resumable if outcome else rc != 0,
+        next_action=outcome[-1].next_action if outcome else ("inspect the reported state, then rerun" if rc else ""),
+    )
     return rc
 
 
@@ -693,6 +704,10 @@ def _cmd_recover(args: argparse.Namespace) -> int:
         if not session_id:
             print("error: session id must not be empty", file=sys.stderr)
             return 2
+        session_id = "".join(
+            char if char.isalnum() or char in "-_" else "_"
+            for char in session_id
+        )[:256] or "default"
         if args.action == "reset":
             changed = _reset_detector_session(session_id)
             print(
@@ -704,7 +719,28 @@ def _cmd_recover(args: argparse.Namespace) -> int:
 
         state = _budget_read_state(session_id)
         events = _read_recent_events(session_id, 8)
+        latest_recovery = None
+        try:
+            for entry in reversed(read_audit(limit=100)):
+                if isinstance(entry, dict) and entry.get("session_id") == session_id:
+                    detector = entry.get("recovery_detector")
+                    signature = entry.get("recovery_signature")
+                    if isinstance(detector, str) and isinstance(signature, str):
+                        clean_detector = " ".join(detector.split())[:128]
+                        clean_signature = " ".join(signature.split())[:1000]
+                        if clean_detector and clean_signature:
+                            latest_recovery = (clean_detector, clean_signature)
+                        break
+        except Exception:
+            latest_recovery = None
         print(f"# agent-rails recovery handoff: {session_id}")
+        print("")
+        print("Last tripwire:")
+        if latest_recovery:
+            print(f"- detector: {latest_recovery[0]}")
+            print(f"- exact signature: {latest_recovery[1]}")
+        else:
+            print("none")
         print("")
         progress = state.get("last_progress") if isinstance(state, dict) else None
         print("Last observed progress:")
@@ -734,10 +770,12 @@ def _cmd_recover(args: argparse.Namespace) -> int:
         print("")
         print("Minimal next action:")
         print("- Run one materially different, read-only diagnostic.")
+        print("- Worktree reference: git status --short; git diff --stat")
         print("")
         print("Recovery commands:")
         print(f"- agent-rails recover {session_id} reset")
         print(f"- agent-rails budget {session_id} reset")
+        print(f"- Fresh session: agent-rails recover {session_id} handoff")
         return 0
     except Exception:
         print("Recovery packet unavailable; no state was changed.")

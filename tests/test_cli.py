@@ -484,17 +484,33 @@ def test_recover_handoff_is_bounded_and_reset_preserves_audit(tmp_path, monkeypa
     monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
     sid = "recover-cli"
     append_event(ToolEvent.record(sid, "Bash", {"command": "pytest"}, False))
+    log_verdict(sid, "Bash", Verdict(
+        BLOCK, "repetition", "blocked", response="tripwire",
+        recovery={"detector": "repetition", "signature": "exact-abc"},
+    ))
 
     out = _run(["recover", sid, "handoff"])
     assert "Recent mechanical signatures:" in out
     assert "Relevant ruled-out hypotheses:" in out
     assert "Minimal next action:" in out
+    assert "detector: repetition" in out
+    assert "exact signature: exact-abc" in out
+    assert "git diff --stat" in out
+    assert "Fresh session:" in out
     assert f"agent-rails recover {sid} reset" in out
 
     out = _run(["recover", sid, "reset"])
     assert "detector state cleared" in out
     assert "audit history preserved" in out
     assert read_recent(sid, 8) == []
+
+
+def test_recover_canonicalizes_untrusted_session_in_output(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    raw = "bad`\ncommand"
+    out = _run(["recover", raw, "handoff"])
+    assert raw not in out
+    assert "agent-rails recover bad__command reset" in out
 
 
 def test_pr_create_body_dash_reads_stdin_and_writes_temp_body():
@@ -636,6 +652,8 @@ def test_pr_create_json_reports_malformed_input_as_failed():
     assert payload["operation"] == "pr_create"
     assert payload["state"] == "failed"
     assert payload["exit_code"] == 2
+    assert payload["resumable"] is True
+    assert payload["next_action"]
 
 
 def test_pr_merge_json_reports_merged(monkeypatch):
