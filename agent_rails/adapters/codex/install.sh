@@ -5,6 +5,7 @@
 # Registers:
 #   PreToolUse  -> tripwire.py  (allow / nudge / block)
 #   PostToolUse -> record.py    (record success/error from tool_response)
+#   SubagentStart/Stop -> delegation.py (identity + active-child lifecycle)
 # for matcher "*".
 #
 # Behavior:
@@ -23,6 +24,7 @@ CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 HOOKS="${CODEX_HOOKS:-$CODEX_HOME/hooks.json}"
 PRE="$REPO_ROOT/agent_rails/adapters/codex/tripwire.py"
 POST="$REPO_ROOT/agent_rails/adapters/codex/record.py"
+LIFECYCLE="$REPO_ROOT/agent_rails/adapters/delegation.py"
 
 PYBIN="$(command -v python3 || command -v python || true)"
 if [ -z "$PYBIN" ]; then
@@ -44,10 +46,10 @@ mkdir -p "$(dirname "$HOOKS")"
 BACKUP="$HOOKS.bak.$(date +%s).$$"
 cp "$HOOKS" "$BACKUP"
 
-RESULT="$("$PYBIN" - "$HOOKS" "$PRE" "$POST" "$PYBIN" <<'PY'
+RESULT="$("$PYBIN" - "$HOOKS" "$PRE" "$POST" "$LIFECYCLE" "$PYBIN" <<'PY'
 import json, os, sys
 
-hooks_path, pre, post, pybin = sys.argv[1:5]
+hooks_path, pre, post, lifecycle, pybin = sys.argv[1:6]
 
 try:
     with open(hooks_path, encoding="utf-8") as fh:
@@ -73,7 +75,7 @@ def is_ours(h, base, status):
     cmd = str(h.get("command", "")).replace("\\", "/")
     return (
         base in cmd
-        and "agent_rails/adapters/codex/" in cmd
+        and "agent_rails/adapters/" in cmd
     ) or h.get("statusMessage") == status
 
 
@@ -108,6 +110,8 @@ def upsert(event, script, status):
 
 upsert("PreToolUse", pre, "Checking agent-rails")
 upsert("PostToolUse", post, "Recording agent-rails")
+upsert("SubagentStart", lifecycle, "Recording agent-rails subagent start")
+upsert("SubagentStop", lifecycle, "Recording agent-rails subagent stop")
 
 after = json.dumps(cfg, sort_keys=True)
 if after == before:
@@ -132,4 +136,4 @@ echo "mode:     observe (nothing is blocked until you set mode=enforce)"
 echo
 echo "Review/trust hooks in Codex with /hooks if prompted."
 echo "Opt out per repo: touch .agent-rails-off in that project's root."
-echo "Uninstall: remove the two agent-rails hook entries (or restore a backup)."
+echo "Uninstall: remove the four agent-rails hook entries (or restore a backup)."

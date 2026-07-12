@@ -62,6 +62,8 @@ from .core.budget import self_approve as _budget_self_approve
 from .core.budget import set_task_type as _budget_set_task_type
 from .core.state import read_recent as _read_recent_events
 from .core.state import reset_session as _reset_detector_session
+from .core.delegation import read_state as _delegation_read_state
+from .core.delegation import reset_state as _delegation_reset_state
 from .ledger import add_record as _ledger_add
 from .ledger import check_records as _ledger_check
 from .ledger import discover_root as _ledger_root
@@ -740,6 +742,19 @@ def _cmd_recover(args: argparse.Namespace) -> int:
     except Exception:
         print("Recovery packet unavailable; no state was changed.")
         return 0
+
+
+def _cmd_delegation(args: argparse.Namespace) -> int:
+    try:
+        if args.action == "reset":
+            changed = _delegation_reset_state(str(args.session_id))
+            print(f"delegation state {'cleared' if changed else 'already empty'}")
+            return 0
+        state = _delegation_read_state(str(args.session_id))
+        print(json.dumps(state, indent=2, sort_keys=True))
+    except Exception:
+        print("{}")
+    return 0
 
 
 def _cmd_budget(args: argparse.Namespace) -> int:
@@ -1721,6 +1736,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="handoff (default) or explicit detector-state reset",
     )
     recover.set_defaults(func=_cmd_recover)
+
+    delegation = sub.add_parser(
+        "delegation", help="show observed subagent lifecycle state for a session",
+    )
+    delegation.add_argument("session_id", help="parent session identifier")
+    delegation.add_argument("action", nargs="?", choices=["show", "reset"], default="show")
+    delegation.set_defaults(func=_cmd_delegation)
 
     return p
 
