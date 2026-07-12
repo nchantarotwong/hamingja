@@ -1,21 +1,25 @@
 # agent-rails
 
-Harness-neutral guardrails for LLM coding agents.
+Fail-open partner rails for Codex and Claude Code.
 
-When an agent's context gets *poisoned* — tool calls start chain-erroring, it
-conditions on its own failures, makes worse decisions, and loops — telling it
-to stop usually doesn't work, because the instruction is just more tokens in a
-context the failure pattern already dominates. The thing that's broken is the
-agent's judgment, so the circuit breaker has to live **outside** its judgment.
+agent-rails watches the tool-call stream for a small set of mechanically
+testable non-convergence signatures, keeps resource checkpoints distinct from
+those tripwires, and turns repetitive operational work into deterministic
+wrappers. It is designed to help an agent recover and finish—not to judge
+ordinary reasoning, enforce a preferred workflow, or stop work merely because
+a session is long.
 
-agent-rails is that circuit breaker: a deterministic monitor that watches the
-tool-call stream, detects the mechanical signature of flailing (not "errors" —
-**errors with no novelty**), and interrupts the loop before it burns tokens.
+The shipped system has four cooperating layers:
 
-Alongside those detectors, agent-rails also ships a soft layer of reusable
-workflow profiles — markdown rails for debugging, escalation, non-convergence,
-and review passes — that you drop into a project with `agent-rails init`. The
-detectors block; the profiles guide.
+- high-confidence tripwires for repetition, oscillation, and error streaks;
+- advisory-by-default resource budgets grounded in observed progress, operator
+  turns, and real quota signals when the runtime exposes them;
+- recovery, delegation, and observe-mode audit state with bounded local data;
+- soft instruction profiles and resumable PR/CI/navigation wrappers.
+
+The core event model is harness-neutral. Codex and Claude Code are the tested
+runtime promises; other loops can use the generic adapter on a best-effort
+basis. Every uncertain or malformed guardrail-evaluation path fails open.
 
 ---
 
@@ -91,7 +95,8 @@ error detection is by event, not by parsing an undocumented result shape), and
 `UserPromptSubmit` operator-turn anchor. The
 merge preserves your other hooks, is idempotent, self-heals a moved repo path,
 and backs up only when it actually changes something. Default mode is `observe`,
-so nothing is blocked until you flip to `enforce`.
+so mechanical detector blocks are downgraded while you tune them. Explicit
+operator resource boundaries remain separately configured.
 
 ### Codex
 
@@ -105,7 +110,9 @@ recorders, plus a prompt-free `UserPromptSubmit` operator-turn anchor. The
 merge preserves your other hooks, is idempotent,
 self-heals a moved repo path, and backs up only when it actually changes
 something. Codex may ask you to review/trust the new hooks with `/hooks`.
-Default mode is `observe`, so nothing is blocked until you flip to `enforce`.
+Default mode is `observe`, so mechanical detector blocks are downgraded while
+you tune them. Explicit operator resource boundaries remain separately
+configured.
 
 Codex hook coverage follows Codex's hook support: `PreToolUse` / `PostToolUse`
 currently cover Bash, `apply_patch`, and MCP tools, but not every possible
@@ -113,6 +120,21 @@ tool path. In particular, newer shell execution paths may bypass tool hooks;
 when Codex does not emit `PostToolUse`, agent-rails cannot observe that result,
 so the `error_streak` detector is best-effort for Codex. `repetition` still
 works for any `PreToolUse`-covered call.
+
+### Runtime capability boundary
+
+| Capability | Claude Code | Codex |
+|---|---|---|
+| Pre-tool interception | full hook coverage | partial; supported tool paths only |
+| Post-tool outcomes | success + explicit failure events | partial; only emitted hook paths |
+| Child spawn, identity, completion | observed | observed |
+| Parent-agent lineage | unavailable | unavailable |
+| Operator-turn recency | observed without storing prompt text | observed without storing prompt text |
+| Subscription quota percentage | unavailable; context occupancy only | available with bounded freshness |
+
+Parent lineage is intentionally not inferred from session IDs, turn IDs,
+timing, or transcript paths. Delegation depth therefore remains observe-only;
+see [the lineage investigation](docs/delegation-lineage-investigation.md).
 
 ---
 
@@ -122,7 +144,13 @@ A guardrail that fails *closed* — blocking tool calls because of its own bug �
 is worse than no guardrail, especially when installed globally across every
 project. So **every layer here fails open**: any error (unparseable input,
 unreadable state, a throwing detector, bad config) defaults to *allowing* the
-call. The only thing that ever blocks a call is an explicit, tested tripwire.
+call. The only things that ever block a call are an explicit, tested tripwire
+or an explicit, tested operator authority boundary.
+
+Fail-open here means “do not deny the agent's tool call because agent-rails
+failed.” Deterministic workflow wrappers still fail loudly and refuse an unsafe
+merge when external CI or PR state is unknown; returning a wrapper error is not
+the same as intercepting the caller's tool execution.
 
 ## What it detects
 
@@ -134,6 +162,11 @@ Ranked by signal quality (lowest false-positive rate first):
 | `leverage_fallback` | a configured semantic/freshness tool fails and the next command switches to weaker broad search over a configured protected target | inert until configured; catches fail-open bypasses without policing ordinary search |
 | `oscillation` | a short **cycle** (period 2–4) repeating — flipping between the same handful of calls | requires ≥2 distinct calls in the cycle (pure repetition is left to `repetition`), and ≥2 full laps, so a couple of coincidental back-and-forths don't trip it |
 | `error_streak` | consecutive errors with no success between | resets to zero on **any** success, so "failed → fixed → succeeded" never trips it |
+
+Workflow/resource detectors such as `workflow_wrapper`, `read_discipline`, and
+`python_command` are advisory-only. They can point toward a safer or cheaper
+path, but cannot become mechanical denials merely because global mode is
+`enforce`.
 
 `repetition` and `oscillation` **exempt read-only / idempotent tools**
 (`Read`, `Grep`, `Glob`, `LS`, `WebFetch`, …): re-reading a file or re-running
@@ -202,6 +235,7 @@ earns its calls back; granular *spinning* does not. Credit comes only from
 outcomes the agent cannot fake from narration:
 
 - a test or build going **red→green** (strongest),
+- the reported **failure set shrinking** for the exact same validation,
 - a real **error streak breaking** on a success,
 - a **clean validation** run with nothing already failing (smallest).
 
@@ -211,6 +245,11 @@ failure. Adapters and deterministic workflow wrappers may submit richer
 evidence with `record_progress()`. A claim earns credit only when its anchor
 matches a recent recorded argument/output hash and its kind-specific transition
 fields validate.
+
+The Codex and Claude adapters extract bounded failure counts from standalone
+pytest, unittest, Cargo, and Jest-family runs. They retain only the count and
+normalized validation identity—never command text or test output. A zero count
+is accepted only when the hook also proves the command succeeded.
 
 Tool success alone, a novel command, or a self-asserted "done" earn nothing —
 crediting those would refuel exactly the doom loop the budget exists to catch
@@ -269,15 +308,22 @@ checkpoint relief applies only where the rate-limit signal exists (Codex today).
 
 ## Graduated response, not a kill switch
 
-* **nudge** — inject an advisory into the agent's context ("3rd identical call;
-  change approach"). Non-blocking. This is just forcing the
-  state-then-hypothesis discipline at the right moment.
-* **block** — deny the call. A hard block is the only thing that reliably
-  interrupts the loop, because injected text can be ignored by a poisoned
-  context but a denied call cannot. Repetition blocks are deliberately stricter
-  than repetition nudges: incomplete tool payloads are not enforceable, and a
-  repeat needs strong evidence such as repeated errors or identical substantive
-  output.
+Configuration authority remains `off` / `observe` / `enforce`. Separately,
+verdict metadata describes what kind of response the evidence warrants:
+
+- **observe** — local audit only;
+- **advise** — concise, non-blocking context;
+- **checkpoint** — a bounded plan or recovery request, advisory unless trusted
+  operator configuration explicitly allows denial;
+- **tripwire** — deny one mechanically matched action while leaving recovery
+  actions available;
+- **operator_stop** — reserved for explicit operator resource boundaries and
+  gated by configured stall, unattended, and danger evidence unless trusted
+  configuration deliberately makes it unconditional.
+
+Incomplete payloads, missing runtime observations, malformed state, and call
+volume alone never justify a tripwire. Repetition enforcement requires strong
+evidence such as repeated failures or identical substantive output.
 
 A block must never **wedge** the agent. A denied call doesn't run, so it
 produces no result — which means a detector keyed on outcomes (`error_streak`)
@@ -290,10 +336,12 @@ diagnosis), while an identical *retry* still matches and stays blocked under
 
 ## Modes (safe rollout)
 
-* `observe` *(default)* — never blocks globally; emits a nudge carrying
-  `would_block`, so you can tune thresholds against your real workflow before
-  enforcing.
-* `enforce` — blocks for real.
+* `observe` *(default)* — downgrades mechanical detector blocks to nudges
+  carrying `would_block`, so you can tune thresholds against your real
+  workflow. It does not implicitly disable separately configured operator
+  resource boundaries.
+* `enforce` — permits individually reviewed mechanical detectors to block;
+  advisory-only workflow/resource detectors remain non-blocking.
 * `off` — disabled.
 
 Detector-level `mode` overrides the global mode. That lets you keep broad,
@@ -414,12 +462,16 @@ agent_rails/
                state.py    session-keyed rolling log (locked, fail-open)
                engine.py   run enabled detectors -> aggregate -> verdict
                api.py      check()/record() — the one entry point adapters call
+               budget.py   progress-aware operator resource state
+               progress.py admitted observed/structured progress evidence
+               delegation.py bounded child lifecycle state
                audit.py    verdict audit log behind observe mode (the report source)
   detectors/   base.py     Detector interface + Verdict   <-- HARD layer (can block)
                repetition.py, oscillation.py, error_streak.py
   config.py    config loading, trusted policy registry, trust model, sanitization
   config.default.json      packaged trusted defaults (ships in the wheel)
   adapters/    capabilities.py  versioned Codex/Claude observability manifests
+               progress.py / framework_progress.py  anchored workflow/test evidence
                claude_code/  PreToolUse tripwire + PostToolUse recorder + install.sh
                codex/        PreToolUse tripwire + PostToolUse recorder + install.sh
                generic/      observe()/check() for any custom agent loop
@@ -429,22 +481,19 @@ agent_rails/
 tests/         synthetic-sequence unit tests
 ```
 
-The detector core is pure and harness-agnostic. Each adapter only translates a
-harness's native payload into a `ToolEvent` and a verdict back into that
-harness's response. Two ingestion modes are supported by design:
-
-1. **Inline hook** (synchronous, *can block*) — e.g. the Claude Code adapter.
-2. **Transcript-tail / supervisor** (asynchronous, *observe + kill + notify*) —
-   the universal fallback for harnesses without pre-call hooks, and the basis
-   for an at-scale fleet watchdog. *(planned)*
+The detector core is pure and harness-agnostic. Each supported adapter
+translates native hook payloads into `ToolEvent` records and verdicts back into
+the runtime's response shape. The generic `check()` / `observe()` adapter is
+available for custom loops, but agent-rails does not claim a transcript-tail
+supervisor or complete enforcement for runtimes whose hooks omit tool paths.
 
 ---
 
 ## Soft workflow layer (profiles + `init`)
 
-The detectors above are the **hard** layer: deterministic, mechanical, can
-block. Sitting next to them — and deliberately off the hot path — is a
-**soft** layer of reusable agent-facing workflow rails:
+The mechanical tripwires above are the **hard** layer. Advisory detectors and
+the reusable agent-facing workflow profiles sit beside them without acquiring
+hidden enforcement authority. The profiles are deliberately off the hot path:
 
 ```
 agent_rails/profiles/   # pure markdown, no runtime
@@ -737,22 +786,20 @@ carry private repo internals into history.
 
 ## Status
 
-Early. Core + `repetition`/`oscillation`/`error_streak` detectors + read-only
-exemption + verdict audit log & `agent-rails report` + Claude Code, Codex, and
-generic adapters + soft workflow profile layer & `agent-rails init` (writes
-`CLAUDE.md`, symlinks `AGENTS.md`). The transcript-tail supervisor is planned.
+The Codex + Claude partner-rails rescope is complete. The public compatibility
+promise covers the harness-neutral core, installed Codex and Claude hooks,
+observe-mode audit/recovery, progress-aware operator budgets, bounded child
+lifecycle advisories, navigation, and deterministic workflow wrappers. The
+suite uses synthetic fixtures only.
 
-Two detectors from the roadmap are deliberately **not** shipped yet, to keep the
-"lowest false-positive first" promise intact:
+The architectural decisions and implementation record live in the
+[completed rescope document](docs/codex-claude-partner-rails-rescope.md).
 
-* **near-duplicate by target** (same tool hammering the same file with slightly
-  varied args) — iterative editing of one file is legitimate, so a naive
-  version false-positives; it needs a target signature on the event and a
-  careful threshold before it's safe to enable by default.
-* **same-error-message recurrence** — high signal, but it depends on the
-  per-tool result payload, whose shape is undocumented; agent-rails detects
-  errors *by event* precisely to avoid parsing that. Adding it means committing
-  to a payload heuristic.
+Known boundaries are explicit: Codex hook interception is partial; Claude does
+not expose subscription quota percentages; neither inline hook contract exposes
+parent-agent lineage; and agent-rails does not infer semantic correctness or
+police ordinary reasoning. Those gaps fail open rather than being filled with
+timing, transcript, or payload guesses.
 
 ## License
 
