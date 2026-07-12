@@ -68,6 +68,7 @@ def test_uninstall_preserves_other_hooks_and_is_idempotent(tmp_path, monkeypatch
             ]}],
             "Stop": [{"hooks": [{"type": "command", "command": "echo stop"}]}],
         }}), encoding="utf-8")
+        path.chmod(0o640)
     monkeypatch.setenv("CLAUDE_SETTINGS", str(claude))
     monkeypatch.setenv("CODEX_HOOKS", str(codex))
 
@@ -80,6 +81,7 @@ def test_uninstall_preserves_other_hooks_and_is_idempotent(tmp_path, monkeypatch
             {"type": "command", "command": "python /repo/agent_rails/adapters/codex/notrecord.py"},
         ]
         assert "Stop" in cfg["hooks"]
+        assert stat.S_IMODE(path.stat().st_mode) == 0o640
         assert len(list(tmp_path.glob(f"{path.name}.bak.uninstall.*"))) == 1
 
     assert main(["uninstall", "all"]) == 0
@@ -96,6 +98,24 @@ def test_uninstall_refuses_malformed_config(tmp_path, monkeypatch):
     assert rc == 1
     assert "refusing to modify malformed" in err.getvalue()
     assert hooks.read_text(encoding="utf-8") == "not-json"
+
+
+def test_uninstall_preserves_symlinked_config(tmp_path, monkeypatch):
+    target = tmp_path / "dotfiles" / "hooks.json"
+    target.parent.mkdir()
+    target.write_text(__import__("json").dumps({"hooks": {
+        "PreToolUse": [{"hooks": [{
+            "type": "command",
+            "command": "python /repo/agent_rails/adapters/codex/tripwire.py",
+        }]}],
+    }}), encoding="utf-8")
+    hooks = tmp_path / "hooks.json"
+    hooks.symlink_to(target)
+    monkeypatch.setenv("CODEX_HOOKS", str(hooks))
+
+    assert main(["uninstall", "codex"]) == 0
+    assert hooks.is_symlink()
+    assert __import__("json").loads(target.read_text(encoding="utf-8"))["hooks"] == {}
 
 
 def test_report_empty():

@@ -25,14 +25,26 @@ basis. Every uncertain or malformed guardrail-evaluation path fails open.
 
 ## Install
 
+Python 3.13 or newer is required. For a global command used by every agent
+session, `pipx` keeps agent-rails isolated from project environments:
+
 ```bash
-pip install -e .              # or: pip install agent-rails (once published)
+pipx install --python python3.13 agent-rails
 agent-rails install           # installs for every harness it detects under ~/
 # or, explicitly:
 agent-rails install claude    # Claude Code   (alias for claude_code)
 agent-rails install codex     # Codex
 agent-rails install all       # both, regardless of what's already set up
 agent-rails uninstall all     # remove only agent-rails hooks; preserve others
+```
+
+Until the package is published, install from a checkout instead:
+
+```bash
+git clone https://github.com/nchantarotwong/agent-rails.git
+cd agent-rails
+pipx install --python python3.13 --editable .
+agent-rails install
 ```
 
 `agent-rails install` runs the bundled installer; with no argument it picks
@@ -47,6 +59,11 @@ for the project's soft workflow rails.
 `agent-rails uninstall claude|codex|all` removes only recognized agent-rails
 hook commands, preserves every unrelated hook and setting, writes a backup only
 when it changes a file, and refuses to rewrite malformed configuration.
+
+To upgrade, run `pipx upgrade agent-rails` (or reinstall the editable checkout),
+then `agent-rails install all` to refresh hook paths. Claude and Codex processes
+cache hook commands for the life of a session or application process; restart
+running sessions after changing the Python installation or hook paths.
 
 ### Code locator
 
@@ -659,7 +676,7 @@ From the agent-rails checkout:
 
 ```bash
 cd ~/dev/agent-rails
-pip install -e .          # or: pipx install -e .
+pipx install --python python3.13 --editable .
 agent-rails install       # installs for whichever of claude_code / codex is on this machine
 ```
 

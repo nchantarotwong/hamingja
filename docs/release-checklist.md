@@ -28,7 +28,9 @@ external, irreversible actions and require explicit operator confirmation.
    install, repeat install (no change/no extra backup), upgrade from old
    agent-rails paths, and uninstall while preserving unrelated hooks.
 7. Verify README links, package metadata, Python requirement, and the installed
-   `agent-rails init --dry-run` output.
+   `agent-rails init --dry-run` output. Confirm the documented pipx install,
+   upgrade, hook refresh, process restart, and uninstall guidance matches the
+   built artifact.
 8. Review the final diff and distribution metadata. Confirm the worktree has no
    captured sessions, local state, or unrelated files.
 9. After explicit approval, publish the immutable artifacts and create the

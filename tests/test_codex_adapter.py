@@ -336,6 +336,36 @@ def test_codex_install_refuses_malformed_hooks():
     assert not [name for name in os.listdir(d) if name.startswith("hooks.json.bak.")]
 
 
+def test_codex_install_refuses_malformed_managed_event():
+    d = tempfile.mkdtemp(prefix="agent-rails-codex-malformed-event-")
+    hooks_path = os.path.join(d, "hooks.json")
+    original = json.dumps({"hooks": {"PostToolUse": "unexpected"}})
+    with open(hooks_path, "w", encoding="utf-8") as f:
+        f.write(original)
+    env = os.environ.copy()
+    env["CODEX_HOOKS"] = hooks_path
+    result = subprocess.run(["bash", INSTALL], text=True, capture_output=True, env=env)
+    assert result.returncode != 0
+    assert "refusing to replace malformed PostToolUse" in result.stderr
+    with open(hooks_path, encoding="utf-8") as f:
+        assert f.read() == original
+    assert not [name for name in os.listdir(d) if name.startswith("hooks.json.bak.")]
+
+
+def test_codex_install_preserves_symlinked_hooks(tmp_path):
+    target = tmp_path / "dotfiles" / "hooks.json"
+    target.parent.mkdir()
+    target.write_text('{"hooks": {}}', encoding="utf-8")
+    hooks = tmp_path / "hooks.json"
+    hooks.symlink_to(target)
+    env = os.environ.copy()
+    env["CODEX_HOOKS"] = str(hooks)
+    result = subprocess.run(["bash", INSTALL], text=True, capture_output=True, env=env)
+    assert result.returncode == 0
+    assert hooks.is_symlink()
+    assert "PreToolUse" in json.loads(target.read_text(encoding="utf-8"))["hooks"]
+
+
 if __name__ == "__main__":
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from _run import run_module_tests

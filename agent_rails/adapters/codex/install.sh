@@ -50,9 +50,10 @@ cp "$HOOKS" "$BACKUP"
 
 set +e
 RESULT="$("$PYBIN" - "$HOOKS" "$PRE" "$POST" "$LIFECYCLE" "$OPERATOR" "$PYBIN" <<'PY'
-import json, os, sys
+import json, os, shlex, sys, tempfile
 
 hooks_path, pre, post, lifecycle, operator, pybin = sys.argv[1:7]
+hooks_path = os.path.realpath(hooks_path)
 
 try:
     with open(hooks_path, encoding="utf-8") as fh:
@@ -80,20 +81,31 @@ def quote(p):
 
 
 def is_ours(h, base, status):
-    cmd = str(h.get("command", "")).replace("\\", "/")
-    return (
-        base in cmd
-        and "agent_rails/adapters/" in cmd
-    ) or h.get("statusMessage") == status
+    try:
+        parts = shlex.split(str(h.get("command", "")))
+    except ValueError:
+        return False
+    command_matches = any(
+        os.path.basename(part) == base
+        and "agent_rails/adapters/" in part.replace("\\", "/")
+        for part in parts
+    )
+    return command_matches or (
+        h.get("statusMessage") == status
+        and "agent-rails" in str(h.get("statusMessage", ""))
+    )
 
 
 def upsert(event, script, status):
     cmd = quote(pybin) + " " + quote(script)
     base = os.path.basename(script)
     entries = hooks.get(event)
-    if not isinstance(entries, list):
+    if entries is None:
         entries = []
         hooks[event] = entries
+    elif not isinstance(entries, list):
+        print(f"error: refusing to replace malformed {event} hooks", file=sys.stderr)
+        raise SystemExit(2)
     for matcher_obj in entries:
         if not isinstance(matcher_obj, dict):
             continue
@@ -126,9 +138,22 @@ after = json.dumps(cfg, sort_keys=True)
 if after == before:
     print("UNCHANGED")
 else:
-    with open(hooks_path, "w", encoding="utf-8") as fh:
-        json.dump(cfg, fh, indent=2)
-        fh.write("\n")
+    directory = os.path.dirname(hooks_path) or "."
+    fd, temporary = tempfile.mkstemp(prefix=".agent-rails-install-", dir=directory)
+    try:
+        os.fchmod(fd, os.stat(hooks_path).st_mode & 0o7777)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(cfg, fh, indent=2)
+            fh.write("\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(temporary, hooks_path)
+    except Exception:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
     print("CHANGED")
 PY
 )"

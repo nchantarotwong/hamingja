@@ -52,9 +52,10 @@ cp "$SETTINGS" "$BACKUP"
 
 set +e
 RESULT="$("$PYBIN" - "$SETTINGS" "$PRE" "$POST" "$LIFECYCLE" "$OPERATOR" "$PYBIN" <<'PY'
-import json, os, sys
+import json, os, shlex, sys, tempfile
 
 settings_path, pre, post, lifecycle, operator, pybin = sys.argv[1:7]
+settings_path = os.path.realpath(settings_path)
 
 try:
     with open(settings_path, encoding="utf-8") as fh:
@@ -81,13 +82,28 @@ def quote(p):
     return '"' + p.replace('\\', '\\\\').replace('"', '\\"') + '"'
 
 
+def owns_command(value, base):
+    try:
+        parts = shlex.split(str(value))
+    except ValueError:
+        return False
+    return any(
+        os.path.basename(part) == base
+        and "agent_rails/adapters/" in part.replace("\\", "/")
+        for part in parts
+    )
+
+
 def upsert(event, script):
     cmd = quote(pybin) + " " + quote(script)
     base = os.path.basename(script)
     entries = hooks.get(event)
-    if not isinstance(entries, list):
+    if entries is None:
         entries = []
         hooks[event] = entries
+    elif not isinstance(entries, list):
+        print(f"error: refusing to replace malformed {event} hooks", file=sys.stderr)
+        raise SystemExit(2)
     # refresh any existing entry that references our script (by basename)
     for matcher_obj in entries:
         if not isinstance(matcher_obj, dict):
@@ -98,8 +114,7 @@ def upsert(event, script):
         for h in hk:
             if not isinstance(h, dict):
                 continue
-            cmd_text = str(h.get("command", "")).replace("\\", "/")
-            if base in cmd_text and "agent_rails/adapters/" in cmd_text:
+            if owns_command(h.get("command", ""), base):
                 h["command"] = cmd
                 h["type"] = "command"
                 return
@@ -117,9 +132,22 @@ after = json.dumps(cfg, sort_keys=True)
 if after == before:
     print("UNCHANGED")
 else:
-    with open(settings_path, "w", encoding="utf-8") as fh:
-        json.dump(cfg, fh, indent=2)
-        fh.write("\n")
+    directory = os.path.dirname(settings_path) or "."
+    fd, temporary = tempfile.mkstemp(prefix=".agent-rails-install-", dir=directory)
+    try:
+        os.fchmod(fd, os.stat(settings_path).st_mode & 0o7777)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(cfg, fh, indent=2)
+            fh.write("\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(temporary, settings_path)
+    except Exception:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
     print("CHANGED")
 PY
 )"

@@ -618,7 +618,24 @@ def _uninstall_one(harness: str) -> int:
             return 0
         backup = Path(f"{path}.bak.uninstall.{int(time.time())}.{os.getpid()}")
         shutil.copy2(path, backup)
-        path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+        write_path = path.resolve() if path.is_symlink() else path
+        temporary: Path | None = None
+        try:
+            fd, name = tempfile.mkstemp(
+                prefix=".agent-rails-uninstall-", dir=write_path.parent
+            )
+            temporary = Path(name)
+            os.fchmod(fd, write_path.stat().st_mode & 0o7777)
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(cfg, fh, indent=2)
+                fh.write("\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(temporary, write_path)
+        except Exception:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+            raise
         print(f"updated:  {path}")
         print(f"backup:   {backup}")
         return 0
