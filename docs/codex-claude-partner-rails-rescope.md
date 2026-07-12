@@ -1,7 +1,7 @@
 # Codex + Claude Partner Rails Rescope
 
-Status: accepted direction — architectural consensus reached 2026-07-11  
-Audience: human operator, Codex, Claude  
+Status: accepted direction — architectural consensus reached 2026-07-11
+Audience: human operator, Codex, Claude
 Scope: first-class support for Codex and Claude coding-agent runtimes
 
 ## Purpose
