@@ -6,6 +6,8 @@ external, irreversible actions and require explicit operator confirmation.
 1. Choose the version and update `agent_rails.__version__` plus the changelog
    heading/date.
 2. Run the full synthetic suite with pipefail and retain `.pytest_output.log`.
+   Use Python 3.13, the declared minimum; `python:3.13-slim` is the preferred
+   container smoke environment when container validation is available.
 3. Build both distributions in isolation:
 
    ```bash
@@ -31,4 +33,3 @@ external, irreversible actions and require explicit operator confirmation.
    captured sessions, local state, or unrelated files.
 9. After explicit approval, publish the immutable artifacts and create the
    corresponding signed/annotated tag and release notes.
-

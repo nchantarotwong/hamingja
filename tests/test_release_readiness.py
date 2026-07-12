@@ -8,11 +8,11 @@ import agent_rails
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_declared_python_floor_parses_all_package_sources():
+def test_declared_python_floor_matches_test_runtime_and_parses_sources():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'requires-python = ">=3.10"' in pyproject
+    assert 'requires-python = ">=3.13"' in pyproject
     for path in (ROOT / "agent_rails").rglob("*.py"):
-        ast.parse(path.read_text(encoding="utf-8"), filename=str(path), feature_version=(3, 10))
+        ast.parse(path.read_text(encoding="utf-8"), filename=str(path), feature_version=(3, 13))
 
 
 def test_release_metadata_has_real_urls_and_single_version_source():

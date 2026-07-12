@@ -4,6 +4,7 @@ All notable changes to agent-rails are recorded here.
 
 ## 0.1.0 - Unreleased
 
+- Establish Python 3.13 as the supported runtime floor.
 - Add fail-open mechanical tripwires and observe/enforce rollout controls.
 - Add progress-aware operator budgets, quota/context signals, operator-turn
   recency, bounded approvals, and recovery handoffs.
@@ -14,4 +15,3 @@ All notable changes to agent-rails are recorded here.
 - Add deterministic navigation, ledger, PR, CI, cleanup, and test-summary
   workflows with structured resumable states.
 - Add preserving, idempotent hook installation and uninstall for both runtimes.
-
