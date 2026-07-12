@@ -499,7 +499,7 @@ def _cmd_install(args: argparse.Namespace) -> int:
     return _run_installs([actual])
 
 
-def _cmd_pr_create(args: argparse.Namespace) -> int:
+def _cmd_pr_create_text(args: argparse.Namespace) -> int:
     runner = timed_runner(args.command_timeout)
     if args.body is not None and args.body != "-":
         print("pr create")
@@ -526,6 +526,7 @@ def _cmd_pr_create(args: argparse.Namespace) -> int:
                 remote=args.remote,
                 draft=args.draft,
                 runner=runner,
+                outcome=getattr(args, "_outcome", None),
             )
         finally:
             try:
@@ -540,10 +541,39 @@ def _cmd_pr_create(args: argparse.Namespace) -> int:
         remote=args.remote,
         draft=args.draft,
         runner=runner,
+        outcome=getattr(args, "_outcome", None),
     )
 
 
-def _cmd_pr_merge(args: argparse.Namespace) -> int:
+def _workflow_json(operation: str, state: str, rc: int, detail: str = "") -> None:
+    print(json.dumps({
+        "schema_version": 1,
+        "operation": operation,
+        "state": state,
+        "exit_code": rc,
+        "detail": detail[:1000],
+    }, sort_keys=True))
+
+
+def _cmd_pr_create(args: argparse.Namespace) -> int:
+    if not args.json:
+        return _cmd_pr_create_text(args)
+    captured = io.StringIO()
+    outcome = []
+    args._outcome = outcome
+    try:
+        with redirect_stdout(captured):
+            rc = _cmd_pr_create_text(args)
+    except KeyboardInterrupt:
+        _workflow_json("pr_create", "interrupted", 130, "safe to rerun")
+        return 130
+    state = outcome[-1].state if outcome else ("created" if rc == 0 else "failed")
+    detail = outcome[-1].detail if outcome else captured.getvalue()
+    _workflow_json("pr_create", state, rc, detail)
+    return rc
+
+
+def _cmd_pr_merge_text(args: argparse.Namespace) -> int:
     runner = timed_runner(args.command_timeout)
     return merge_pr(
         args.pr,
@@ -557,7 +587,28 @@ def _cmd_pr_merge(args: argparse.Namespace) -> int:
         ci_poll_s=args.ci_poll,
         skip_ci_reason=args.skip_ci_reason,
         runner=runner,
+        outcome=getattr(args, "_outcome", None),
     )
+
+
+def _cmd_pr_merge(args: argparse.Namespace) -> int:
+    if not args.json:
+        return _cmd_pr_merge_text(args)
+    captured = io.StringIO()
+    outcome = []
+    args._outcome = outcome
+    try:
+        with redirect_stdout(captured):
+            rc = _cmd_pr_merge_text(args)
+    except KeyboardInterrupt:
+        _workflow_json("pr_merge", "interrupted", 130, "safe to rerun; wrapper rechecks PR state")
+        return 130
+    state = outcome[-1].state if outcome else (
+        "merged" if rc == 0 else ("blocked" if rc == 2 else "failed")
+    )
+    detail = outcome[-1].detail if outcome else captured.getvalue()
+    _workflow_json("pr_merge", state, rc, detail)
+    return rc
 
 
 def _cmd_post_merge_cleanup(args: argparse.Namespace) -> int:
@@ -1472,6 +1523,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="create a GitHub PR using --body-file to avoid shell quoting hazards",
     )
     prc.add_argument("--title", required=True, help="PR title")
+    prc.add_argument("--json", action="store_true", help="emit a versioned lifecycle state")
     pr_body = prc.add_mutually_exclusive_group(required=True)
     pr_body.add_argument("--body-file", help="path to the PR body markdown file")
     pr_body.add_argument("--body", help="PR body source; pass '-' to read from stdin")
@@ -1499,6 +1551,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="merge method (default: squash)",
     )
     prm.add_argument("--no-cleanup", action="store_true", help="skip local post-merge cleanup")
+    prm.add_argument("--json", action="store_true", help="emit a versioned lifecycle state")
     prm.add_argument(
         "--skip-ci-reason",
         help="bypass the CI gate; auditable reason for a local-validation-only merge",

@@ -159,6 +159,7 @@ def create_pr(
     remote: str = "origin",
     draft: bool = False,
     runner: Runner = default_runner,
+    outcome: Optional[list[LifecycleResult]] = None,
 ) -> int:
     """Create a PR using --body-file so shell quoting cannot mangle the body."""
     lines = ["pr create"]
@@ -257,7 +258,7 @@ def create_pr(
     if url:
         lines.append(f"- url: {url}")
     _print_lines(lines)
-    return 0
+    return _lifecycle(outcome, "pr_create", "created", 0, detail=url)
 
 
 def _git_current_branch(runner: Runner) -> Optional[str]:
@@ -381,6 +382,7 @@ def merge_pr(
     skip_ci_reason: Optional[str] = None,
     runner: Runner = default_runner,
     sleeper: Callable[[float], None] = time.sleep,
+    outcome: Optional[list[LifecycleResult]] = None,
 ) -> int:
     """Gate on CI, merge a PR via gh, wait for MERGED, then clean local state."""
     lines = [f"pr merge {pr}"]
@@ -476,9 +478,12 @@ def merge_pr(
         )
         lines.extend(cleanup_lines)
         _print_lines(lines)
-        return cleanup_rc
+        return _lifecycle(
+            outcome, "pr_merge", "merged", cleanup_rc,
+            detail="local cleanup failed" if cleanup_rc else "",
+        )
     _print_lines(lines)
-    return 0
+    return _lifecycle(outcome, "pr_merge", "merged", 0)
 
 
 FAILING_CHECK_STATES = {"FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"}

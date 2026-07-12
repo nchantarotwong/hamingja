@@ -627,6 +627,39 @@ def test_ci_status_json_emits_only_versioned_lifecycle(monkeypatch):
     assert "human text" not in out
 
 
+def test_pr_create_json_reports_malformed_input_as_failed():
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = main(["pr-create", "--title", "T", "--body", "literal", "--json"])
+    payload = __import__("json").loads(buf.getvalue())
+    assert rc == 2
+    assert payload["operation"] == "pr_create"
+    assert payload["state"] == "failed"
+    assert payload["exit_code"] == 2
+
+
+def test_pr_merge_json_reports_merged(monkeypatch):
+    monkeypatch.setattr(cli_module, "_cmd_pr_merge_text", lambda args: 0)
+    out = _run(["pr-merge", "12", "--json"])
+    payload = __import__("json").loads(out)
+    assert payload["operation"] == "pr_merge"
+    assert payload["state"] == "merged"
+
+
+def test_pr_merge_json_interruption_is_explicit_and_resumable(monkeypatch):
+    def interrupt(args):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli_module, "_cmd_pr_merge_text", interrupt)
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = main(["pr-merge", "12", "--json"])
+    payload = __import__("json").loads(buf.getvalue())
+    assert rc == 130
+    assert payload["state"] == "interrupted"
+    assert "safe to rerun" in payload["detail"]
+
+
 if __name__ == "__main__":
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from _run import run_module_tests

@@ -473,8 +473,10 @@ agent to reason over:
 ```bash
 agent-rails commands                  # discover global + repo-local wrappers first
 agent-rails pr-create --title "..." --body-file pr.md
+agent-rails pr-create --title "..." --body-file pr.md --json
 agent-rails pr-create --title "..." --body - < pr.md  # stdin body, temp file, then gh --body-file
 agent-rails pr-merge 123              # wait for CI checks, gh merge + wait for MERGED + local cleanup
+agent-rails pr-merge 123 --json       # versioned merged/blocked/failed/interrupted state
 agent-rails pr-merge 123 --skip-ci-reason "GHA budget exhausted; local suite passed"
 agent-rails post-merge-cleanup topic  # checkout main, pull --ff-only, branch -d topic
 agent-rails post-merge-cleanup topic --force-delete  # for squash/rebase-cleaned branches
