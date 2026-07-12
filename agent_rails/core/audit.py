@@ -42,6 +42,7 @@ def log_verdict(session_id: str, tool: str, verdict: Verdict, cap: int = 5000) -
             "detector": verdict.detector,
             "action": verdict.action,
             "would_block": bool(getattr(verdict, "would_block", False)),
+            "response": str(getattr(verdict, "response", "observe")),
         }
         path = _audit_file()
         with path.open("a+", encoding="utf-8") as fh:

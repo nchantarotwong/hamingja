@@ -31,6 +31,8 @@ class Verdict:
     detector: str
     reason: str
     would_block: bool = False  # True when a BLOCK was downgraded by observe mode
+    response: str = "observe"  # response shape, separate from authority/action
+    recovery: Optional[dict] = None
 
     @property
     def rank(self) -> int:

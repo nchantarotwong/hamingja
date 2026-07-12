@@ -47,6 +47,7 @@ agent-rails locate-symbol "do_GET"
 agent-rails locate-edit "where should I add repo root field?"
 agent-rails code-atlas
 agent-rails repo-health
+agent-rails code-atlas --json       # versioned output; flags possible truncation
 ```
 
 The locator is the generic fallback before reading a large file. `code-atlas`
@@ -55,7 +56,9 @@ contents; `locate` consults that map first, then combines ripgrep hits when
 available with path/name relevance and simple block-boundary expansion. Both
 paths print bounded line ranges and read commands.
 `repo-health` surfaces large files, approximate unscoped-read token cost, and
-split-name hints. Repo-specific helpers such as `refs.sh` can still be better
+language-matched split-name hints. Generated/build/vendor trees are excluded;
+generated files elsewhere are labeled and receive no source-split advice.
+Repo-specific helpers such as `refs.sh` can still be better
 expert tools, but these commands are available everywhere.
 
 ### Ruled-out ledger
@@ -152,8 +155,11 @@ interface, registered in `core/engine.py`.
 
 ### Budget gate
 
-The budget gate is a session-level checkpoint for long-running agent work. When
-it blocks, the message includes the session id; use that id with the CLI:
+The budget gate is a resource/workflow system, separate from mechanical
+non-convergence tripwires. Its weighted-call checkpoint is advisory by default
+and is emitted once per material checkpoint state. Trusted operator config may
+set `budget.checkpoint_deny: true`; when denial is enabled, the message includes
+the session id for the CLI recovery commands:
 
 ```bash
 agent-rails budget <session-id>          # show current counters
@@ -162,16 +168,20 @@ agent-rails budget <session-id> reset    # clear all counters for the session
 agent-rails budget <session-id> reset 20 # reset, then pre-approve 20 calls
 agent-rails budget <session-id> subagent # approve one subagent spawn
 agent-rails budget <session-id> add 3 --self  # agent self-approve, if config allows it
+agent-rails recover <session-id> handoff      # bounded fresh-session packet
+agent-rails recover <session-id> reset        # clear detector history; preserve audit
 ```
 
-`reset` is the hard-block recovery path: it deletes the session budget state so
+`reset` is the operator-stop recovery path: it deletes the session budget state so
 the next tool call starts from fresh counters. `reset N` also grants runway
 above the configured checkpoint for the resumed session.
 
-Subagent spawns get a small default allowance (`budget.max_subagents`, default
-2) so routine fan-out and fresh-context recovery from a poisoned main context
-are not taxed per spawn — the checkpoint only fires once spawns exceed the
-allowance, and `budget <session-id> subagent` approves one more.
+Subagent spawns use a conservative monotonic allowance
+(`budget.max_subagents`, default 1) because current hooks cannot reliably prove
+child completion and lineage. Once the allowance is spent,
+`budget <session-id> subagent` grants exactly one additional spawn. Static
+capability manifests keep this limitation explicit; active-child accounting
+must remain observe-only until adapter fixtures prove completion visibility.
 
 #### Progress crediting
 
@@ -186,6 +196,13 @@ outcomes the agent cannot fake from narration:
 - a test or build going **red→green** (strongest),
 - a real **error streak breaking** on a success,
 - a **clean validation** run with nothing already failing (smallest).
+
+Automatic red→green credit is scoped to the exact normalized validation
+identity, so an unrelated green test cannot erase pressure from a different
+failure. Adapters and deterministic workflow wrappers may submit richer
+evidence with `record_progress()`. A claim earns credit only when its anchor
+matches a recent recorded argument/output hash and its kind-specific transition
+fields validate.
 
 Tool success alone, a novel command, or a self-asserted "done" earn nothing —
 crediting those would refuel exactly the doom loop the budget exists to catch
@@ -208,16 +225,28 @@ real scarce resource is the rate-limit window, not dollars-per-token — so wher
 the harness records its own quota, agent-rails reads it and gates on the real
 signal instead of the proxy. Each adapter ships a fail-open probe that tails the
 harness's own session log; a missing or unreadable signal falls straight back to
-the call-count gate, so this can only ever *relax* or *add advisory*, never block
-on its own.
+the advisory call-count path. Missing, stale, malformed, or throwing probes
+never imply scarcity and cannot arm a denial.
 
 - **Codex** logs server-side rate limits in its session rollout: a 5-hour
   rolling window (`primary`) and a weekly cap (`secondary`) as a used-percent.
-  When both are comfortably low, a soft checkpoint is **deferred** — the counter
-  is a false positive when real quota is plentiful. Relief never touches the hard
-  limit, and the `repetition`/`oscillation`/`error_streak` detectors still block
-  independently. Tune with `budget.quota_relief_below_pct` (default 50; `0`
-  disables).
+  When both are comfortably low, the proxy checkpoint is suppressed until
+  material state changes. A fresh reading at or above the configured scarcity
+  threshold can arm the separately configured operator stop, but only after its
+  volume and stall predicates are also satisfied. The mechanical detectors
+  still block independently. Tune checkpoint suppression with
+  `budget.quota_relief_below_pct` (default 50; `0` disables).
+
+The default operator stop is not an unconditional call ceiling. It requires
+work beyond the configured hard ceiling and stall window, proven unattended
+work, plus positive danger evidence: either a strong mechanical non-convergence
+signature or fresh measured quota scarcity. Call volume alone only advises.
+Trusted configuration may set
+`budget.operator_stop.unconditional: true`; repository configuration may relax
+or disable the stop but cannot tighten it. Current Codex and Claude tool hooks
+do not prove operator-turn recency, so the conditional stop fails open to
+advisory behavior there until an adapter can supply that evidence.
+
 - **Claude Code** does not persist a rate-limit percent (it lives on API
   response headers), so its probe reports only **context occupancy** from the
   transcript's per-message `usage`. A nearly-full context window is re-sent every
@@ -378,7 +407,8 @@ agent_rails/
                repetition.py, oscillation.py, error_streak.py
   config.py    config loading, trusted policy registry, trust model, sanitization
   config.default.json      packaged trusted defaults (ships in the wheel)
-  adapters/    claude_code/  PreToolUse tripwire + PostToolUse recorder + install.sh
+  adapters/    capabilities.py  versioned Codex/Claude observability manifests
+               claude_code/  PreToolUse tripwire + PostToolUse recorder + install.sh
                codex/        PreToolUse tripwire + PostToolUse recorder + install.sh
                generic/      observe()/check() for any custom agent loop
   profiles/    base / non_convergence / debugging / ...   <-- SOFT layer (advisory)
@@ -449,13 +479,16 @@ agent to reason over:
 ```bash
 agent-rails commands                  # discover global + repo-local wrappers first
 agent-rails pr-create --title "..." --body-file pr.md
+agent-rails pr-create --title "..." --body-file pr.md --json
 agent-rails pr-create --title "..." --body - < pr.md  # stdin body, temp file, then gh --body-file
 agent-rails pr-merge 123              # wait for CI checks, gh merge + wait for MERGED + local cleanup
+agent-rails pr-merge 123 --json       # versioned merged/blocked/failed/interrupted state
 agent-rails pr-merge 123 --skip-ci-reason "GHA budget exhausted; local suite passed"
 agent-rails post-merge-cleanup topic  # checkout main, pull --ff-only, branch -d topic
 agent-rails post-merge-cleanup topic --force-delete  # for squash/rebase-cleaned branches
 agent-rails ci-status 123             # compact PR check summary; flags Actions budget/quota blocks
 agent-rails ci-status 123 --wait      # poll with backoff until checks finish or timeout
+agent-rails ci-status 123 --json      # versioned ready/pending/failed/blocked state
 agent-rails ci-preflight 123          # classify CI quota/infrastructure readiness before reruns
 agent-rails ci-failures 123           # shorthand for --pr 123
 agent-rails ci-failures --pr 123      # failed-run log summary for the PR branch
@@ -649,11 +682,21 @@ that repo.
 
 ```python
 from agent_rails.adapters.generic import observe, check
+from agent_rails.core.api import record_progress
 
 verdict = check(session_id, tool_name, tool_args)   # before the call
 if verdict.action == "block":
     ...                                              # re-plan; verdict.reason says why
 observe(session_id, tool_name, tool_args, ok=succeeded)  # after the call
+
+# Optional adapter/workflow evidence; anchor must match a recent event hash.
+record_progress(session_id, {
+    "kind": "failure_set_shrank",
+    "anchor": observed_event_hash,
+    "validation_id": "pytest:targeted",
+    "failure_count_before": 12,
+    "failure_count_after": 3,
+})
 ```
 
 ## Tests

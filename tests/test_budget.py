@@ -196,6 +196,12 @@ def test_after_reset_counters_restart():
     assert bv.action == ALLOW
 
 
+def test_subagent_approval_is_consumed_by_one_spawn():
+    approve(SESSION, approve_subagent=True)
+    assert increment_and_check(SESSION, "Agent", False, _CFG).action == ALLOW
+    assert increment_and_check(SESSION, "Agent", False, _CFG).action == BLOCK
+
+
 def test_reset_add_tools_pre_approves_ceiling():
     reset(SESSION, add_tools=20)
     state = read_state(SESSION)
@@ -238,6 +244,23 @@ def test_corrupt_state_file_allows(tmp_path, monkeypatch):
     bv = increment_and_check(SESSION, "Bash", False, _CFG)
     # Should fail-open (ALLOW) or treat as fresh state (also ALLOW for call 1)
     assert bv.action in (ALLOW, NUDGE)
+
+
+def test_oversized_progress_state_is_bounded_on_read():
+    path = _budget_path(SESSION)
+    path.write_text(json.dumps({
+        "tool_calls": 1,
+        "weighted_calls": 1,
+        "last_progress": {
+            "kind": "x" * 10000,
+            "validation_id": "y" * 10000,
+            "nested": {"huge": "z" * 10000},
+        },
+    }), encoding="utf-8")
+    progress = read_state(SESSION)["last_progress"]
+    assert len(progress["kind"]) == 256
+    assert len(progress["validation_id"]) == 256
+    assert "nested" not in progress
 
 
 def test_bad_cfg_values_dont_raise():
@@ -591,6 +614,100 @@ def test_context_nudge_never_overrides_block():
     for _ in range(_CFG["checkpoint_at"] + 1):
         v = increment_and_check("ctx-block", "Edit", False, _CFG, quota_reading=r)
     assert v.action == BLOCK
+
+
+# Rescoped advisory checkpoint and positive-evidence operator stop
+
+def _rescoped_cfg(**overrides):
+    cfg = dict(
+        _CFG,
+        checkpoint_deny=False,
+        operator_stop={
+            "enabled": True,
+            "unconditional": False,
+            "stall_window_weighted": 3,
+            "unattended_window_weighted": 3,
+            "scarcity_used_pct": 85,
+        },
+    )
+    cfg.update(overrides)
+    return cfg
+
+
+def test_rescoped_checkpoint_advises_once_then_allows():
+    cfg = _rescoped_cfg(hard_block_at=100)
+    verdicts = [increment_and_check("advisory-once", "Edit", False, cfg) for _ in range(14)]
+    assert verdicts[12].action == NUDGE
+    assert verdicts[12].response == "checkpoint"
+    assert verdicts[13].action == ALLOW
+
+
+def test_healthy_quota_suppresses_rescoped_proxy_checkpoint():
+    cfg = _rescoped_cfg(hard_block_at=100)
+    v = _drive_to_checkpoint("healthy-suppressed", cfg, _Reading(5.0, 10.0))
+    assert v.action == ALLOW
+
+
+def test_volume_alone_never_arms_rescoped_operator_stop():
+    cfg = _rescoped_cfg(checkpoint_at=2, hard_block_at=4)
+    for _ in range(10):
+        v = increment_and_check("novel-unattended", "Edit", False, cfg)
+    assert v.action == ALLOW
+
+
+def test_mechanical_signal_arms_rescoped_operator_stop():
+    cfg = _rescoped_cfg(checkpoint_at=2, hard_block_at=4)
+    for _ in range(4):
+        increment_and_check("mechanical-stop", "Edit", False, cfg)
+    v = increment_and_check(
+        "mechanical-stop", "Edit", False, cfg,
+        mechanical_signal=True, unattended_signal=True,
+    )
+    assert v.action == BLOCK
+    assert v.response == "operator_stop"
+
+
+def test_fresh_scarcity_arms_rescoped_operator_stop():
+    cfg = _rescoped_cfg(checkpoint_at=2, hard_block_at=4)
+    for _ in range(4):
+        increment_and_check("scarce-stop", "Edit", False, cfg)
+    v = increment_and_check(
+        "scarce-stop", "Edit", False, cfg,
+        quota_reading=_Reading(90.0, 20.0), unattended_signal=True,
+    )
+    assert v.action == BLOCK
+
+
+def test_positive_danger_without_unattended_proof_cannot_stop():
+    cfg = _rescoped_cfg(checkpoint_at=2, hard_block_at=4)
+    for _ in range(4):
+        increment_and_check("attended-danger", "Edit", False, cfg)
+    v = increment_and_check(
+        "attended-danger", "Edit", False, cfg,
+        quota_reading=_Reading(99.0, 99.0), mechanical_signal=True,
+    )
+    assert v.action != BLOCK
+
+
+def test_malformed_evidence_flags_cannot_arm_operator_stop():
+    cfg = _rescoped_cfg(checkpoint_at=2, hard_block_at=4)
+    for _ in range(4):
+        increment_and_check("bad-stop-flags", "Edit", False, cfg)
+    v = increment_and_check(
+        "bad-stop-flags", "Edit", False, cfg,
+        mechanical_signal="true", unattended_signal="true",  # type: ignore[arg-type]
+    )
+    assert v.action != BLOCK
+
+
+def test_malformed_quota_cannot_arm_operator_stop():
+    cfg = _rescoped_cfg(checkpoint_at=2, hard_block_at=4)
+    for _ in range(5):
+        v = increment_and_check(
+            "bad-quota-stop", "Edit", False, cfg,
+            quota_reading={"window_used_pct": "99", "weekly_used_pct": None},
+        )
+    assert v.action != BLOCK
 
 
 def test_none_reading_no_context_nudge():

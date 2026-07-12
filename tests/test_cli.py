@@ -477,6 +477,26 @@ def test_budget_self_approve_rejects_nonexistent_session():
     assert budget_read_state(session) == {}
 
 
+def test_recover_handoff_is_bounded_and_reset_preserves_audit(tmp_path, monkeypatch):
+    from agent_rails.core.events import ToolEvent
+    from agent_rails.core.state import append_event, read_recent
+
+    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    sid = "recover-cli"
+    append_event(ToolEvent.record(sid, "Bash", {"command": "pytest"}, False))
+
+    out = _run(["recover", sid, "handoff"])
+    assert "Recent mechanical signatures:" in out
+    assert "Relevant ruled-out hypotheses:" in out
+    assert "Minimal next action:" in out
+    assert f"agent-rails recover {sid} reset" in out
+
+    out = _run(["recover", sid, "reset"])
+    assert "detector state cleared" in out
+    assert "audit history preserved" in out
+    assert read_recent(sid, 8) == []
+
+
 def test_pr_create_body_dash_reads_stdin_and_writes_temp_body():
     calls = []
 
@@ -587,6 +607,57 @@ def test_pr_create_body_rejects_empty_value():
 
     assert rc == 2
     assert "--body only supports '-'" in buf.getvalue()
+
+
+def test_ci_status_json_emits_only_versioned_lifecycle(monkeypatch):
+    from agent_rails.workflows import LifecycleResult
+
+    def fake_ci_status(pr, **kwargs):
+        print("human text that JSON mode must suppress")
+        kwargs["outcome"].append(LifecycleResult(
+            1, "ci_status", "pending", 0, total=2, pending=1,
+        ))
+        return 0
+
+    monkeypatch.setattr(cli_module, "ci_status", fake_ci_status)
+    out = _run(["ci-status", "12", "--json"])
+    payload = __import__("json").loads(out)
+    assert payload["schema_version"] == 1
+    assert payload["state"] == "pending"
+    assert "human text" not in out
+
+
+def test_pr_create_json_reports_malformed_input_as_failed():
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = main(["pr-create", "--title", "T", "--body", "literal", "--json"])
+    payload = __import__("json").loads(buf.getvalue())
+    assert rc == 2
+    assert payload["operation"] == "pr_create"
+    assert payload["state"] == "failed"
+    assert payload["exit_code"] == 2
+
+
+def test_pr_merge_json_reports_merged(monkeypatch):
+    monkeypatch.setattr(cli_module, "_cmd_pr_merge_text", lambda args: 0)
+    out = _run(["pr-merge", "12", "--json"])
+    payload = __import__("json").loads(out)
+    assert payload["operation"] == "pr_merge"
+    assert payload["state"] == "merged"
+
+
+def test_pr_merge_json_interruption_is_explicit_and_resumable(monkeypatch):
+    def interrupt(args):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli_module, "_cmd_pr_merge_text", interrupt)
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = main(["pr-merge", "12", "--json"])
+    payload = __import__("json").loads(buf.getvalue())
+    assert rc == 130
+    assert payload["state"] == "interrupted"
+    assert "safe to rerun" in payload["detail"]
 
 
 if __name__ == "__main__":

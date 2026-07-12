@@ -10,6 +10,8 @@ round it out.
 from __future__ import annotations
 
 import json
+import os
+import time
 
 import pytest
 
@@ -254,6 +256,15 @@ def test_malformed_json_lines_skipped(codex_home):
 
 def test_empty_file_returns_none(codex_home):
     _write_rollout(codex_home, SID, [], trailing_newline=False)
+    assert read_quota(SID) is None
+
+
+def test_stale_rollout_cannot_supply_quota_evidence(codex_home):
+    path = _write_rollout(
+        codex_home, SID, [_token_count_event(primary_pct=99.0)]
+    )
+    stale = time.time() - quota._READING_TTL_SECONDS - 1
+    os.utime(path, (stale, stale))
     assert read_quota(SID) is None
 
 

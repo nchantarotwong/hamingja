@@ -17,6 +17,7 @@ from contextlib import contextmanager
 from agent_rails.core import budget
 from agent_rails.core.events import ToolEvent, OK, ERROR, BLOCKED
 from agent_rails.core.progress import (
+    admit_structured_progress,
     assess_progress,
     TEST_RECOVERY,
     STREAK_BROKEN,
@@ -66,6 +67,14 @@ def test_red_to_green_build_recovers():
     events = [ev(ERROR, arg_kind="shell:build"), ev(OK, arg_kind="shell:build")]
     sig = assess_progress(events, {})
     assert sig is not None and sig.kind == TEST_RECOVERY
+
+
+def test_unrelated_green_validation_does_not_clear_failed_signature():
+    events = [
+        ev(ERROR, arg_kind="shell:test", arg_hash="target-a"),
+        ev(OK, arg_kind="shell:test", arg_hash="target-b"),
+    ]
+    assert assess_progress(events, {}) is None
 
 
 def test_clean_validation_when_nothing_was_failing():
@@ -127,6 +136,34 @@ def test_credit_magnitudes_are_configurable():
     events = [ev(ERROR, arg_kind="shell:test"), ev(OK, arg_kind="shell:test")]
     sig = assess_progress(events, {"progress": {"test_recovery_credit": 99}})
     assert sig is not None and sig.credit == 99.0
+
+
+def test_structured_failure_shrink_requires_observed_anchor_and_counts():
+    events = [ev(ERROR, arg_hash="validation-anchor")]
+    evidence = {
+        "kind": "failure_set_shrank",
+        "anchor": "validation-anchor",
+        "validation_id": "pytest:targeted",
+        "failure_count_before": 12,
+        "failure_count_after": 3,
+    }
+    sig = admit_structured_progress(evidence, events, {})
+    assert sig is not None and sig.credit == 12.0
+    assert sig.evidence["validation_id"] == "pytest:targeted"
+
+
+def test_structured_progress_rejects_missing_anchor_and_non_shrink():
+    events = [ev(ERROR, arg_hash="real-anchor")]
+    base = {
+        "kind": "failure_set_shrank",
+        "anchor": "invented-anchor",
+        "validation_id": "pytest:targeted",
+        "failure_count_before": 3,
+        "failure_count_after": 3,
+    }
+    assert admit_structured_progress(base, events, {}) is None
+    base["anchor"] = "real-anchor"
+    assert admit_structured_progress(base, events, {}) is None
 
 
 # --- credit_progress against real budget state ------------------------------
@@ -246,7 +283,7 @@ def test_shipped_defaults_have_allowance_and_cap():
     from agent_rails.config import load_config
     with temp_state() as d:
         cfg = load_config(d)  # no project config in a fresh temp dir -> baseline
-        assert cfg["budget"]["max_subagents"] == 2
+        assert cfg["budget"]["max_subagents"] == 1
         assert cfg["budget"]["progress"]["max_credit_per_window"] == 12
 
 
@@ -274,6 +311,29 @@ def test_record_wires_credit_through_real_config():
         after = budget.read_state(sid)["weighted_calls"]
         # red->green credited 12 (the default test_recovery_credit).
         assert after == before - 12.0
+
+
+def test_record_progress_persists_scoped_evidence():
+    from agent_rails.core.api import record, record_progress
+
+    with temp_state() as d:
+        sid = "sess-structured-progress"
+        for _ in range(15):
+            budget.increment_and_check(sid, "Bash", False, _budget_cfg())
+        args = {"command": "pytest tests/test_target.py"}
+        record(sid, "Bash", args, ok=False, project_dir=d, output="12 failed")
+        anchor = ToolEvent.record(sid, "Bash", args, False, output="12 failed").arg_hash
+        accepted = record_progress(sid, {
+            "kind": "failure_set_shrank",
+            "anchor": anchor,
+            "validation_id": "pytest:tests/test_target.py",
+            "failure_count_before": 12,
+            "failure_count_after": 3,
+        }, project_dir=d)
+        state = budget.read_state(sid)
+        assert accepted is True
+        assert state["last_progress"]["failure_count_after"] == 3
+        assert state["weighted_calls"] == 3.0
 
 
 if __name__ == "__main__":

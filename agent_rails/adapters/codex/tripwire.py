@@ -234,7 +234,9 @@ def main() -> int:
                         reading = _read_quota_safe(session_id)
                         budget_tool = _budget_tool_name(tool, tool_input)
                         bv = budget_check(
-                            session_id, budget_tool, is_large, budget_cfg, quota_reading=reading
+                            session_id, budget_tool, is_large, budget_cfg,
+                            quota_reading=reading,
+                            mechanical_signal=bool(getattr(verdict, "would_block", False)),
                         )
                         if bv.action == BUDGET_BLOCK:
                             _emit_deny(bv.reason)

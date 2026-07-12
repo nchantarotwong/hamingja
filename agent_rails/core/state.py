@@ -112,3 +112,15 @@ def read_recent(session_id: str, window: int) -> list[ToolEvent]:
         return events
     except Exception:
         return []
+
+
+def reset_session(session_id: str) -> bool:
+    """Delete detector history for one session while preserving audit records."""
+    try:
+        path = _session_file(session_id)
+        if not path.exists():
+            return False
+        path.unlink()
+        return True
+    except Exception:
+        return False

@@ -38,12 +38,14 @@ around install scripts and file generation.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import re
 import subprocess
 import sys
 import tempfile
+from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Optional
 
@@ -58,6 +60,8 @@ from .core.budget import read_state as _budget_read_state
 from .core.budget import reset as _budget_reset
 from .core.budget import self_approve as _budget_self_approve
 from .core.budget import set_task_type as _budget_set_task_type
+from .core.state import read_recent as _read_recent_events
+from .core.state import reset_session as _reset_detector_session
 from .ledger import add_record as _ledger_add
 from .ledger import check_records as _ledger_check
 from .ledger import discover_root as _ledger_root
@@ -302,7 +306,21 @@ def _cmd_code_atlas(args: argparse.Namespace) -> int:
             max_files=args.max_files,
             max_entries_per_file=args.max_entries,
         )
-        print(format_code_atlas(atlas, root=root))
+        if args.json:
+            resolved = root.resolve()
+            print(json.dumps({
+                "schema_version": 1,
+                "kind": "code_atlas",
+                "incomplete": len(atlas) >= args.max_files,
+                "files": [{
+                    "path": str(item.path.relative_to(resolved)),
+                    "line_count": item.line_count,
+                    "generated": item.generated,
+                    "entries": [vars(entry) for entry in item.entries],
+                } for item in atlas],
+            }, sort_keys=True))
+        else:
+            print(format_code_atlas(atlas, root=root))
     except Exception:
         print("No code atlas entries found.")
     return 0
@@ -318,7 +336,22 @@ def _cmd_repo_health(args: argparse.Namespace) -> int:
             max_files=args.max_files,
             max_suggestions=args.max_suggestions,
         )
-        print(format_repo_health(health, root=root))
+        if args.json:
+            resolved = root.resolve()
+            print(json.dumps({
+                "schema_version": 1,
+                "kind": "repo_health",
+                "incomplete": len(health) >= args.max_files,
+                "files": [{
+                    "path": str(item.path.relative_to(resolved)),
+                    "line_count": item.line_count,
+                    "estimated_tokens": item.estimated_tokens,
+                    "generated": item.generated,
+                    "suggestions": item.suggestions,
+                } for item in health],
+            }, sort_keys=True))
+        else:
+            print(format_repo_health(health, root=root))
     except Exception:
         print("No large source files found.")
     return 0
@@ -468,7 +501,7 @@ def _cmd_install(args: argparse.Namespace) -> int:
     return _run_installs([actual])
 
 
-def _cmd_pr_create(args: argparse.Namespace) -> int:
+def _cmd_pr_create_text(args: argparse.Namespace) -> int:
     runner = timed_runner(args.command_timeout)
     if args.body is not None and args.body != "-":
         print("pr create")
@@ -495,6 +528,7 @@ def _cmd_pr_create(args: argparse.Namespace) -> int:
                 remote=args.remote,
                 draft=args.draft,
                 runner=runner,
+                outcome=getattr(args, "_outcome", None),
             )
         finally:
             try:
@@ -509,10 +543,39 @@ def _cmd_pr_create(args: argparse.Namespace) -> int:
         remote=args.remote,
         draft=args.draft,
         runner=runner,
+        outcome=getattr(args, "_outcome", None),
     )
 
 
-def _cmd_pr_merge(args: argparse.Namespace) -> int:
+def _workflow_json(operation: str, state: str, rc: int, detail: str = "") -> None:
+    print(json.dumps({
+        "schema_version": 1,
+        "operation": operation,
+        "state": state,
+        "exit_code": rc,
+        "detail": detail[:1000],
+    }, sort_keys=True))
+
+
+def _cmd_pr_create(args: argparse.Namespace) -> int:
+    if not args.json:
+        return _cmd_pr_create_text(args)
+    captured = io.StringIO()
+    outcome = []
+    args._outcome = outcome
+    try:
+        with redirect_stdout(captured):
+            rc = _cmd_pr_create_text(args)
+    except KeyboardInterrupt:
+        _workflow_json("pr_create", "interrupted", 130, "safe to rerun")
+        return 130
+    state = outcome[-1].state if outcome else ("created" if rc == 0 else "failed")
+    detail = outcome[-1].detail if outcome else captured.getvalue()
+    _workflow_json("pr_create", state, rc, detail)
+    return rc
+
+
+def _cmd_pr_merge_text(args: argparse.Namespace) -> int:
     runner = timed_runner(args.command_timeout)
     return merge_pr(
         args.pr,
@@ -526,7 +589,28 @@ def _cmd_pr_merge(args: argparse.Namespace) -> int:
         ci_poll_s=args.ci_poll,
         skip_ci_reason=args.skip_ci_reason,
         runner=runner,
+        outcome=getattr(args, "_outcome", None),
     )
+
+
+def _cmd_pr_merge(args: argparse.Namespace) -> int:
+    if not args.json:
+        return _cmd_pr_merge_text(args)
+    captured = io.StringIO()
+    outcome = []
+    args._outcome = outcome
+    try:
+        with redirect_stdout(captured):
+            rc = _cmd_pr_merge_text(args)
+    except KeyboardInterrupt:
+        _workflow_json("pr_merge", "interrupted", 130, "safe to rerun; wrapper rechecks PR state")
+        return 130
+    state = outcome[-1].state if outcome else (
+        "merged" if rc == 0 else ("blocked" if rc == 2 else "failed")
+    )
+    detail = outcome[-1].detail if outcome else captured.getvalue()
+    _workflow_json("pr_merge", state, rc, detail)
+    return rc
 
 
 def _cmd_post_merge_cleanup(args: argparse.Namespace) -> int:
@@ -542,12 +626,25 @@ def _cmd_post_merge_cleanup(args: argparse.Namespace) -> int:
 
 
 def _cmd_ci_status(args: argparse.Namespace) -> int:
-    return ci_status(
-        args.pr,
-        runner=timed_runner(args.command_timeout),
-        wait_timeout_s=args.timeout if args.wait else 0,
-        poll_s=args.poll,
-    )
+    kwargs = {
+        "runner": timed_runner(args.command_timeout),
+        "wait_timeout_s": args.timeout if args.wait else 0,
+        "poll_s": args.poll,
+    }
+    if not args.json:
+        return ci_status(args.pr, **kwargs)
+    outcome = []
+    captured = io.StringIO()
+    with redirect_stdout(captured):
+        rc = ci_status(args.pr, outcome=outcome, **kwargs)
+    if outcome:
+        print(json.dumps(outcome[-1].__dict__, sort_keys=True))
+    else:
+        print(json.dumps({
+            "schema_version": 1, "operation": "ci_status",
+            "state": "unknown", "exit_code": rc,
+        }, sort_keys=True))
+    return rc
 
 
 def _cmd_ci_preflight(args: argparse.Namespace) -> int:
@@ -585,6 +682,64 @@ def _copy_stdin_to_body_file(body_file) -> str | None:
         if total > MAX_STDIN_BODY_BYTES:
             return f"- error: stdin PR body exceeds {MAX_STDIN_BODY_BYTES} bytes; use --body-file for larger content"
         body_file.write(chunk)
+
+
+def _cmd_recover(args: argparse.Namespace) -> int:
+    """Show a bounded recovery/handoff packet or explicitly reset detectors."""
+    try:
+        session_id = str(args.session_id).strip()
+        if not session_id:
+            print("error: session id must not be empty", file=sys.stderr)
+            return 2
+        if args.action == "reset":
+            changed = _reset_detector_session(session_id)
+            print(
+                f"reset: detector state {'cleared' if changed else 'already empty'} "
+                f"for session: {session_id}"
+            )
+            print("audit history preserved")
+            return 0
+
+        state = _budget_read_state(session_id)
+        events = _read_recent_events(session_id, 8)
+        print(f"# agent-rails recovery handoff: {session_id}")
+        print("")
+        progress = state.get("last_progress") if isinstance(state, dict) else None
+        print("Last observed progress:")
+        print(json.dumps(progress, sort_keys=True) if isinstance(progress, dict) else "none")
+        print("")
+        print("Recent mechanical signatures:")
+        if not events:
+            print("none")
+        for event in events:
+            print(
+                f"- {event.status} {event.tool} {event.arg_kind or 'unclassified'} "
+                f"signature={event.arg_hash}"
+            )
+        paths = [event.read_path for event in events if event.read_path]
+        ruled_out = []
+        try:
+            if paths:
+                ruled_out = _ledger_relevant(_ledger_root(Path.cwd()), paths)[:5]
+        except Exception:
+            ruled_out = []
+        print("")
+        print("Relevant ruled-out hypotheses:")
+        if not ruled_out:
+            print("none")
+        for record in ruled_out:
+            print(f"- {record.slug}: {record.claim}")
+        print("")
+        print("Minimal next action:")
+        print("- Run one materially different, read-only diagnostic.")
+        print("")
+        print("Recovery commands:")
+        print(f"- agent-rails recover {session_id} reset")
+        print(f"- agent-rails budget {session_id} reset")
+        return 0
+    except Exception:
+        print("Recovery packet unavailable; no state was changed.")
+        return 0
 
 
 def _cmd_budget(args: argparse.Namespace) -> int:
@@ -1291,6 +1446,7 @@ def build_parser() -> argparse.ArgumentParser:
     atlas.add_argument("--min-lines", type=int, default=200, help="minimum file size to include (default: 200)")
     atlas.add_argument("--max-files", type=int, default=50, help="maximum files to print (default: 50)")
     atlas.add_argument("--max-entries", type=int, default=80, help="maximum entries per file (default: 80)")
+    atlas.add_argument("--json", action="store_true", help="emit versioned structured output")
     atlas.set_defaults(func=_cmd_code_atlas)
 
     health = sub.add_parser("repo-health", help="show large-file retrieval cost and split hints")
@@ -1299,6 +1455,7 @@ def build_parser() -> argparse.ArgumentParser:
     health.add_argument("--min-lines", type=int, default=1000, help="minimum file size to include (default: 1000)")
     health.add_argument("--max-files", type=int, default=50, help="maximum files to print (default: 50)")
     health.add_argument("--max-suggestions", type=int, default=8, help="maximum split hints per file (default: 8)")
+    health.add_argument("--json", action="store_true", help="emit versioned structured output")
     health.set_defaults(func=_cmd_repo_health)
 
     def add_locate_args(parser: argparse.ArgumentParser) -> None:
@@ -1368,6 +1525,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="create a GitHub PR using --body-file to avoid shell quoting hazards",
     )
     prc.add_argument("--title", required=True, help="PR title")
+    prc.add_argument("--json", action="store_true", help="emit a versioned lifecycle state")
     pr_body = prc.add_mutually_exclusive_group(required=True)
     pr_body.add_argument("--body-file", help="path to the PR body markdown file")
     pr_body.add_argument("--body", help="PR body source; pass '-' to read from stdin")
@@ -1395,6 +1553,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="merge method (default: squash)",
     )
     prm.add_argument("--no-cleanup", action="store_true", help="skip local post-merge cleanup")
+    prm.add_argument("--json", action="store_true", help="emit a versioned lifecycle state")
     prm.add_argument(
         "--skip-ci-reason",
         help="bypass the CI gate; auditable reason for a local-validation-only merge",
@@ -1449,6 +1608,7 @@ def build_parser() -> argparse.ArgumentParser:
     cis.add_argument("--wait", action="store_true", help="poll with backoff until checks finish or timeout")
     cis.add_argument("--timeout", type=int, default=600, help="seconds to wait with --wait (default: 600)")
     cis.add_argument("--poll", type=float, default=10, help="initial seconds between --wait polls (default: 10; backs off up to 60)")
+    cis.add_argument("--json", action="store_true", help="emit a versioned lifecycle state")
     cis.add_argument(
         "--command-timeout",
         type=float,
@@ -1550,6 +1710,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bgt.add_argument("budget_args", nargs=argparse.REMAINDER, metavar="...")
     bgt.set_defaults(func=_cmd_budget, _parser=bgt)
+
+    recover = sub.add_parser(
+        "recover",
+        help="show a bounded session handoff or reset detector state",
+    )
+    recover.add_argument("session_id", help="session identifier from a tripwire")
+    recover.add_argument(
+        "action", nargs="?", choices=["handoff", "reset"], default="handoff",
+        help="handoff (default) or explicit detector-state reset",
+    )
+    recover.set_defaults(func=_cmd_recover)
 
     return p
 

@@ -215,6 +215,19 @@ def _restrict_merge(baseline: dict, project) -> dict:
         for key in ("checkpoint_at", "hard_block_at", "nudge_at"):
             if key in pbud:
                 bud[key] = max(_to_int(bud.get(key), 1), _to_int(pbud.get(key), 1))
+        if "checkpoint_deny" in pbud and not bool(pbud.get("checkpoint_deny")):
+            bud["checkpoint_deny"] = False
+        pstop = pbud.get("operator_stop")
+        if isinstance(pstop, dict):
+            stop = bud.setdefault("operator_stop", {})
+            if "enabled" in pstop and not bool(pstop.get("enabled")):
+                stop["enabled"] = False
+            for key in ("stall_window_weighted", "unattended_window_weighted", "scarcity_used_pct"):
+                if key in pstop:
+                    stop[key] = max(
+                        _to_int(stop.get(key), 1),
+                        _to_int(pstop.get(key), _to_int(stop.get(key), 1)),
+                    )
         psa = pbud.get("self_approve")
         if isinstance(psa, dict):
             sa = bud.setdefault("self_approve", {})

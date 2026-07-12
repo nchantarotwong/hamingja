@@ -17,6 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from agent_rails.core.api import record  # noqa: E402
+from agent_rails.adapters.progress import record_workflow_progress  # noqa: E402
 
 
 def _is_nonzero(v) -> bool:
@@ -64,6 +65,7 @@ def main() -> int:
         result = payload.get("tool_response", payload.get("tool_output"))
 
         record(session_id, tool, tool_input, not _looks_like_error(result), project_dir=cwd, output=result)
+        record_workflow_progress(session_id, tool, tool_input, result, project_dir=cwd)
     except Exception:
         pass
 

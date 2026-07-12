@@ -24,6 +24,7 @@ from __future__ import annotations
 from typing import Optional
 
 from .events import ToolEvent
+from .budget import read_state as read_budget_state
 from .state import read_recent
 from ..detectors.base import ALLOW, BLOCK, NUDGE, Verdict
 from ..detectors.repetition import RepetitionDetector
@@ -47,6 +48,9 @@ DETECTORS = [
     ErrorStreakDetector(),
 ]
 
+# Resource/workflow guidance may advise but cannot become a mechanical denial.
+_ADVISORY_ONLY = {"workflow_wrapper", "read_discipline", "python_command"}
+
 
 def _allow() -> Verdict:
     return Verdict(ALLOW, "engine", "")
@@ -67,6 +71,64 @@ def _mode(config: dict, name: Optional[str] = None) -> str:
     if gm in {"off", "observe", "enforce"}:
         return gm
     return "observe"
+
+
+def _recovery_packet(
+    session_id: str,
+    verdict: Verdict,
+    candidate: Optional[ToolEvent],
+    events: list[ToolEvent],
+) -> dict:
+    """Build the minimum recovery artifact; optional context is best-effort."""
+    signature = candidate.arg_hash if candidate is not None else "unknown"
+    safe_session = "".join(
+        char if char.isalnum() or char in "-_" else "_" for char in str(session_id)
+    ) or "default"
+    try:
+        if verdict.detector == "error_streak":
+            streak: list[str] = []
+            for event in reversed(events):
+                if event.status != "error":
+                    break
+                streak.append(event.arg_hash)
+            signature = "error_streak:" + ",".join(reversed(streak))
+        elif verdict.detector == "oscillation":
+            signature = "oscillation:" + ",".join(
+                event.arg_hash for event in events[-4:]
+            )
+    except Exception:
+        pass
+    packet = {
+        "detector": verdict.detector,
+        "signature": signature,
+        "next_action": "Run one materially different, read-only diagnostic.",
+        "reset_command": f"agent-rails recover {safe_session} reset",
+        "handoff_command": f"agent-rails recover {safe_session} handoff",
+    }
+    try:
+        packet["recent_signatures"] = list(dict.fromkeys(
+            event.arg_hash for event in events[-4:] if event.arg_hash
+        ))
+        progress = read_budget_state(session_id).get("last_progress")
+        if isinstance(progress, dict):
+            packet["last_progress"] = progress
+    except Exception:
+        pass
+    return packet
+
+
+def _format_recovery(packet: dict) -> str:
+    try:
+        return (
+            "\n\nRecovery packet:\n"
+            f"- Detector: {packet['detector']}\n"
+            f"- Exact signature: {packet['signature']}\n"
+            f"- Next: {packet['next_action']}\n"
+            f"- Reset detector state: `{packet['reset_command']}`\n"
+            f"- Fresh-session handoff: `{packet['handoff_command']}`"
+        )
+    except Exception:
+        return ""
 
 
 def evaluate(
@@ -101,8 +163,23 @@ def evaluate(
                 continue  # a broken detector never blocks a call
             if not v:
                 continue
+            if det.name in _ADVISORY_ONLY and v.action == BLOCK:
+                v = Verdict(NUDGE, v.detector, v.reason, response="advise")
+            elif v.action == BLOCK:
+                v.response = "tripwire"
+            elif v.action == NUDGE:
+                v.response = "advise"
             if det_mode != "enforce" and v.action == BLOCK:
-                v = Verdict(NUDGE, v.detector, v.reason, would_block=True)
+                v = Verdict(
+                    NUDGE, v.detector, v.reason,
+                    would_block=True, response="tripwire",
+                )
+            elif v.action == BLOCK:
+                try:
+                    v.recovery = _recovery_packet(session_id, v, candidate, events)
+                    v.reason += _format_recovery(v.recovery)
+                except Exception:
+                    pass
             if v.rank > best.rank:
                 best = v
 

@@ -14,9 +14,10 @@ Progress is an *observed verification transition* — never:
   * anything the agent asserts about itself.
 
 Crediting any of those would refuel exactly the doom loops the budget exists
-to catch — green-while-wrong is the most expensive failure class. So we credit
-only outcomes the agent cannot fake from narration: a test/build going
-red->green, or a genuine error streak breaking on a real success.
+to catch — green-while-wrong is the most expensive failure class. Automatic
+credit therefore requires the same normalized test/build identity going
+red->green, or a genuine error streak breaking on a real success. Structured
+adapter/workflow claims additionally require a recent observed event anchor.
 
 Defense in depth: a credit can only ever LOWER budget pressure, and the
 repetition / oscillation / error_streak detectors still BLOCK independently of
@@ -33,6 +34,11 @@ from .events import ToolEvent, OK, ERROR
 TEST_RECOVERY = "test_recovery"        # a failing test/build went green
 STREAK_BROKEN = "streak_broken"        # a real error streak ended on a success
 CLEAN_VALIDATION = "clean_validation"  # a test/build passed with no prior failure
+FAILURE_REPRODUCED = "failure_reproduced"
+HYPOTHESIS_ELIMINATED = "hypothesis_eliminated"
+FAILURE_SET_SHRANK = "failure_set_shrank"
+DIFF_REDUCED = "diff_reduced"
+WORKFLOW_TRANSITION = "workflow_transition"
 
 _TEST_KINDS = ("shell:test", "shell:build")
 
@@ -52,6 +58,7 @@ class ProgressSignal:
     kind: str
     credit: float
     reason: str
+    evidence: Optional[dict] = None
 
 
 def _num(prog: dict, key: str, default: float) -> float:
@@ -98,7 +105,7 @@ def assess_progress(events: list[ToolEvent], budget_cfg: dict) -> Optional[Progr
             # The strongest signal: a previously-failing test/build of the same
             # kind that is now green.
             for e in reversed(events[:-1]):
-                if e.arg_kind == newest.arg_kind:
+                if e.arg_hash == newest.arg_hash:
                     if e.status == ERROR:
                         return ProgressSignal(
                             TEST_RECOVERY, credits[TEST_RECOVERY],
@@ -111,6 +118,8 @@ def assess_progress(events: list[ToolEvent], budget_cfg: dict) -> Optional[Progr
             for e in events[:-1]:
                 if e.arg_hash == newest.arg_hash and e.status == OK:
                     return None
+            if any(e.arg_kind in _TEST_KINDS and e.status == ERROR for e in events[:-1]):
+                return None  # another known-red validation makes this not clean
             return ProgressSignal(
                 CLEAN_VALIDATION, credits[CLEAN_VALIDATION], f"{newest.arg_kind} passed",
             )
@@ -131,5 +140,88 @@ def assess_progress(events: list[ToolEvent], budget_cfg: dict) -> Optional[Progr
                 f"recovered after {streak} consecutive tool errors",
             )
         return None
+    except Exception:
+        return None
+
+
+def admit_structured_progress(
+    evidence: object,
+    events: list[ToolEvent],
+    budget_cfg: dict,
+) -> Optional[ProgressSignal]:
+    """Validate adapter/workflow evidence against an observed event anchor.
+
+    Narration is never accepted. ``anchor`` must match a recent argument or
+    output hash, and each evidence kind must carry the fields that make its
+    claimed transition mechanically checkable. Invalid input earns nothing.
+    """
+    try:
+        if not isinstance(evidence, dict) or not events:
+            return None
+        kind = evidence.get("kind")
+        anchor = evidence.get("anchor")
+        validation_id = evidence.get("validation_id")
+        if not isinstance(anchor, str) or not anchor:
+            return None
+        anchored = [
+            event for event in events
+            if anchor in {event.arg_hash, event.output_hash}
+        ]
+        if not anchored:
+            return None
+        if not isinstance(validation_id, str) or not validation_id.strip():
+            return None
+
+        prog = budget_cfg.get("progress", {}) if isinstance(budget_cfg, dict) else {}
+        if not isinstance(prog, dict) or not prog.get("enabled", True):
+            return None
+        defaults = {
+            FAILURE_REPRODUCED: 4.0,
+            HYPOTHESIS_ELIMINATED: 4.0,
+            FAILURE_SET_SHRANK: 12.0,
+            DIFF_REDUCED: 4.0,
+            WORKFLOW_TRANSITION: 12.0,
+        }
+        if kind not in defaults:
+            return None
+
+        clean = {
+            "kind": kind,
+            "anchor": anchor,
+            "validation_id": validation_id.strip(),
+        }
+        if kind == FAILURE_SET_SHRANK:
+            before = evidence.get("failure_count_before")
+            after = evidence.get("failure_count_after")
+            if (isinstance(before, bool) or isinstance(after, bool)
+                    or not isinstance(before, int) or not isinstance(after, int)
+                    or before <= 0 or after < 0 or after >= before):
+                return None
+            clean.update(failure_count_before=before, failure_count_after=after)
+        elif kind == FAILURE_REPRODUCED:
+            if not any(event.status == ERROR for event in anchored):
+                return None
+        elif kind == HYPOTHESIS_ELIMINATED:
+            hypothesis_id = evidence.get("hypothesis_id")
+            if not isinstance(hypothesis_id, str) or not hypothesis_id.strip():
+                return None
+            clean["hypothesis_id"] = hypothesis_id.strip()
+        elif kind == DIFF_REDUCED:
+            if not any(event.status == OK for event in anchored):
+                return None
+        elif kind == WORKFLOW_TRANSITION:
+            before = evidence.get("state_before")
+            after = evidence.get("state_after")
+            if (not isinstance(before, str) or not isinstance(after, str)
+                    or not before or not after or before == after):
+                return None
+            if not any(event.status == OK for event in anchored):
+                return None
+            clean.update(state_before=before, state_after=after)
+
+        credit = _num(prog, f"{kind}_credit", defaults[kind])
+        if credit <= 0:
+            return None
+        return ProgressSignal(kind, credit, kind.replace("_", " "), clean)
     except Exception:
         return None

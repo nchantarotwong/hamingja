@@ -26,6 +26,27 @@ class RunResult:
     stderr: str = ""
 
 
+@dataclass(frozen=True)
+class LifecycleResult:
+    schema_version: int
+    operation: str
+    state: str
+    exit_code: int
+    total: int = 0
+    failing: int = 0
+    pending: int = 0
+    detail: str = ""
+
+
+def _lifecycle(sink, operation: str, state: str, exit_code: int, **kwargs) -> int:
+    try:
+        if isinstance(sink, list):
+            sink.append(LifecycleResult(1, operation, state, exit_code, **kwargs))
+    except Exception:
+        pass  # structured reporting must never change the workflow result
+    return exit_code
+
+
 Runner = Callable[[Sequence[str]], RunResult]
 DEFAULT_COMMAND_TIMEOUT_S = 30.0
 TRANSIENT_GH_FAILURE_MARKERS = (
@@ -141,6 +162,7 @@ def create_pr(
     remote: str = "origin",
     draft: bool = False,
     runner: Runner = default_runner,
+    outcome: Optional[list[LifecycleResult]] = None,
 ) -> int:
     """Create a PR using --body-file so shell quoting cannot mangle the body."""
     lines = ["pr create"]
@@ -239,7 +261,7 @@ def create_pr(
     if url:
         lines.append(f"- url: {url}")
     _print_lines(lines)
-    return 0
+    return _lifecycle(outcome, "pr_create", "created", 0, detail=url)
 
 
 def _git_current_branch(runner: Runner) -> Optional[str]:
@@ -363,6 +385,7 @@ def merge_pr(
     skip_ci_reason: Optional[str] = None,
     runner: Runner = default_runner,
     sleeper: Callable[[float], None] = time.sleep,
+    outcome: Optional[list[LifecycleResult]] = None,
 ) -> int:
     """Gate on CI, merge a PR via gh, wait for MERGED, then clean local state."""
     lines = [f"pr merge {pr}"]
@@ -458,9 +481,12 @@ def merge_pr(
         )
         lines.extend(cleanup_lines)
         _print_lines(lines)
-        return cleanup_rc
+        return _lifecycle(
+            outcome, "pr_merge", "merged", cleanup_rc,
+            detail="local cleanup failed" if cleanup_rc else "",
+        )
     _print_lines(lines)
-    return 0
+    return _lifecycle(outcome, "pr_merge", "merged", 0)
 
 
 FAILING_CHECK_STATES = {"FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"}
@@ -547,6 +573,7 @@ def ci_status(
     wait_timeout_s: int = 0,
     poll_s: float = 10,
     sleeper: Callable[[float], None] = time.sleep,
+    outcome: Optional[list[LifecycleResult]] = None,
 ) -> int:
     deadline = time.monotonic() + max(0, wait_timeout_s)
     no_checks_deadline = time.monotonic() + min(max(0, wait_timeout_s), NO_CHECKS_GRACE_SECONDS)
@@ -569,7 +596,7 @@ def ci_status(
                         print("ci status")
                     print("- checks: 0 total, 0 failing, 0 pending")
                     print("- no GitHub Actions workflows found locally; treating missing checks as no CI")
-                    return 0
+                    return _lifecycle(outcome, "ci_status", "ready", 0)
             if now < deadline:
                 sleep_s = min(backoff, max(0, deadline - now))
                 print(
@@ -583,7 +610,7 @@ def ci_status(
             if not printed_header:
                 print("ci status")
             print(f"- error: {error}")
-            return 1
+            return _lifecycle(outcome, "ci_status", "failed", 1, detail=error)
         failing, pending = _classify_checks(checks)
         if wait_timeout_s <= 0 or failing or not pending or time.monotonic() >= deadline:
             timed_out_wait = wait_timeout_s > 0 and bool(pending) and not failing and time.monotonic() >= deadline
@@ -607,10 +634,12 @@ def ci_status(
     for c in failing[:20]:
         print(_check_line("failed", c))
     if ci_block:
-        return 2
+        return _lifecycle(outcome, "ci_status", "blocked", 2, total=len(checks), failing=len(failing), pending=len(pending), detail=ci_block)
     if timed_out_wait:
-        return 1
-    return 1 if failing else 0
+        return _lifecycle(outcome, "ci_status", "pending", 1, total=len(checks), failing=len(failing), pending=len(pending), detail=f"timeout after {wait_timeout_s}s")
+    state = "failed" if failing else ("pending" if pending else "ready")
+    rc = 1 if failing else 0
+    return _lifecycle(outcome, "ci_status", state, rc, total=len(checks), failing=len(failing), pending=len(pending))
 
 
 def _no_checks_reported(error: str) -> bool:
