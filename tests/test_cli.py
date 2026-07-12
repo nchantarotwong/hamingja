@@ -78,6 +78,25 @@ def test_report_json():
     assert '"by_detector"' in out and '"repetition"' in out
 
 
+def test_report_recent_window_and_response_histogram():
+    clear_audit()
+    log_verdict("s", "Bash", Verdict(NUDGE, "repetition", "r", response="tripwire"))
+    out = _run(["report", "--since-hours", "1"])
+    assert "window:        last 1 hour(s)" in out
+    assert "response shapes: tripwire=1" in out
+
+
+def test_report_rejects_invalid_window():
+    parser = build_parser()
+    for value in ("-1", "nan", "inf"):
+        try:
+            parser.parse_args(["report", "--since-hours", value])
+        except SystemExit as exc:
+            assert exc.code == 2
+        else:
+            raise AssertionError(f"accepted invalid window {value}")
+
+
 def test_workflow_subcommands_parse():
     parser = build_parser()
     cases = [

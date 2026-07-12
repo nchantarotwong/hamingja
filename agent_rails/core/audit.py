@@ -15,6 +15,7 @@ be the reason a tool call is blocked or a hook crashes.
 from __future__ import annotations
 
 import json
+import math
 import time
 from pathlib import Path
 
@@ -118,31 +119,48 @@ def summarize(entries: list[dict]) -> dict:
     here when already running enforce.
     """
     detectors: dict[str, dict] = {}
+    responses: dict[str, int] = {}
     sessions: set = set()
     nudges = blocks = would_blocks = 0
+    timestamps: list[float] = []
     for e in entries:
         if not isinstance(e, dict):
             continue
-        det = str(e.get("detector", "?"))
-        action = str(e.get("action", ""))
-        wb = bool(e.get("would_block", False))
-        sessions.add(e.get("session_id"))
-        d = detectors.setdefault(det, {"nudge": 0, "block": 0, "would_block": 0})
-        if action == "block":
-            d["block"] += 1
-            blocks += 1
-        elif action == "nudge":
-            if wb:
-                d["would_block"] += 1
-                would_blocks += 1
-            else:
-                d["nudge"] += 1
-                nudges += 1
+        try:
+            det = " ".join(str(e.get("detector", "?")).split())[:128] or "?"
+            action = str(e.get("action", ""))
+            wb = bool(e.get("would_block", False))
+            response = " ".join(str(e.get("response", "observe")).split())[:128] or "observe"
+            responses[response] = responses.get(response, 0) + 1
+            ts = e.get("ts")
+            if isinstance(ts, (int, float)) and not isinstance(ts, bool):
+                stamp = float(ts)
+                if stamp >= 0 and math.isfinite(stamp):
+                    timestamps.append(stamp)
+            session = e.get("session_id")
+            if session is not None:
+                sessions.add(str(session)[:256])
+            d = detectors.setdefault(det, {"nudge": 0, "block": 0, "would_block": 0})
+            if action == "block":
+                d["block"] += 1
+                blocks += 1
+            elif action == "nudge":
+                if wb:
+                    d["would_block"] += 1
+                    would_blocks += 1
+                else:
+                    d["nudge"] += 1
+                    nudges += 1
+        except Exception:
+            continue
     return {
         "total": len([e for e in entries if isinstance(e, dict)]),
-        "sessions": len([s for s in sessions if s is not None]),
+        "sessions": len(sessions),
         "nudges": nudges,
         "would_blocks": would_blocks,
         "blocks": blocks,
         "by_detector": detectors,
+        "by_response": responses,
+        "first_ts": min(timestamps) if timestamps else None,
+        "last_ts": max(timestamps) if timestamps else None,
     }

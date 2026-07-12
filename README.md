@@ -341,7 +341,10 @@ agent-rails report  (37 verdicts across 4 session(s))
 
 Run observe for a while, read the report, raise any threshold that fires too
 often, then flip to `enforce`. `agent-rails report --reset` clears the log;
-`--json` emits the raw summary.
+`--json` emits the aggregate summary. Use `--since-hours HOURS` for a bounded
+dogfood window so older audit records do not contaminate current tuning. The
+summary includes response-shape counts and aggregate first/last timestamps,
+but never prompts, commands, paths, tool output, or captured sessions.
 
 **Per-repo opt-out:** drop a `.agent-rails-off` file at the repo root and the
 guard stands down there — recording goes inert too — for repos that
