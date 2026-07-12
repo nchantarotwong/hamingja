@@ -1,12 +1,12 @@
 import io
 import json
 
-import agent_rails.adapters.operator_turn as adapter
-from agent_rails.core.budget import read_state
+import hamingja.adapters.operator_turn as adapter
+from hamingja.core.budget import read_state
 
 
 def test_operator_hook_marks_anchor_without_storing_prompt(tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("HAMINGJA_STATE_DIR", str(tmp_path))
     monkeypatch.setattr(adapter, "load_config", lambda cwd=None: {
         "budget": {"enabled": True, "checkpoint_at": 12},
     })
@@ -27,14 +27,14 @@ def test_operator_hook_marks_anchor_without_storing_prompt(tmp_path, monkeypatch
 
 
 def test_operator_hook_malformed_payload_fails_open(tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("HAMINGJA_STATE_DIR", str(tmp_path))
     monkeypatch.setattr("sys.stdin", io.StringIO("not-json"))
     assert adapter.main() == 0
     assert json.loads(capsys.readouterr().out) == {}
 
 
 def test_operator_hook_mode_off_is_fully_inert(tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("HAMINGJA_STATE_DIR", str(tmp_path))
     monkeypatch.setattr(adapter, "load_config", lambda cwd=None: {
         "mode": "off", "budget": {"enabled": True, "checkpoint_at": 12},
     })

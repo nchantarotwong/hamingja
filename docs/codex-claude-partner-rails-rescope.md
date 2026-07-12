@@ -12,9 +12,9 @@ see [delegation-lineage-investigation.md](delegation-lineage-investigation.md).
 
 ## Purpose
 
-Rescope agent-rails around a narrow promise:
+Rescope hamingja around a narrow promise:
 
-> Agent-rails helps Codex and Claude recover from mechanical non-convergence,
+> Hamingja helps Codex and Claude recover from mechanical non-convergence,
 > bound accidental delegation sprawl, and complete deterministic workflows
 > without trying to control ordinary reasoning or force either agent into a
 > rigid behavioral lane.
@@ -31,7 +31,7 @@ decisions requires a new review.
 
 ## Product stance
 
-Agent-rails treats the coding agent as a collaborator with judgment, not a
+Hamingja treats the coding agent as a collaborator with judgment, not a
 process to micromanage. It should:
 
 - expose state, evidence, and consequences clearly;
@@ -40,7 +40,7 @@ process to micromanage. It should:
 - distinguish costly work from stalled work;
 - prefer recovery packets and resumable state over punishment or lockout;
 - keep provider-specific behavior in adapters;
-- fail open when agent-rails itself is malformed, unavailable, or uncertain.
+- fail open when hamingja itself is malformed, unavailable, or uncertain.
 
 It should not:
 
@@ -75,7 +75,7 @@ config are trusted; repository config may relax but not tighten.
 - Codex
 - Claude Code
 
-For these runtimes, agent-rails should maintain adapter contract tests,
+For these runtimes, hamingja should maintain adapter contract tests,
 synthetic integration fixtures, install/upgrade coverage, interruption and
 recovery tests, and documented capability gaps.
 
@@ -115,7 +115,7 @@ capability limitation.
 
 ## Two separate systems
 
-Agent-rails currently combines high-signal tripwires and a session call budget.
+Hamingja currently combines high-signal tripwires and a session call budget.
 They should be treated as distinct systems with different authority.
 
 ### 1. Mechanical tripwires
@@ -266,7 +266,7 @@ Minimum recovery packet:
 Recovery packet assembly itself fails open. If optional context collection or
 formatting fails, the denial/recovery path still emits the detector, exact
 signature, and approval/reset commands. Ruled-out hypotheses should come from
-`agent-rails ledger relevant <paths>` when available rather than transcript
+`hamingja ledger relevant <paths>` when available rather than transcript
 inference.
 
 A block records a distinct intervention event so the session is not wedged.
@@ -274,7 +274,7 @@ Retrying the identical blocked action remains blocked; a materially different
 diagnostic is allowed. Resetting detector state should not silently erase the
 audit record.
 
-For suspected context poisoning, agent-rails should support a bounded handoff
+For suspected context poisoning, hamingja should support a bounded handoff
 packet suitable for a fresh Codex or Claude session. Starting a new session is
 a recovery technique, not a failure or punishment.
 
@@ -337,7 +337,7 @@ Workflow-wrapper improvements:
 
 ## Trust and enforcement boundary
 
-Keep the existing fail-open invariant for agent-rails failures.
+Keep the existing fail-open invariant for hamingja failures.
 
 Trusted operator config may:
 
@@ -439,7 +439,7 @@ Codex and Claude agree on the following:
   may downgrade but never upgrade;
 - additions use backward-compatible optional fields unless public method
   signatures or verdict ordering change;
-- general destructive-action policy remains outside agent-rails enforcement;
+- general destructive-action policy remains outside hamingja enforcement;
 - tuning telemetry is local aggregate counters/event kinds only, with no
   prompts, commands, paths, or captured sessions.
 
@@ -475,7 +475,7 @@ Two counterexamples remain:
    unattended despite remaining productive and user-directed.
 2. On a runtime whose manifest declares a quota probe, a probe exception or
    stale reading can remove healthy-quota relief and permit denial. That makes
-   an agent-rails subsystem error contribute to a block, contrary to the
+   an hamingja subsystem error contribute to a block, contrary to the
    fail-open invariant.
 
 Proposed consensus predicate:
@@ -551,7 +551,7 @@ The stop's authority still follows the existing trust model:
 - packaged and user/operator configuration may enable or tighten the stop;
 - repository configuration may relax or disable the stop through its own
   budget-stop setting or the established repo-wide `off` mechanisms;
-- `.agent-rails-off` continues to stand the entire guard down;
+- `.hamingja-off` continues to stand the entire guard down;
 - relaxing a detector response mode does not implicitly disable a different
   mechanism; disabling the operator stop must target the stop or whole guard;
 - evidence thresholds used by the stop come from its effective budget
@@ -571,7 +571,7 @@ Accepted additional fixtures:
 - `detector_observe_mode_does_not_erase_budget_evidence`;
 - `repo_config_can_explicitly_relax_operator_stop`;
 - `trusted_config_can_tighten_operator_stop`;
-- `agent_rails_off_disarms_all_mechanisms`.
+- `hamingja_off_disarms_all_mechanisms`.
 
 Default numerical constants remain dogfood-tuning inputs rather than product
 principles: the initial proposal is a 30-weighted-call stall window, an equal

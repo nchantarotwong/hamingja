@@ -1,6 +1,6 @@
 """Engine tests — aggregation, observe/enforce/off modes, fail-open.
 
-Uses a temp state dir (via AGENT_RAILS_STATE_DIR) so it never touches a real
+Uses a temp state dir (via HAMINGJA_STATE_DIR) so it never touches a real
 session log.
 """
 import os
@@ -11,13 +11,13 @@ from copy import deepcopy
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # isolate state before importing anything that reads it
-_TMP = tempfile.mkdtemp(prefix="agent-rails-test-")
-os.environ["AGENT_RAILS_STATE_DIR"] = _TMP
+_TMP = tempfile.mkdtemp(prefix="hamingja-test-")
+os.environ["HAMINGJA_STATE_DIR"] = _TMP
 
-from agent_rails.core.engine import evaluate  # noqa: E402
-from agent_rails.core.events import ERROR, OK, PENDING, ToolEvent  # noqa: E402
-from agent_rails.core.state import append_event  # noqa: E402
-from agent_rails.detectors.base import ALLOW, BLOCK, NUDGE, Verdict  # noqa: E402
+from hamingja.core.engine import evaluate  # noqa: E402
+from hamingja.core.events import ERROR, OK, PENDING, ToolEvent  # noqa: E402
+from hamingja.core.state import append_event  # noqa: E402
+from hamingja.detectors.base import ALLOW, BLOCK, NUDGE, Verdict  # noqa: E402
 
 BASE = {
     "window": 12,
@@ -52,7 +52,7 @@ def test_enforce_mode_blocks_repetition():
     assert v.response == "tripwire"
     assert v.recovery["detector"] == "repetition"
     assert v.recovery["signature"] == "a"
-    assert f"agent-rails recover {s} reset" in v.reason
+    assert f"hamingja recover {s} reset" in v.reason
 
 
 def test_observe_mode_downgrades_block_to_nudge():
@@ -72,7 +72,7 @@ def test_advisory_only_detector_cannot_block_in_enforce(monkeypatch):
         def evaluate(self, events, candidate, config):
             return Verdict(BLOCK, self.name, "use the wrapper")
 
-    monkeypatch.setattr("agent_rails.core.engine.DETECTORS", [AdvisoryDetector()])
+    monkeypatch.setattr("hamingja.core.engine.DETECTORS", [AdvisoryDetector()])
     v = evaluate("advisory-only", cfg("enforce"), candidate=cand("advisory-only"))
     assert v.action == NUDGE
     assert v.response == "advise"
@@ -81,11 +81,11 @@ def test_advisory_only_detector_cannot_block_in_enforce(monkeypatch):
 
 
 def test_recovery_command_canonicalizes_untrusted_session_id():
-    s = "bad`\nagent-rails budget victim reset"
+    s = "bad`\nhamingja budget victim reset"
     seed(s, 3, arg="a", status=ERROR)
     v = evaluate(s, cfg("enforce"), candidate=cand(s, arg="a"))
     assert s not in v.reason
-    assert v.recovery["reset_command"].startswith("agent-rails recover bad__")
+    assert v.recovery["reset_command"].startswith("hamingja recover bad__")
 
 
 def test_detector_enforce_overrides_global_observe():

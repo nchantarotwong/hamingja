@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from agent_rails.core.budget import (
+from hamingja.core.budget import (
     ALLOW,
     BLOCK,
     NUDGE,
@@ -37,7 +37,7 @@ _CFG = {
 
 @pytest.fixture(autouse=True)
 def clean_state(tmp_path, monkeypatch):
-    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("HAMINGJA_STATE_DIR", str(tmp_path))
     yield
 
 
@@ -75,16 +75,16 @@ def test_tool_weight_unknown_tool_defaults_to_one():
 
 
 def test_builtin_weights_cover_ledger_command_families():
-    assert _tool_weight("Bash:agent-rails ledger check", {}) == 0.0
-    assert _tool_weight("Bash:agent-rails ledger relevant", {}) == 0.0
-    assert _tool_weight("Bash:agent-rails ledger add", {}) == pytest.approx(0.2)
-    assert _tool_weight("Bash:agent-rails ledger retire", {}) == pytest.approx(0.2)
-    assert _tool_weight("Bash:agent-rails ledger reverify", {}) == 1.0
+    assert _tool_weight("Bash:hamingja ledger check", {}) == 0.0
+    assert _tool_weight("Bash:hamingja ledger relevant", {}) == 0.0
+    assert _tool_weight("Bash:hamingja ledger add", {}) == pytest.approx(0.2)
+    assert _tool_weight("Bash:hamingja ledger retire", {}) == pytest.approx(0.2)
+    assert _tool_weight("Bash:hamingja ledger reverify", {}) == 1.0
 
 
 def test_ledger_command_weight_user_override_wins():
-    cfg = {"weights": {"Bash:agent-rails ledger add": 0.05}}
-    assert _tool_weight("Bash:agent-rails ledger add", cfg) == pytest.approx(0.05)
+    cfg = {"weights": {"Bash:hamingja ledger add": 0.05}}
+    assert _tool_weight("Bash:hamingja ledger add", cfg) == pytest.approx(0.05)
 
 
 def test_tool_weight_user_override_beats_builtin():
@@ -127,7 +127,7 @@ def test_weighted_calls_increment_by_tool_weight():
 
 def test_ledger_read_commands_do_not_spend_weighted_budget():
     for _ in range(10):
-        increment_and_check(SESSION, "Bash:agent-rails ledger relevant", False, _CFG)
+        increment_and_check(SESSION, "Bash:hamingja ledger relevant", False, _CFG)
     state = read_state(SESSION)
     assert state["tool_calls"] == 10
     assert state["weighted_calls"] == 0.0
@@ -135,7 +135,7 @@ def test_ledger_read_commands_do_not_spend_weighted_budget():
 
 def test_ledger_add_spends_low_nonzero_weighted_budget():
     for _ in range(5):
-        increment_and_check(SESSION, "Bash:agent-rails ledger add", False, _CFG)
+        increment_and_check(SESSION, "Bash:hamingja ledger add", False, _CFG)
     state = read_state(SESSION)
     assert state["tool_calls"] == 5
     assert state["weighted_calls"] == pytest.approx(1.0)
@@ -317,7 +317,7 @@ def test_sa_remaining_returns_int_when_weighted_counter_is_float():
     """`_sa_remaining(weighted_calls=..., ...)` is now called with a float.
     The returned slot count must still be an int so message templates
     render "1/2 uses remaining" rather than "1.0/2 uses remaining"."""
-    from agent_rails.core.budget import _sa_remaining
+    from hamingja.core.budget import _sa_remaining
 
     # weighted_calls 30.5, checkpoint_at 20, replenish_every 10 →
     # (30.5 - 20) // 10 = 1.0 (float); should cast to int.

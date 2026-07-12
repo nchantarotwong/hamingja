@@ -6,9 +6,9 @@ from contextlib import redirect_stdout
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agent_rails.cli import main  # noqa: E402
-from agent_rails.code_atlas import build_code_atlas, format_code_atlas, format_repo_health, repo_health  # noqa: E402
-from agent_rails.locator import locate  # noqa: E402
+from hamingja.cli import main  # noqa: E402
+from hamingja.code_atlas import build_code_atlas, format_code_atlas, format_repo_health, repo_health  # noqa: E402
+from hamingja.locator import locate  # noqa: E402
 
 
 def _large_source(extra_lines=220):

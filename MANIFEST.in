@@ -1,9 +1,10 @@
 include LICENSE
 include NOTICE
 include README.md
-include agent_rails/config.default.json
-include agent_rails/adapters/claude_code/install.sh
-include agent_rails/adapters/codex/install.sh
-recursive-include agent_rails/profiles *.md
-recursive-include agent_rails/templates *.md
+include CHANGELOG.md
+include hamingja/config.default.json
+include hamingja/adapters/claude_code/install.sh
+include hamingja/adapters/codex/install.sh
+recursive-include hamingja/profiles *.md
+recursive-include hamingja/templates *.md
 recursive-include tests *.py

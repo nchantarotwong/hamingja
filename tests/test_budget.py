@@ -1,11 +1,11 @@
-"""Tests for agent_rails.core.budget."""
+"""Tests for hamingja.core.budget."""
 from __future__ import annotations
 
 import json
 import os
 import pytest
 
-from agent_rails.core.budget import (
+from hamingja.core.budget import (
     ALLOW,
     BLOCK,
     NUDGE,
@@ -34,7 +34,7 @@ _CFG = {
 
 @pytest.fixture(autouse=True)
 def clean_state(tmp_path, monkeypatch):
-    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("HAMINGJA_STATE_DIR", str(tmp_path))
     yield
     # budget_path recomputed each call so no extra teardown needed
 
@@ -239,7 +239,7 @@ def test_read_state_reflects_increments():
 # ---------------------------------------------------------------------------
 
 def test_corrupt_state_file_allows(tmp_path, monkeypatch):
-    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("HAMINGJA_STATE_DIR", str(tmp_path))
     path = _budget_path(SESSION)
     path.write_text("not json at all {{{{", encoding="utf-8")
     bv = increment_and_check(SESSION, "Bash", False, _CFG)
@@ -279,10 +279,10 @@ def test_disabled_budget_not_checked():
 
 
 def test_approve_returns_empty_on_bad_session(monkeypatch, tmp_path):
-    # Point AGENT_RAILS_STATE_DIR at a regular file so _state_dir()'s mkdir fails.
+    # Point HAMINGJA_STATE_DIR at a regular file so _state_dir()'s mkdir fails.
     fake_file = tmp_path / "not-a-dir"
     fake_file.write_text("not a dir", encoding="utf-8")
-    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(fake_file))
+    monkeypatch.setenv("HAMINGJA_STATE_DIR", str(fake_file))
     state = approve("bad-session", add_tools=8)
     assert state == {}
 
@@ -384,7 +384,7 @@ def test_checkpoint_block_no_self_approve_when_disabled():
         bv = increment_and_check(SESSION, "Bash", False, _CFG_SA_DISABLED)
     assert bv.action == BLOCK
     assert "Self-approve" not in bv.reason
-    assert f"! agent-rails budget {SESSION} add N" in bv.reason
+    assert f"! hamingja budget {SESSION} add N" in bv.reason
 
 
 def test_checkpoint_block_no_self_approve_when_exhausted():
@@ -418,7 +418,7 @@ def test_checkpoint_skips_poll_when_self_approve_available(monkeypatch):
         called.append(args)
         return False
 
-    monkeypatch.setattr("agent_rails.core.budget._poll_for_approval", fake_poll)
+    monkeypatch.setattr("hamingja.core.budget._poll_for_approval", fake_poll)
     for _ in range(13):
         bv = increment_and_check(SESSION, "Bash", False, cfg)
     assert bv.action == BLOCK
@@ -438,7 +438,7 @@ def test_checkpoint_polls_when_self_approve_unavailable(monkeypatch):
         called.append(args)
         return False
 
-    monkeypatch.setattr("agent_rails.core.budget._poll_for_approval", fake_poll)
+    monkeypatch.setattr("hamingja.core.budget._poll_for_approval", fake_poll)
     for _ in range(13):
         bv = increment_and_check(SESSION, "Bash", False, cfg)
     assert bv.action == BLOCK

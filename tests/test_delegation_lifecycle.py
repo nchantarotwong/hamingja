@@ -1,9 +1,9 @@
 import io
 import json
 
-import agent_rails.adapters.delegation as adapter
-from agent_rails.cli import main
-from agent_rails.core.delegation import read_state, record_lifecycle
+import hamingja.adapters.delegation as adapter
+from hamingja.cli import main
+from hamingja.core.delegation import read_state, record_lifecycle
 
 
 def _event(kind: str, agent_id: str, agent_type: str = "Explore") -> dict:
@@ -17,7 +17,7 @@ def _event(kind: str, agent_id: str, agent_type: str = "Explore") -> dict:
 
 
 def test_start_and_stop_track_active_children_by_identity(tmp_path, monkeypatch):
-    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("HAMINGJA_STATE_DIR", str(tmp_path))
     first = record_lifecycle(_event("SubagentStart", "a1"))
     second = record_lifecycle(_event("SubagentStart", "a2", "review"))
     stopped = record_lifecycle(_event("SubagentStop", "a1"))
@@ -30,7 +30,7 @@ def test_start_and_stop_track_active_children_by_identity(tmp_path, monkeypatch)
 
 
 def test_duplicate_and_out_of_order_events_are_idempotent(tmp_path, monkeypatch):
-    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("HAMINGJA_STATE_DIR", str(tmp_path))
     record_lifecycle(_event("SubagentStart", "a1"))
     record_lifecycle(_event("SubagentStart", "a1"))
     record_lifecycle(_event("SubagentStop", "missing"))
@@ -41,13 +41,13 @@ def test_duplicate_and_out_of_order_events_are_idempotent(tmp_path, monkeypatch)
 
 
 def test_malformed_lifecycle_fails_open(tmp_path, monkeypatch):
-    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("HAMINGJA_STATE_DIR", str(tmp_path))
     assert record_lifecycle(None) == {}
     assert record_lifecycle({"hook_event_name": "SubagentStart"}) == {}
 
 
 def test_active_state_is_bounded(tmp_path, monkeypatch):
-    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("HAMINGJA_STATE_DIR", str(tmp_path))
     state = {}
     for index in range(70):
         state = record_lifecycle(_event("SubagentStart", f"a{index}"))
@@ -56,7 +56,7 @@ def test_active_state_is_bounded(tmp_path, monkeypatch):
 
 
 def test_adapter_emits_advisory_above_active_limit(tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("HAMINGJA_STATE_DIR", str(tmp_path))
     monkeypatch.setattr(adapter, "load_config", lambda cwd=None: {
         "delegation": {"max_active_children": 1},
     })
@@ -69,14 +69,14 @@ def test_adapter_emits_advisory_above_active_limit(tmp_path, monkeypatch, capsys
 
 
 def test_adapter_stop_returns_valid_empty_json(tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("HAMINGJA_STATE_DIR", str(tmp_path))
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(_event("SubagentStop", "missing"))))
     assert adapter.main() == 0
     assert json.loads(capsys.readouterr().out) == {}
 
 
 def test_adapter_mode_off_records_nothing(tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("HAMINGJA_STATE_DIR", str(tmp_path))
     monkeypatch.setattr(adapter, "load_config", lambda cwd=None: {"mode": "off"})
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(_event("SubagentStart", "a1"))))
     assert adapter.main() == 0
@@ -85,7 +85,7 @@ def test_adapter_mode_off_records_nothing(tmp_path, monkeypatch, capsys):
 
 
 def test_cli_exposes_bounded_delegation_state(tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("HAMINGJA_STATE_DIR", str(tmp_path))
     record_lifecycle(_event("SubagentStart", "a1"))
     assert main(["delegation", "parent-session"]) == 0
     output = json.loads(capsys.readouterr().out)
@@ -97,7 +97,7 @@ def test_cli_exposes_bounded_delegation_state(tmp_path, monkeypatch, capsys):
 
 
 def test_oversized_state_read_fails_open(tmp_path, monkeypatch):
-    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("HAMINGJA_STATE_DIR", str(tmp_path))
     record_lifecycle(_event("SubagentStart", "a1"))
     path = next(tmp_path.glob("*-delegation.json"))
     path.write_text("{" + "x" * 200_000, encoding="utf-8")

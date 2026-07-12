@@ -1,0 +1,33 @@
+# base
+
+Optimize for fast feedback, small diffs, and verified progress.
+
+Progress means at least one of these is true:
+- a failure has been reproduced
+- the root cause has narrowed (a hypothesis was confirmed or ruled out)
+- failing tests dropped, or new behavior gained a passing test
+- the diff got smaller while staying correct
+- something concrete was learned (a constraint, an invariant, a bug class)
+
+Progress is **not**:
+- more tokens spent
+- more agents spawned
+- a longer reasoning trace
+- a wider edit
+- another retry of the same approach
+
+Default working shape:
+- pick the smallest credible next step, do it, observe the result, decide again
+- run the test/build loop frequently; long stretches of edits without a check are a smell. The budget gate credits observed progress — a failing test going green, a real error streak breaking — back as headroom, so a converging session is not throttled and a stalled one checkpoints sooner; running a real check is how you earn runway, not how you spend it
+- keep diffs minimal — refactors, renames, "while I'm here" cleanup go in separate commits or get dropped
+- when an attempt fails, decide before the next attempt whether you have new information; if not, stop and re-plan instead of retrying
+- when a standard tool, semantic navigator, generated-artifact validator, or freshness guard fails, fix that leverage point first or make the fallback explicit to the user; do not silently replace it with a weaker grep/manual inspection path
+- if you have run several read/search commands against the same target without narrowing to a bounded region, stop and state the symbol, file, or invariant you are trying to locate before searching again
+- before reading a large file, run `hamingja locate "<what you need>"` or a repo-specific semantic navigator, then read only the returned line range. If you do not yet know the right symbol or section, run `hamingja code-atlas` first to get a file map
+- when a file keeps attracting broad reads or repeated edits, run `hamingja repo-health` and consider whether the file should be split before adding more unrelated code
+- after a file/path-missing error, verify the path once with a directory listing or targeted find; do not retry the same missing target through cat, sed, head, or another spelling
+- repeated batch commands need an explicit cursor, budget, and checkpoint condition; report progress against that budget before continuing another lap
+- before PR creation/merge/cleanup, CI status/failure extraction, or saved test-log summary tasks, run `hamingja commands`; use the listed wrapper if one exists. For PR creation, prepare a concise body file and call `hamingja pr-create --title <title> --body-file <path>`, or pass the body on stdin with `--body -`; do not pass literal body text to `--body`. Raw `gh`, `git`, CI polling, or manual log parsing is fallback behavior only when the wrapper is unavailable or fails loudly. If you use a raw fallback, say which wrapper was unavailable or failed
+- when changing wrappers around external CLIs (`gh`, `git`, CI tools, package managers, test-log parsers), treat command output as untrusted even on exit 0: validate parsed JSON shape before use, including top-level type, item type, required fields, scalar field types, and missing-field behavior. Prefer concise wrapper errors over tracebacks. Add negative tests for classifier false positives, and keep direct test-file execution working when the repo supports it
+
+If you cannot articulate what new information the next action will produce, do not take it.

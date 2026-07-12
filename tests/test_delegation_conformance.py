@@ -1,4 +1,4 @@
-from agent_rails.adapters.capabilities import delegation_observation, manifest
+from hamingja.adapters.capabilities import delegation_observation, manifest
 
 
 def test_claude_lifecycle_proves_identity_and_completion_not_lineage():

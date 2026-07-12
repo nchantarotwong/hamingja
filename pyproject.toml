@@ -1,36 +1,42 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agent-rails"
-version = "0.1.0"
-description = "Harness-neutral guardrails for LLM coding agents — detect and interrupt doom-loop / context-poisoning before it burns tokens."
+name = "hamingja"
+dynamic = ["version"]
+description = "Fail-open partner rails for Codex and Claude Code."
 readme = "README.md"
-requires-python = ">=3.9"
-license = { text = "Apache-2.0" }
+requires-python = ">=3.13"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "Nels Chantarotwong" }]
 keywords = ["llm", "agent", "guardrails", "claude-code", "codex", "safety"]
 
 [project.scripts]
-agent-rails = "agent_rails.cli:main"
+hamingja = "hamingja.cli:main"
 
 [project.optional-dependencies]
 test = ["pytest>=9"]
 
 [project.urls]
-Homepage = "https://github.com/"
+Homepage = "https://github.com/nchantarotwong/hamingja"
+Repository = "https://github.com/nchantarotwong/hamingja.git"
+Issues = "https://github.com/nchantarotwong/hamingja/issues"
 
 [tool.setuptools.packages.find]
-include = ["agent_rails*"]
+include = ["hamingja*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "hamingja.__version__"}
 
 [tool.setuptools.package-data]
-agent_rails = ["config.default.json"]
-"agent_rails.adapters.claude_code" = ["install.sh"]
-"agent_rails.adapters.codex" = ["install.sh"]
-"agent_rails.profiles" = ["*.md"]
-"agent_rails.templates" = ["*.md"]
-"agent_rails.templates.codex" = ["*.md"]
+hamingja = ["config.default.json"]
+"hamingja.adapters.claude_code" = ["install.sh"]
+"hamingja.adapters.codex" = ["install.sh"]
+"hamingja.profiles" = ["*.md"]
+"hamingja.templates" = ["*.md"]
+"hamingja.templates.codex" = ["*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

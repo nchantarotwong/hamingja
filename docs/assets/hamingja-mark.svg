@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title description">
+  <title id="title">Hamingja mark</title>
+  <desc id="description">Two interwoven strands form an H inside an open circle.</desc>
+  <path d="M101 106a52 52 0 1 1 12-58" fill="none" stroke="#263238" stroke-width="8" stroke-linecap="round"/>
+  <path d="M40 31v66c0 9 13 9 13 0V73c0-12 22-12 22-24V31" fill="none" stroke="#6D5BD0" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M88 31v66c0 9-13 9-13 0V73c0-12-22-12-22-24V31" fill="none" stroke="#D47A3A" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

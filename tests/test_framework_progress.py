@@ -2,9 +2,9 @@ import json
 
 import pytest
 
-from agent_rails.adapters.framework_progress import parse_failure_count, record_framework_progress
-from agent_rails.core import budget
-from agent_rails.core.api import record
+from hamingja.adapters.framework_progress import parse_failure_count, record_framework_progress
+from hamingja.core import budget
+from hamingja.core.api import record
 
 
 @pytest.mark.parametrize(("framework", "output", "expected"), [
@@ -37,7 +37,7 @@ def _observe(tmp_path, sid, command, output, ok=False):
 
 
 def test_same_validation_failure_set_shrink_credits_progress(tmp_path, monkeypatch):
-    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("HAMINGJA_STATE_DIR", str(tmp_path))
     sid = "pytest-shrink"
     _seed(sid)
     assert _observe(tmp_path, sid, "python -m pytest -q", "5 failed, 2 passed") is False
@@ -50,7 +50,7 @@ def test_same_validation_failure_set_shrink_credits_progress(tmp_path, monkeypat
 
 
 def test_equal_increased_and_different_command_earn_nothing(tmp_path, monkeypatch):
-    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("HAMINGJA_STATE_DIR", str(tmp_path))
     sid = "no-shrink"
     _seed(sid)
     assert not _observe(tmp_path, sid, "pytest -q", "2 failed, 5 passed")
@@ -59,7 +59,7 @@ def test_equal_increased_and_different_command_earn_nothing(tmp_path, monkeypatc
 
 
 def test_failed_run_cannot_turn_passing_text_into_zero_failures(tmp_path, monkeypatch):
-    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("HAMINGJA_STATE_DIR", str(tmp_path))
     sid = "false-zero"
     _seed(sid)
     assert not _observe(tmp_path, sid, "pytest -q", "2 failed, 5 passed")
@@ -69,7 +69,7 @@ def test_failed_run_cannot_turn_passing_text_into_zero_failures(tmp_path, monkey
 
 
 def test_successful_run_can_complete_failure_set_shrink_to_zero(tmp_path, monkeypatch):
-    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("HAMINGJA_STATE_DIR", str(tmp_path))
     sid = "shrink-zero"
     _seed(sid)
     assert not _observe(tmp_path, sid, "pytest -q", "2 failed, 5 passed")
@@ -89,7 +89,7 @@ def test_successful_run_can_complete_failure_set_shrink_to_zero(tmp_path, monkey
     "fake-runner pytest -q",
 ])
 def test_composed_or_spoofed_commands_are_not_measured(tmp_path, monkeypatch, command):
-    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("HAMINGJA_STATE_DIR", str(tmp_path))
     sid = "spoof"
     _seed(sid)
     assert not _observe(tmp_path, sid, command, "1 failed, 9 passed")
@@ -97,7 +97,7 @@ def test_composed_or_spoofed_commands_are_not_measured(tmp_path, monkeypatch, co
 
 
 def test_stale_event_and_malformed_output_fail_open(tmp_path, monkeypatch):
-    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("HAMINGJA_STATE_DIR", str(tmp_path))
     sid = "stale"
     record(sid, "Bash", {"command": "echo prior"}, True, str(tmp_path))
     args = {"command": "cargo test"}
@@ -106,14 +106,14 @@ def test_stale_event_and_malformed_output_fail_open(tmp_path, monkeypatch):
 
 
 def test_mode_off_is_inert(tmp_path, monkeypatch):
-    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
-    (tmp_path / ".agent-rails-off").write_text("")
+    monkeypatch.setenv("HAMINGJA_STATE_DIR", str(tmp_path))
+    (tmp_path / ".hamingja-off").write_text("")
     assert not _observe(tmp_path, "off", "pytest -q", "3 failed, 1 passed")
     assert not list(tmp_path.glob("*-framework-progress.json"))
 
 
 def test_corrupt_state_is_replaced_without_raising(tmp_path, monkeypatch):
-    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("HAMINGJA_STATE_DIR", str(tmp_path))
     sid = "corrupt"
     path = tmp_path / f"{sid}-framework-progress.json"
     path.write_text("not-json")

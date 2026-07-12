@@ -14,9 +14,9 @@ import os
 import tempfile
 from contextlib import contextmanager
 
-from agent_rails.core import budget
-from agent_rails.core.events import ToolEvent, OK, ERROR, BLOCKED
-from agent_rails.core.progress import (
+from hamingja.core import budget
+from hamingja.core.events import ToolEvent, OK, ERROR, BLOCKED
+from hamingja.core.progress import (
     admit_structured_progress,
     assess_progress,
     TEST_RECOVERY,
@@ -35,16 +35,16 @@ def ev(status: str, *, arg_kind: str = "", arg_hash: str = "h", tool: str = "Bas
 @contextmanager
 def temp_state():
     """Isolate budget/state files in a throwaway dir for one test."""
-    prev = os.environ.get("AGENT_RAILS_STATE_DIR")
+    prev = os.environ.get("HAMINGJA_STATE_DIR")
     with tempfile.TemporaryDirectory() as d:
-        os.environ["AGENT_RAILS_STATE_DIR"] = d
+        os.environ["HAMINGJA_STATE_DIR"] = d
         try:
             yield d
         finally:
             if prev is None:
-                os.environ.pop("AGENT_RAILS_STATE_DIR", None)
+                os.environ.pop("HAMINGJA_STATE_DIR", None)
             else:
-                os.environ["AGENT_RAILS_STATE_DIR"] = prev
+                os.environ["HAMINGJA_STATE_DIR"] = prev
 
 
 def _budget_cfg() -> dict:
@@ -280,7 +280,7 @@ def test_cap_zero_means_unlimited():
 def test_shipped_defaults_have_allowance_and_cap():
     # Pin the shipped contract: subagents get a small allowance (cure for
     # context poisoning is not taxed per spawn), and the credit cap is on.
-    from agent_rails.config import load_config
+    from hamingja.config import load_config
     with temp_state() as d:
         cfg = load_config(d)  # no project config in a fresh temp dir -> baseline
         assert cfg["budget"]["max_subagents"] == 1
@@ -292,7 +292,7 @@ def test_record_wires_credit_through_real_config():
     # sequence and confirm the live counter actually drops. Exercises real
     # config load + arg-kind classification + append + assess + credit, which
     # the isolated unit tests above do not.
-    from agent_rails.core.api import record
+    from hamingja.core.api import record
 
     with temp_state() as d:
         sid = "sess-record"
@@ -314,7 +314,7 @@ def test_record_wires_credit_through_real_config():
 
 
 def test_record_progress_persists_scoped_evidence():
-    from agent_rails.core.api import record, record_progress
+    from hamingja.core.api import record, record_progress
 
     with temp_state() as d:
         sid = "sess-structured-progress"

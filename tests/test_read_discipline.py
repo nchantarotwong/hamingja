@@ -6,9 +6,9 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agent_rails.core.events import OK, PENDING, ToolEvent, _read_scope  # noqa: E402
-from agent_rails.detectors.base import ALLOW, BLOCK, NUDGE  # noqa: E402
-from agent_rails.detectors.read_discipline import ReadDisciplineDetector  # noqa: E402
+from hamingja.core.events import OK, PENDING, ToolEvent, _read_scope  # noqa: E402
+from hamingja.detectors.base import ALLOW, BLOCK, NUDGE  # noqa: E402
+from hamingja.detectors.read_discipline import ReadDisciplineDetector  # noqa: E402
 
 CFG = {"detectors": {"read_discipline": {"enabled": True, "nudge_at": 2, "block_at": 3}}}
 DET = ReadDisciplineDetector()
@@ -260,7 +260,7 @@ def test_refs_script_hint_when_repo_refs_helper_exists(tmp_path):
     verdict = DET.evaluate([], _ev(path=str(path)), CFG)
     assert verdict is not None
     assert verdict.action == BLOCK
-    assert "agent-rails locate" in verdict.reason
+    assert "hamingja locate" in verdict.reason
     assert "./refs.sh <symbol-or-pattern>" in verdict.reason
 
 
@@ -276,7 +276,7 @@ def test_refs_script_hint_when_scripts_refs_helper_exists(tmp_path):
     verdict = DET.evaluate([], _ev(path=str(path)), CFG)
     assert verdict is not None
     assert verdict.action == BLOCK
-    assert "agent-rails locate" in verdict.reason
+    assert "hamingja locate" in verdict.reason
     assert "scripts/refs.sh <symbol-or-pattern>" in verdict.reason
 
 
@@ -285,16 +285,16 @@ def test_refs_script_hint_when_scripts_refs_helper_exists(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_large_read_advisory_fires_on_unscoped_large_file(tmp_path):
-    from agent_rails.adapters.claude_code.tripwire import _large_read_advisory
+    from hamingja.adapters.claude_code.tripwire import _large_read_advisory
     p = _make_large_file(tmp_path, lines=250)
     result = _large_read_advisory("Read", {"file_path": p})
     assert result is not None
     assert "large.py" in result
-    assert "agent-rails locate" in result
+    assert "hamingja locate" in result
 
 
 def test_large_read_advisory_silent_for_small_file(tmp_path):
-    from agent_rails.adapters.claude_code.tripwire import _large_read_advisory
+    from hamingja.adapters.claude_code.tripwire import _large_read_advisory
     small = tmp_path / "s.py"
     small.write_text("\n".join(f"x {i}" for i in range(50)))
     result = _large_read_advisory("Read", {"file_path": str(small)})
@@ -302,20 +302,20 @@ def test_large_read_advisory_silent_for_small_file(tmp_path):
 
 
 def test_large_read_advisory_silent_for_scoped_read(tmp_path):
-    from agent_rails.adapters.claude_code.tripwire import _large_read_advisory
+    from hamingja.adapters.claude_code.tripwire import _large_read_advisory
     p = _make_large_file(tmp_path, lines=250)
     result = _large_read_advisory("Read", {"file_path": p, "offset": 10, "limit": 40})
     assert result is None
 
 
 def test_large_read_advisory_silent_for_nonexistent_path():
-    from agent_rails.adapters.claude_code.tripwire import _large_read_advisory
+    from hamingja.adapters.claude_code.tripwire import _large_read_advisory
     result = _large_read_advisory("Read", {"file_path": "/no/such/file.py"})
     assert result is None
 
 
 def test_large_read_advisory_silent_for_non_read_tool(tmp_path):
-    from agent_rails.adapters.claude_code.tripwire import _large_read_advisory
+    from hamingja.adapters.claude_code.tripwire import _large_read_advisory
     p = _make_large_file(tmp_path, lines=250)
     result = _large_read_advisory("Bash", {"command": f"cat {p}"})
     assert result is None

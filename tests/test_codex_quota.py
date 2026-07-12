@@ -1,4 +1,4 @@
-"""Tests for agent_rails.adapters.codex.quota (the Codex rate-limit probe).
+"""Tests for hamingja.adapters.codex.quota (the Codex rate-limit probe).
 
 Synthetic rollout fixtures only — never a captured real session. The probe is a
 fail-open reader of Codex's append-only session JSONL, so the bulk of these
@@ -15,8 +15,8 @@ import time
 
 import pytest
 
-from agent_rails.adapters.codex import quota
-from agent_rails.adapters.codex.quota import QuotaReading, read_quota
+from hamingja.adapters.codex import quota
+from hamingja.adapters.codex.quota import QuotaReading, read_quota
 
 SID = "019f2bb0-0bc9-7460-9afb-3d285b26b886"
 

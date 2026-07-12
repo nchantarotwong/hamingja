@@ -1,8 +1,18 @@
-# agent-rails
+<p align="center">
+  <img src="https://raw.githubusercontent.com/nchantarotwong/hamingja/main/docs/assets/hamingja-mark.svg" width="112" alt="Hamingja: two interwoven strands forming an H inside an open circle">
+</p>
 
-Fail-open partner rails for Codex and Claude Code.
+# Hamingja
 
-agent-rails watches the tool-call stream for a small set of mechanically
+Fail-open partner rails for human–AI coding partnerships.
+
+In Old Norse tradition, a *hamingja* is an accompanying guardian spirit and a
+person's embodied good fortune—something that could be lent to help another
+through a difficult undertaking. Hamingja brings that idea to Codex and Claude
+Code: protection and accumulated project wisdom that support the partnership
+without taking control away from either partner.
+
+hamingja watches the tool-call stream for a small set of mechanically
 testable non-convergence signatures, keeps resource checkpoints distinct from
 those tripwires, and turns repetitive operational work into deterministic
 wrappers. It is designed to help an agent recover and finish—not to judge
@@ -25,33 +35,55 @@ basis. Every uncertain or malformed guardrail-evaluation path fails open.
 
 ## Install
 
+Python 3.13 or newer is required. For a global command used by every agent
+session, `pipx` keeps hamingja isolated from project environments:
+
 ```bash
-pip install -e .              # or: pip install agent-rails (once published)
-agent-rails install           # installs for every harness it detects under ~/
+pipx install --python python3.13 hamingja
+hamingja install           # installs for every harness it detects under ~/
 # or, explicitly:
-agent-rails install claude    # Claude Code   (alias for claude_code)
-agent-rails install codex     # Codex
-agent-rails install all       # both, regardless of what's already set up
+hamingja install claude    # Claude Code   (alias for claude_code)
+hamingja install codex     # Codex
+hamingja install all       # both, regardless of what's already set up
+hamingja uninstall all     # remove only hamingja hooks; preserve others
 ```
 
-`agent-rails install` runs the bundled installer; with no argument it picks
+Until the package is published, install from a checkout instead:
+
+```bash
+git clone https://github.com/nchantarotwong/hamingja.git
+cd hamingja
+pipx install --python python3.13 --editable .
+hamingja install
+```
+
+`hamingja install` runs the bundled installer; with no argument it picks
 up whatever it finds under `~/.claude/` and `~/.codex/`. The raw
-`bash agent_rails/adapters/<harness>/install.sh` still works if you'd rather
-not install the package. After installing, `agent-rails status` prints the
-resolved config for any directory, `agent-rails report` shows what has fired,
-`agent-rails locate` ranks small line ranges to inspect before reading large
-files, and `agent-rails init` generates a `CLAUDE.md` (+ `AGENTS.md` symlink)
+`bash hamingja/adapters/<harness>/install.sh` still works if you'd rather
+not install the package. After installing, `hamingja status` prints the
+resolved config for any directory, `hamingja report` shows what has fired,
+`hamingja locate` ranks small line ranges to inspect before reading large
+files, and `hamingja init` generates a `CLAUDE.md` (+ `AGENTS.md` symlink)
 for the project's soft workflow rails.
+
+`hamingja uninstall claude|codex|all` removes only recognized hamingja
+hook commands, preserves every unrelated hook and setting, writes a backup only
+when it changes a file, and refuses to rewrite malformed configuration.
+
+To upgrade, run `pipx upgrade hamingja` (or reinstall the editable checkout),
+then `hamingja install all` to refresh hook paths. Claude and Codex processes
+cache hook commands for the life of a session or application process; restart
+running sessions after changing the Python installation or hook paths.
 
 ### Code locator
 
 ```bash
-agent-rails locate "pick directory endpoint"
-agent-rails locate-symbol "do_GET"
-agent-rails locate-edit "where should I add repo root field?"
-agent-rails code-atlas
-agent-rails repo-health
-agent-rails code-atlas --json       # versioned output; flags possible truncation
+hamingja locate "pick directory endpoint"
+hamingja locate-symbol "do_GET"
+hamingja locate-edit "where should I add repo root field?"
+hamingja code-atlas
+hamingja repo-health
+hamingja code-atlas --json       # versioned output; flags possible truncation
 ```
 
 The locator is the generic fallback before reading a large file. `code-atlas`
@@ -68,11 +100,11 @@ expert tools, but these commands are available everywhere.
 ### Ruled-out ledger
 
 ```bash
-agent-rails ledger add --kind ruled-out --claim "..." --evidence "..." --falsifier "..." --scope path/to/file
-agent-rails ledger check
-agent-rails ledger relevant path/to/file
-agent-rails ledger reverify <slug> [--timeout 60]
-agent-rails ledger retire <slug>
+hamingja ledger add --kind ruled-out --claim "..." --evidence "..." --falsifier "..." --scope path/to/file
+hamingja ledger check
+hamingja ledger relevant path/to/file
+hamingja ledger reverify <slug> [--timeout 60]
+hamingja ledger retire <slug>
 ```
 
 The ledger records negative knowledge in `.ledger/`: falsified hypotheses,
@@ -85,7 +117,7 @@ as advisory context before edit/write tools touch a scoped path.
 ### Claude Code
 
 ```bash
-agent-rails install claude
+hamingja install claude
 ```
 
 Merges six hooks into `~/.claude/settings.json` — a `PreToolUse` tripwire,
@@ -101,7 +133,7 @@ operator resource boundaries remain separately configured.
 ### Codex
 
 ```bash
-agent-rails install codex
+hamingja install codex
 ```
 
 Merges five hooks into `~/.codex/hooks.json` — a `PreToolUse` tripwire, a
@@ -117,7 +149,7 @@ configured.
 Codex hook coverage follows Codex's hook support: `PreToolUse` / `PostToolUse`
 currently cover Bash, `apply_patch`, and MCP tools, but not every possible
 tool path. In particular, newer shell execution paths may bypass tool hooks;
-when Codex does not emit `PostToolUse`, agent-rails cannot observe that result,
+when Codex does not emit `PostToolUse`, hamingja cannot observe that result,
 so the `error_streak` detector is best-effort for Codex. `repetition` still
 works for any `PreToolUse`-covered call.
 
@@ -147,7 +179,7 @@ unreadable state, a throwing detector, bad config) defaults to *allowing* the
 call. The only things that ever block a call are an explicit, tested tripwire
 or an explicit, tested operator authority boundary.
 
-Fail-open here means “do not deny the agent's tool call because agent-rails
+Fail-open here means “do not deny the agent's tool call because hamingja
 failed.” Deterministic workflow wrappers still fail loudly and refuse an unsafe
 merge when external CI or PR state is unknown; returning a wrapper error is not
 the same as intercepting the caller's tool execution.
@@ -199,14 +231,14 @@ set `budget.checkpoint_deny: true`; when denial is enabled, the message includes
 the session id for the CLI recovery commands:
 
 ```bash
-agent-rails budget <session-id>          # show current counters
-agent-rails budget <session-id> add 20   # approve 20 more tool calls
-agent-rails budget <session-id> reset    # clear all counters for the session
-agent-rails budget <session-id> reset 20 # reset, then pre-approve 20 calls
-agent-rails budget <session-id> subagent # approve one subagent spawn
-agent-rails budget <session-id> add 3 --self  # agent self-approve, if config allows it
-agent-rails recover <session-id> handoff      # bounded fresh-session packet
-agent-rails recover <session-id> reset        # clear detector history; preserve audit
+hamingja budget <session-id>          # show current counters
+hamingja budget <session-id> add 20   # approve 20 more tool calls
+hamingja budget <session-id> reset    # clear all counters for the session
+hamingja budget <session-id> reset 20 # reset, then pre-approve 20 calls
+hamingja budget <session-id> subagent # approve one subagent spawn
+hamingja budget <session-id> add 3 --self  # agent self-approve, if config allows it
+hamingja recover <session-id> handoff      # bounded fresh-session packet
+hamingja recover <session-id> reset        # clear detector history; preserve audit
 ```
 
 `reset` is the operator-stop recovery path: it deletes the session budget state so
@@ -218,11 +250,11 @@ Subagent spawns retain a conservative monotonic allowance
 spawn and neither runtime exposes parent-agent lineage. Once the allowance is spent,
 `budget <session-id> subagent` grants exactly one additional spawn. Static
 capability manifests keep this limitation explicit. Both runtimes now expose
-stable child identity and completion events, so agent-rails also tracks active
+stable child identity and completion events, so hamingja also tracks active
 children at session scope and advises above `delegation.max_active_children`
-(default 1). Inspect that state with `agent-rails delegation <session-id>`.
+(default 1). Inspect that state with `hamingja delegation <session-id>`.
 If a runtime exits before emitting completion, clear stale advisory state with
-`agent-rails delegation <session-id> reset`.
+`hamingja delegation <session-id> reset`.
 
 #### Progress crediting
 
@@ -260,7 +292,7 @@ loop past them. Tune the credit magnitudes or disable the whole behavior under
 `budget.progress` in config.
 
 The same weighted counter discounts known cheap tools. Read-class tools cost
-less than edits, and `agent-rails ledger check` / `ledger relevant` are free
+less than edits, and `hamingja ledger check` / `ledger relevant` are free
 because they are guardrail orientation. `ledger add` and `ledger retire` cost a
 small nonzero amount; `ledger reverify` stays full-cost because it can execute a
 falsifier command.
@@ -269,7 +301,7 @@ falsifier command.
 
 The call counter is a *proxy* for spend. On a Claude/Codex CLI subscription the
 real scarce resource is the rate-limit window, not dollars-per-token — so where
-the harness records its own quota, agent-rails reads it and gates on the real
+the harness records its own quota, hamingja reads it and gates on the real
 signal instead of the proxy. Each adapter ships a fail-open probe that tails the
 harness's own session log; a missing or unreadable signal falls straight back to
 the advisory call-count path. Missing, stale, malformed, or throwing probes
@@ -298,7 +330,7 @@ Missing or malformed prompt events fail open and cannot arm a stop.
 - **Claude Code** does not persist a rate-limit percent (it lives on API
   response headers), so its probe reports only **context occupancy** from the
   transcript's per-message `usage`. A nearly-full context window is re-sent every
-  turn — a real cost even at a low call count — so agent-rails emits a
+  turn — a real cost even at a low call count — so hamingja emits a
   context-fill nudge past `budget.context_nudge_pct` (default 80; `0` disables).
   Occupancy is estimated against `budget.context_window_tokens` (default
   200000); an over-large real window only under-reports, never over-blocks.
@@ -365,16 +397,16 @@ policy:
 ```
 
 As with thresholds, detector-level modes only tighten from trusted config. A
-repo-local `.agent-rails.json` can downgrade a detector toward `observe` or
+repo-local `.hamingja.json` can downgrade a detector toward `observe` or
 `off`, but cannot escalate it to `enforce`.
 
 Observe mode only earns its keep if the would-blocks are visible, so every
-non-allow verdict is appended to an audit log and `agent-rails report` turns it
+non-allow verdict is appended to an audit log and `hamingja report` turns it
 into a per-detector tuning summary:
 
 ```
-$ agent-rails report
-agent-rails report  (37 verdicts across 4 session(s))
+$ hamingja report
+hamingja report  (37 verdicts across 4 session(s))
 
   nudges:        21
   would-block:   14   (become BLOCKS when the relevant mode is enforce)
@@ -388,13 +420,13 @@ agent-rails report  (37 verdicts across 4 session(s))
 ```
 
 Run observe for a while, read the report, raise any threshold that fires too
-often, then flip to `enforce`. `agent-rails report --reset` clears the log;
+often, then flip to `enforce`. `hamingja report --reset` clears the log;
 `--json` emits the aggregate summary. Use `--since-hours HOURS` for a bounded
 dogfood window so older audit records do not contaminate current tuning. The
 summary includes response-shape counts and aggregate first/last timestamps,
 but never prompts, commands, paths, tool output, or captured sessions.
 
-**Per-repo opt-out:** drop a `.agent-rails-off` file at the repo root and the
+**Per-repo opt-out:** drop a `.hamingja-off` file at the repo root and the
 guard stands down there — recording goes inert too — for repos that
 legitimately flail (long migrations, known-noisy tasks). It's honored even when
 the agent runs in a subdirectory.
@@ -404,18 +436,18 @@ the agent runs in a subdirectory.
 Configuration resolves in this order, and the trust boundary matters:
 
 1. built-in defaults
-2. packaged `agent_rails/config.default.json` — **trusted** (ships with the install)
-3. user-level `~/.agent-rails/config.json` — **trusted** (operator-owned; may tighten)
-4. matched user-level `~/.agent-rails/policies/*.json` — **trusted** (operator-owned; may tighten)
-5. per-project `.agent-rails.json`, searched from the agent's cwd up to the
+2. packaged `hamingja/config.default.json` — **trusted** (ships with the install)
+3. user-level `~/.hamingja/config.json` — **trusted** (operator-owned; may tighten)
+4. matched user-level `~/.hamingja/policies/*.json` — **trusted** (operator-owned; may tighten)
+5. per-project `.hamingja.json`, searched from the agent's cwd up to the
    repo root — **untrusted**: it may only *relax* the guard (raise thresholds,
    disable detectors, lower the window, downgrade mode toward `off`, or *extend*
    the read-only `exempt_tools` allowlist). It can **never** escalate to
    `enforce`, lower a threshold, or *remove* an exemption, so a hostile or
    careless repo cannot brick the agent by forcing its first tool call to be
    denied.
-6. `.agent-rails-off` marker (same upward search) → `off`
-7. `AGENT_RAILS_MODE` env var — **trusted** (your shell); may set any mode.
+6. `.hamingja-off` marker (same upward search) → `off`
+7. `HAMINGJA_MODE` env var — **trusted** (your shell); may set any mode.
 
 All values are sanitized: modes are canonicalized, and `window`/`block_at`/
 `nudge_at`/detector-specific thresholds are coerced to ints with safe floors,
@@ -444,11 +476,11 @@ config:
 }
 ```
 
-Put that file at `~/.agent-rails/policies/compiler-tools.json`. It can tighten
-because it is trusted local operator state. The repo's own `.agent-rails.json`
+Put that file at `~/.hamingja/policies/compiler-tools.json`. It can tighten
+because it is trusted local operator state. The repo's own `.hamingja.json`
 still cannot add those strict patterns; it can only relax thresholds or opt out.
 
-For tests or isolated installs, set `AGENT_RAILS_HOME` to point at an alternate
+For tests or isolated installs, set `HAMINGJA_HOME` to point at an alternate
 trusted policy root.
 
 ---
@@ -456,7 +488,7 @@ trusted policy root.
 ## Architecture
 
 ```
-agent_rails/
+hamingja/
   cli.py       report / status / install / init / workflow wrappers
   core/        events.py   normalized ToolEvent (the harness-neutral schema)
                state.py    session-keyed rolling log (locked, fail-open)
@@ -484,7 +516,7 @@ tests/         synthetic-sequence unit tests
 The detector core is pure and harness-agnostic. Each supported adapter
 translates native hook payloads into `ToolEvent` records and verdicts back into
 the runtime's response shape. The generic `check()` / `observe()` adapter is
-available for custom loops, but agent-rails does not claim a transcript-tail
+available for custom loops, but hamingja does not claim a transcript-tail
 supervisor or complete enforcement for runtimes whose hooks omit tool paths.
 
 ---
@@ -496,7 +528,7 @@ the reusable agent-facing workflow profiles sit beside them without acquiring
 hidden enforcement authority. The profiles are deliberately off the hot path:
 
 ```
-agent_rails/profiles/   # pure markdown, no runtime
+hamingja/profiles/   # pure markdown, no runtime
   base.md               progress = repro/narrow/shrink, not tokens
   non_convergence.md    user-says-stop -> review packet, no edits
   debugging.md          classify, repro, hypothesize, falsify before editing
@@ -505,20 +537,20 @@ agent_rails/profiles/   # pure markdown, no runtime
   compiler_language.md  opt-in: phase-based compiler/language work
 ```
 
-`agent-rails init` drops them into a project. The default writes
+`hamingja init` drops them into a project. The default writes
 `./CLAUDE.md` and creates `./AGENTS.md` as a relative symlink to it, so
 Claude Code (reads `CLAUDE.md` natively) and Codex (reads `AGENTS.md`) see
 the same content with no second file to keep in sync:
 
 ```bash
-agent-rails init                                # ./CLAUDE.md + ./AGENTS.md -> CLAUDE.md
-agent-rails init --list                         # show available profiles
-agent-rails init --profile debugging,escalation # explicit profile set
-agent-rails init --force                        # regenerate, overwriting both files
-agent-rails init --no-link                      # CLAUDE.md only, no symlink
-agent-rails init --out AGENTS.md --no-link      # single AGENTS.md (no CLAUDE.md, no symlink)
-agent-rails init --out X.md --link Y.md         # custom pair: writes X, links Y -> X
-agent-rails init --dry-run                      # preview content + symlink plan; no writes
+hamingja init                                # ./CLAUDE.md + ./AGENTS.md -> CLAUDE.md
+hamingja init --list                         # show available profiles
+hamingja init --profile debugging,escalation # explicit profile set
+hamingja init --force                        # regenerate, overwriting both files
+hamingja init --no-link                      # CLAUDE.md only, no symlink
+hamingja init --out AGENTS.md --no-link      # single AGENTS.md (no CLAUDE.md, no symlink)
+hamingja init --out X.md --link Y.md         # custom pair: writes X, links Y -> X
+hamingja init --dry-run                      # preview content + symlink plan; no writes
 ```
 
 Profiles are markdown read **only at `init`-time** — they don't load at hook
@@ -533,30 +565,30 @@ have one less thing to write from scratch.
 
 Some agent waste is not a guardrail problem; it is deterministic workflow glue.
 An LLM should not spend repeated tool calls polling GitHub, re-checking branch
-state, or scanning a pytest log for the same failure header. `agent-rails`
+state, or scanning a pytest log for the same failure header. `hamingja`
 therefore ships small local wrappers that produce one clean artifact for the
 agent to reason over:
 
 ```bash
-agent-rails commands                  # discover global + repo-local wrappers first
-agent-rails pr-create --title "..." --body-file pr.md
-agent-rails pr-create --title "..." --body-file pr.md --json
-agent-rails pr-create --title "..." --body - < pr.md  # stdin body, temp file, then gh --body-file
-agent-rails pr-merge 123              # wait for CI checks, gh merge + wait for MERGED + local cleanup
-agent-rails pr-merge 123 --json       # versioned merged/blocked/failed/interrupted state
-agent-rails pr-merge 123 --skip-ci-reason "GHA budget exhausted; local suite passed"
-agent-rails post-merge-cleanup topic  # checkout main, pull --ff-only, branch -d topic
-agent-rails post-merge-cleanup topic --force-delete  # for squash/rebase-cleaned branches
-agent-rails ci-status 123             # compact PR check summary; flags Actions budget/quota blocks
-agent-rails ci-status 123 --wait      # poll with backoff until checks finish or timeout
-agent-rails ci-status 123 --json      # versioned ready/pending/failed/blocked state
-agent-rails ci-preflight 123          # classify CI quota/infrastructure readiness before reruns
-agent-rails ci-failures 123           # shorthand for --pr 123
-agent-rails ci-failures --pr 123      # failed-run log summary for the PR branch
-agent-rails ci-failures --run 456     # failed-run log summary for a run id
-agent-rails test-summary .pytest_output.log
-agent-rails preflight --list          # list repo-owned readiness checks
-agent-rails preflight full-suite-readiness
+hamingja commands                  # discover global + repo-local wrappers first
+hamingja pr-create --title "..." --body-file pr.md
+hamingja pr-create --title "..." --body-file pr.md --json
+hamingja pr-create --title "..." --body - < pr.md  # stdin body, temp file, then gh --body-file
+hamingja pr-merge 123              # wait for CI checks, gh merge + wait for MERGED + local cleanup
+hamingja pr-merge 123 --json       # versioned merged/blocked/failed/interrupted state
+hamingja pr-merge 123 --skip-ci-reason "GHA budget exhausted; local suite passed"
+hamingja post-merge-cleanup topic  # checkout main, pull --ff-only, branch -d topic
+hamingja post-merge-cleanup topic --force-delete  # for squash/rebase-cleaned branches
+hamingja ci-status 123             # compact PR check summary; flags Actions budget/quota blocks
+hamingja ci-status 123 --wait      # poll with backoff until checks finish or timeout
+hamingja ci-status 123 --json      # versioned ready/pending/failed/blocked state
+hamingja ci-preflight 123          # classify CI quota/infrastructure readiness before reruns
+hamingja ci-failures 123           # shorthand for --pr 123
+hamingja ci-failures --pr 123      # failed-run log summary for the PR branch
+hamingja ci-failures --run 456     # failed-run log summary for a run id
+hamingja test-summary .pytest_output.log
+hamingja preflight --list          # list repo-owned readiness checks
+hamingja preflight full-suite-readiness
 ```
 
 Workflow JSON includes `resumable` and a bounded `next_action`. Interrupted or
@@ -595,7 +627,7 @@ agent does not burn repeated tool calls manually checking pending jobs.
 pytest summary lines. If failed logs are unavailable, it falls back to run
 metadata and reports no-step CI infrastructure/budget failures directly.
 
-The rule for project instructions is simple: run `agent-rails commands` before
+The rule for project instructions is simple: run `hamingja commands` before
 PR creation/merge/cleanup, CI status/failure extraction, or saved test-log
 summary tasks. Use the listed wrapper before any manual recipe, then spend
 judgment on the summarized result. Manual `gh`/`git` polling and cleanup steps
@@ -617,83 +649,83 @@ with sandbox escalation instead of first letting it fail in the sandbox.
 Some expensive validation loops are repo-specific: one project may need a
 compiler freshness check before its full suite, while another may need schema
 drift detection or generated-artifact checks. Keep that policy in the repo, not
-in agent-rails, by adding executable scripts under `.agent-rails/preflight/`:
+in hamingja, by adding executable scripts under `.hamingja/preflight/`:
 
 ```
 myrepo/
-  .agent-rails/
+  .hamingja/
     preflight/
       full-suite-readiness
 ```
 
-`agent-rails preflight` lists available scripts, and
-`agent-rails preflight <name>` runs the selected script from the repo root. The
-runner passes arguments through after `--`, sets `AGENT_RAILS_REPO_ROOT` and
-`AGENT_RAILS_PREFLIGHT_NAME`, and returns the script's exit code unchanged.
+`hamingja preflight` lists available scripts, and
+`hamingja preflight <name>` runs the selected script from the repo root. The
+runner passes arguments through after `--`, sets `HAMINGJA_REPO_ROOT` and
+`HAMINGJA_PREFLIGHT_NAME`, and returns the script's exit code unchanged.
 Use exit `0` for ready, `1` for a blocking repo finding, and `2` for usage or
 environment failures.
 
-This keeps agent-rails generic: it owns discovery, path hygiene, argument
+This keeps hamingja generic: it owns discovery, path hygiene, argument
 forwarding, and consistent command shape. The target repo owns what "ready"
 means.
 
 ### Use from another repo
 
-Install agent-rails once from its own checkout, then use it across all of your
-coding-agent repos. The agent-rails checkout does **not** need to live inside
+Install hamingja once from its own checkout, then use it across all of your
+coding-agent repos. The hamingja checkout does **not** need to live inside
 each repo; a common sibling layout is enough:
 
 ```
 ~/dev/
-  agent-rails/        # checked out once
+  hamingja/        # checked out once
   myrepo/               # your language/compiler repo
   other-repo/
 ```
 
-From the agent-rails checkout:
+From the hamingja checkout:
 
 ```bash
-cd ~/dev/agent-rails
-pip install -e .          # or: pipx install -e .
-agent-rails install       # installs for whichever of claude_code / codex is on this machine
+cd ~/dev/hamingja
+pipx install --python python3.13 --editable .
+hamingja install       # installs for whichever of claude_code / codex is on this machine
 ```
 
 That global install is the mechanical layer: it puts the CLI on PATH and
 merges hooks into `~/.claude/settings.json` and/or `~/.codex/hooks.json`. The
 hooks resolve the installed package, so every repo gets the guardrail without
-vendoring agent-rails.
+vendoring hamingja.
 
 Each target repo only needs local configuration and instructions:
 
 ```
 myrepo/
-  .agent-rails.json   # optional guardrail thresholds / mode relaxations
+  .hamingja.json   # optional guardrail thresholds / mode relaxations
   CLAUDE.md           # generated soft workflow instructions
   AGENTS.md -> CLAUDE.md
 ```
 
-One command for the per-repo instructions. A first `agent-rails init` uses the
+One command for the per-repo instructions. A first `hamingja init` uses the
 default profiles. Re-running without `--profile` preserves the profile set in
 the existing managed block, including opt-ins like `compiler_language`.
 `--profile` is still explicit: it writes exactly the set you pass.
 
 ```bash
 cd ~/dev/myrepo
-agent-rails init                                                      # default profiles
+hamingja init                                                      # default profiles
 # or, with the opt-in compiler-language profile:
-agent-rails init --force --profile base,non-convergence,debugging,escalation,review-passes,compiler-language
+hamingja init --force --profile base,non-convergence,debugging,escalation,review-passes,compiler-language
 ```
 
 Either form writes `./CLAUDE.md` and drops `./AGENTS.md` as a relative
 symlink. If `AGENTS.md` already exists as a real file, `init` refuses; pass
 `--force` only after preserving anything you still need from it.
 
-Use `.agent-rails.json` only for the hard guardrail runtime config. Project
+Use `.hamingja.json` only for the hard guardrail runtime config. Project
 config is untrusted and may only relax the installed baseline: raise thresholds,
 disable detectors, lower `window`, downgrade `mode` toward `off`, or extend the
 read-only exemption list. It cannot force `enforce` or lower thresholds.
 
-Use `~/.agent-rails/policies/*.json` for repo-specific strict rules, such as
+Use `~/.hamingja/policies/*.json` for repo-specific strict rules, such as
 "if this semantic tool fails, do not fall back to broad text search over that
 protected file." Those policies are trusted local operator state and can tighten
 detectors, including setting only that detector to `enforce`, without putting
@@ -725,22 +757,22 @@ Example repo-local config:
 ```
 
 Profiles are **not** runtime config. They are markdown copied into `CLAUDE.md`
-by `agent-rails init`, so changing the profile set means regenerating or
+by `hamingja init`, so changing the profile set means regenerating or
 editing the file.
 
 Run in `observe` first, then inspect what would have fired:
 
 ```bash
-agent-rails report
+hamingja report
 ```
 
 When you are ready to enforce blocks, set trusted mode from your shell:
 
 ```bash
-AGENT_RAILS_MODE=enforce claude
+HAMINGJA_MODE=enforce claude
 ```
 
-Use `.agent-rails-off` at a repo root to stand the guard down completely for
+Use `.hamingja-off` at a repo root to stand the guard down completely for
 that repo.
 
 ---
@@ -748,8 +780,8 @@ that repo.
 ## Use in your own agent loop
 
 ```python
-from agent_rails.adapters.generic import observe, check
-from agent_rails.core.api import record_progress
+from hamingja.adapters.generic import observe, check
+from hamingja.core.api import record_progress
 
 verdict = check(session_id, tool_name, tool_args)   # before the call
 if verdict.action == "block":
@@ -794,10 +826,13 @@ suite uses synthetic fixtures only.
 
 The architectural decisions and implementation record live in the
 [completed rescope document](docs/codex-claude-partner-rails-rescope.md).
+Release preparation is documented in the
+[release checklist](docs/release-checklist.md); notable changes are collected
+in [CHANGELOG.md](CHANGELOG.md).
 
 Known boundaries are explicit: Codex hook interception is partial; Claude does
 not expose subscription quota percentages; neither inline hook contract exposes
-parent-agent lineage; and agent-rails does not infer semantic correctness or
+parent-agent lineage; and hamingja does not infer semantic correctness or
 police ordinary reasoning. Those gaps fail open rather than being filled with
 timing, transcript, or payload guesses.
 

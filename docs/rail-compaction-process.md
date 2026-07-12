@@ -1,6 +1,6 @@
 # Rail Compaction Process
 
-Use this process when reducing the size of generated `agent-rails` workflow
+Use this process when reducing the size of generated `hamingja` workflow
 profiles or repo-local `CLAUDE.md` / `AGENTS.md` files. Treat the work as a
 behavior-preserving refactor: the goal is fewer prompt tokens without weakening
 the behaviors that keep agents from looping, mutating state after a stop, or
@@ -10,14 +10,14 @@ bypassing validation.
 
 This process applies to two related surfaces:
 
-- `agent_rails/profiles/*.md`, which render into the managed
-  `<!-- BEGIN agent-rails workflow profiles -->` block during
-  `agent-rails init`.
+- `hamingja/profiles/*.md`, which render into the managed
+  `<!-- BEGIN hamingja workflow profiles -->` block during
+  `hamingja init`.
 - Repo-owned instruction files such as `CLAUDE.md` and `AGENTS.md`, especially
   when moving long procedures into rules, skills, or docs.
 
 Do not hand-edit a generated block in a downstream repo as the durable fix.
-Change the profile source in `agent-rails`, regenerate with `agent-rails init`,
+Change the profile source in `hamingja`, regenerate with `hamingja init`,
 and commit the source change.
 
 ## Non-Regression Standard
@@ -97,7 +97,7 @@ Every compaction pass must preserve these behaviors:
   checks, and review/audit wrappers are not silently replaced by weaker manual
   fallbacks.
 - GitHub and git workflow wrappers remain discoverable and preferred: agents
-  should run `agent-rails commands` before PR creation/merge/cleanup, CI
+  should run `hamingja commands` before PR creation/merge/cleanup, CI
   status/failure extraction, or saved test-log summary work, and use listed
   wrappers before raw `gh`, `git`, CI polling, or manual log parsing.
 - Fail-open behavior in product workflows is fixed or made loud before shipping.
@@ -120,7 +120,7 @@ rg -n '^## |^# ' CLAUDE.md
 For generated rails, also measure the source profiles:
 
 ```bash
-wc -l agent_rails/profiles/*.md
+wc -l hamingja/profiles/*.md
 ```
 
 Use line and word count as rough indicators only. Preserve behavior over
@@ -146,7 +146,7 @@ test coverage.
 
 ## Test Expectations
 
-At minimum, `agent-rails` should have tests for:
+At minimum, `hamingja` should have tests for:
 
 - Profile rendering includes the managed block markers.
 - The selected default profile set includes required invariant phrases or
@@ -156,7 +156,7 @@ At minimum, `agent-rails` should have tests for:
 - Debugging language still requires reproducer, hypothesis, evidence, and
   falsifier.
 - The default rendered profile still tells agents to discover workflow wrappers
-  with `agent-rails commands` and prefer them over raw `gh` / `git` polling,
+  with `hamingja commands` and prefer them over raw `gh` / `git` polling,
   PR cleanup, CI log scraping, and manual test-log parsing.
 - The `workflow_wrapper` detector still nudges on raw `gh pr create`,
   `gh pr checks`, `gh pr merge`, relevant `gh run` log/status commands, and
@@ -174,7 +174,7 @@ acceptable only for tiny templates or smoke coverage.
 When applying compacted rails to a repo:
 
 1. Ensure the repo has a clean or understood worktree.
-2. Run `agent-rails init`.
+2. Run `hamingja init`.
 3. Verify the generated block changed only between the managed markers.
 4. Keep repo-specific safety rules outside the managed markers.
 5. Do not move repo-critical rules exclusively into Claude Rules or Claude-only

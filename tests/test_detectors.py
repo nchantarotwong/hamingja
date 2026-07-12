@@ -9,12 +9,12 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agent_rails.core.events import ERROR, OK, PENDING, ToolEvent  # noqa: E402
-from agent_rails.detectors.base import ALLOW, BLOCK, NUDGE  # noqa: E402
-from agent_rails.detectors.error_streak import ErrorStreakDetector  # noqa: E402
-from agent_rails.detectors.leverage_fallback import LeverageFallbackDetector  # noqa: E402
-from agent_rails.detectors.repetition import RepetitionDetector  # noqa: E402
-from agent_rails.detectors.workflow_wrapper import WorkflowWrapperDetector  # noqa: E402
+from hamingja.core.events import ERROR, OK, PENDING, ToolEvent  # noqa: E402
+from hamingja.detectors.base import ALLOW, BLOCK, NUDGE  # noqa: E402
+from hamingja.detectors.error_streak import ErrorStreakDetector  # noqa: E402
+from hamingja.detectors.leverage_fallback import LeverageFallbackDetector  # noqa: E402
+from hamingja.detectors.repetition import RepetitionDetector  # noqa: E402
+from hamingja.detectors.workflow_wrapper import WorkflowWrapperDetector  # noqa: E402
 
 CFG = {
     "detectors": {
@@ -276,7 +276,7 @@ def test_workflow_wrapper_blocks_raw_gh_pr_checks():
     )
     v = WorkflowWrapperDetector().evaluate([], cand, CFG)
     assert v is not None and v.action == BLOCK
-    assert "agent-rails ci-status" in v.reason
+    assert "hamingja ci-status" in v.reason
 
 
 def test_workflow_wrapper_blocks_timeout_prefixed_raw_gh_pr_checks():
@@ -286,7 +286,7 @@ def test_workflow_wrapper_blocks_timeout_prefixed_raw_gh_pr_checks():
     )
     v = WorkflowWrapperDetector().evaluate([], cand, CFG)
     assert v is not None and v.action == BLOCK
-    assert "agent-rails ci-status" in v.reason
+    assert "hamingja ci-status" in v.reason
 
 
 def test_workflow_wrapper_allows_quoted_mentions_in_non_gh_command():
@@ -294,7 +294,7 @@ def test_workflow_wrapper_allows_quoted_mentions_in_non_gh_command():
         "s", "Bash", "printf", PENDING, 0.0,
         arg_preview=(
             "printf %s "
-            "'Validation: use gh pr checks through agent-rails ci-status'"
+            "'Validation: use gh pr checks through hamingja ci-status'"
         ),
     )
     assert WorkflowWrapperDetector().evaluate([], cand, CFG) is None
@@ -307,7 +307,7 @@ def test_workflow_wrapper_blocks_raw_gh_pr_create():
     )
     v = WorkflowWrapperDetector().evaluate([], cand, CFG)
     assert v is not None and v.action == BLOCK
-    assert "agent-rails pr-create" in v.reason
+    assert "hamingja pr-create" in v.reason
 
 
 def test_workflow_wrapper_blocks_codex_exec_command_raw_gh_pr_create():
@@ -318,7 +318,7 @@ def test_workflow_wrapper_blocks_codex_exec_command_raw_gh_pr_create():
     )
     v = WorkflowWrapperDetector().evaluate([], cand, CFG)
     assert v is not None and v.action == BLOCK
-    assert "agent-rails pr-create" in v.reason
+    assert "hamingja pr-create" in v.reason
 
 
 def test_workflow_wrapper_blocks_raw_gh_pr_merge():
@@ -328,7 +328,7 @@ def test_workflow_wrapper_blocks_raw_gh_pr_merge():
     )
     v = WorkflowWrapperDetector().evaluate([], cand, CFG)
     assert v is not None and v.action == BLOCK
-    assert "agent-rails pr-merge" in v.reason
+    assert "hamingja pr-merge" in v.reason
 
 
 def test_workflow_wrapper_blocks_raw_gh_run_watch():
@@ -338,7 +338,7 @@ def test_workflow_wrapper_blocks_raw_gh_run_watch():
     )
     v = WorkflowWrapperDetector().evaluate([], cand, CFG)
     assert v is not None and v.action == BLOCK
-    assert "agent-rails ci-failures" in v.reason
+    assert "hamingja ci-failures" in v.reason
 
 
 def test_workflow_wrapper_blocks_manual_post_merge_cleanup():
@@ -348,7 +348,7 @@ def test_workflow_wrapper_blocks_manual_post_merge_cleanup():
     )
     v = WorkflowWrapperDetector().evaluate([], cand, CFG)
     assert v is not None and v.action == BLOCK
-    assert "agent-rails post-merge-cleanup" in v.reason
+    assert "hamingja post-merge-cleanup" in v.reason
 
 
 def test_workflow_wrapper_allows_standalone_checkout_main():
@@ -366,21 +366,21 @@ def test_workflow_wrapper_blocks_branch_delete_cleanup():
     )
     v = WorkflowWrapperDetector().evaluate([], cand, CFG)
     assert v is not None and v.action == BLOCK
-    assert "agent-rails post-merge-cleanup" in v.reason
+    assert "hamingja post-merge-cleanup" in v.reason
 
 
 def test_workflow_wrapper_allows_explicit_raw_fallback_prefix():
     cand = ToolEvent(
         "s", "Bash", "gh", PENDING, 0.0,
-        arg_preview="AGENT_RAILS_ALLOW_RAW=1 gh pr checks 193 --json name,state,link",
+        arg_preview="HAMINGJA_ALLOW_RAW=1 gh pr checks 193 --json name,state,link",
     )
     assert WorkflowWrapperDetector().evaluate([], cand, CFG) is None
 
 
-def test_workflow_wrapper_allows_agent_rails_wrapper():
+def test_workflow_wrapper_allows_hamingja_wrapper():
     cand = ToolEvent(
         "s", "Bash", "rails", PENDING, 0.0,
-        arg_preview="agent-rails ci-status 193",
+        arg_preview="hamingja ci-status 193",
     )
     assert WorkflowWrapperDetector().evaluate([], cand, CFG) is None
 

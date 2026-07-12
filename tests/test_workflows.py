@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agent_rails.workflows import (  # noqa: E402
+from hamingja.workflows import (  # noqa: E402
     RunResult,
     ci_preflight,
     ci_status,
@@ -1543,7 +1543,7 @@ def test_ci_status_wait_polls_with_backoff_until_checks_finish():
 
 
 def test_ci_status_wait_treats_no_checks_reported_as_waitable(monkeypatch):
-    monkeypatch.setattr("agent_rails.workflows._repo_has_no_ci_workflows", lambda: False)
+    monkeypatch.setattr("hamingja.workflows._repo_has_no_ci_workflows", lambda: False)
     sleeps = []
     runner = FakeRunner([
         RunResult(
@@ -1569,7 +1569,7 @@ def test_ci_status_wait_treats_no_checks_reported_as_waitable(monkeypatch):
 
 
 def test_ci_status_wait_returns_after_grace_when_local_repo_has_no_ci(monkeypatch):
-    monkeypatch.setattr("agent_rails.workflows._repo_has_no_ci_workflows", lambda: True)
+    monkeypatch.setattr("hamingja.workflows._repo_has_no_ci_workflows", lambda: True)
     runner = FakeRunner([
         RunResult(
             ["gh", "pr", "checks", "12", "--json", "name,state,link"],

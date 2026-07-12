@@ -13,9 +13,9 @@ import json
 
 import pytest
 
-import agent_rails.config as config_mod
-from agent_rails.adapters.codex import tripwire
-from agent_rails.core import budget as budget_mod
+import hamingja.config as config_mod
+from hamingja.adapters.codex import tripwire
+from hamingja.core import budget as budget_mod
 
 SID = "019f2bb0-0bc9-7460-9afb-3d285b26b886"
 
@@ -34,10 +34,10 @@ _BUDGET_CFG = {
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("tool_input,expected", [
-    ({"command": "agent-rails budget s add 3 --self"}, True),
-    ({"parameters": {"command": "agent-rails budget s reset"}}, True),
-    ({"args": {"cmd": "  agent-rails budget s"}}, True),
-    ({"command": "agent-rails report"}, False),
+    ({"command": "hamingja budget s add 3 --self"}, True),
+    ({"parameters": {"command": "hamingja budget s reset"}}, True),
+    ({"args": {"cmd": "  hamingja budget s"}}, True),
+    ({"command": "hamingja report"}, False),
     ({"command": "ls -la"}, False),
     ({}, False),
 ])
@@ -46,26 +46,26 @@ def test_is_budget_command(tool_input, expected):
 
 
 def test_is_budget_command_non_bash():
-    assert tripwire._is_budget_command("Read", {"command": "agent-rails budget s"}) is False
+    assert tripwire._is_budget_command("Read", {"command": "hamingja budget s"}) is False
 
 
 @pytest.mark.parametrize("tool_input,expected", [
-    ({"command": "agent-rails ledger check"}, "Bash:agent-rails ledger check"),
-    ({"command": "agent-rails ledger relevant agent_rails/core/budget.py"}, "Bash:agent-rails ledger relevant"),
-    ({"command": "timeout 30 agent-rails ledger add --claim x"}, "Bash:agent-rails ledger add"),
-    ({"command": "/usr/local/bin/agent-rails ledger retire old-claim"}, "Bash:agent-rails ledger retire"),
-    ({"command": "agent-rails ledger reverify old-claim"}, "Bash:agent-rails ledger reverify"),
-    ({"command": "agent-rails ledger unknown"}, "Bash"),
-    ({"command": "agent-rails ledger"}, "Bash"),
-    ({"command": "agent-rails report"}, "Bash"),
-    ({"command": "agent-rails ledger 'unterminated"}, "Bash"),
+    ({"command": "hamingja ledger check"}, "Bash:hamingja ledger check"),
+    ({"command": "hamingja ledger relevant hamingja/core/budget.py"}, "Bash:hamingja ledger relevant"),
+    ({"command": "timeout 30 hamingja ledger add --claim x"}, "Bash:hamingja ledger add"),
+    ({"command": "/usr/local/bin/hamingja ledger retire old-claim"}, "Bash:hamingja ledger retire"),
+    ({"command": "hamingja ledger reverify old-claim"}, "Bash:hamingja ledger reverify"),
+    ({"command": "hamingja ledger unknown"}, "Bash"),
+    ({"command": "hamingja ledger"}, "Bash"),
+    ({"command": "hamingja report"}, "Bash"),
+    ({"command": "hamingja ledger 'unterminated"}, "Bash"),
 ])
 def test_budget_tool_name_for_ledger_commands(tool_input, expected):
     assert tripwire._budget_tool_name("Bash", tool_input) == expected
 
 
 def test_budget_tool_name_non_bash_is_unchanged():
-    assert tripwire._budget_tool_name("Read", {"command": "agent-rails ledger check"}) == "Read"
+    assert tripwire._budget_tool_name("Read", {"command": "hamingja ledger check"}) == "Read"
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +113,7 @@ def _write_rollout(codex_home, session_id, *, window, weekly):
 
 
 def _seed_at_checkpoint(state_dir, session_id, checkpoint_at):
-    path = budget_mod._budget_path(session_id)  # honors AGENT_RAILS_STATE_DIR
+    path = budget_mod._budget_path(session_id)  # honors HAMINGJA_STATE_DIR
     state = budget_mod._default_state(checkpoint_at)
     state["tool_calls"] = checkpoint_at
     state["weighted_calls"] = float(checkpoint_at)
@@ -131,7 +131,7 @@ def _run_main(payload, monkeypatch, capsys):
 
 @pytest.fixture
 def gate_env(tmp_path, monkeypatch):
-    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("HAMINGJA_STATE_DIR", str(tmp_path / "state"))
     (tmp_path / "state").mkdir()
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
     return tmp_path
@@ -171,7 +171,7 @@ def test_budget_command_is_exempt(gate_env, monkeypatch, capsys):
     _seed_at_checkpoint(gate_env / "state", SID, 12)
     payload = {
         "session_id": SID, "tool_name": "Bash",
-        "tool_input": {"command": f"agent-rails budget {SID} add 3 --self"},
+        "tool_input": {"command": f"hamingja budget {SID} add 3 --self"},
         "cwd": str(gate_env),
     }
     _, out = _run_main(payload, monkeypatch, capsys)
@@ -183,7 +183,7 @@ def test_ledger_relevant_uses_zero_weight(gate_env, monkeypatch, capsys):
         payload = {
             "session_id": SID,
             "tool_name": "Bash",
-            "tool_input": {"command": "agent-rails ledger relevant agent_rails/core/budget.py"},
+            "tool_input": {"command": "hamingja ledger relevant hamingja/core/budget.py"},
             "cwd": str(gate_env),
         }
         _, out = _run_main(payload, monkeypatch, capsys)
@@ -198,7 +198,7 @@ def test_ledger_add_uses_low_nonzero_weight(gate_env, monkeypatch, capsys):
         payload = {
             "session_id": SID,
             "tool_name": "Bash",
-            "tool_input": {"command": "agent-rails ledger add --claim x --evidence y --falsifier z"},
+            "tool_input": {"command": "hamingja ledger add --claim x --evidence y --falsifier z"},
             "cwd": str(gate_env),
         }
         _, out = _run_main(payload, monkeypatch, capsys)

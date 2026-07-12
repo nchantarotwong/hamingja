@@ -5,18 +5,19 @@ import stat
 import sys
 import tempfile
 from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-_TMP = tempfile.mkdtemp(prefix="agent-rails-cli-")
-os.environ["AGENT_RAILS_STATE_DIR"] = _TMP
+_TMP = tempfile.mkdtemp(prefix="hamingja-cli-")
+os.environ["HAMINGJA_STATE_DIR"] = _TMP
 
-from agent_rails.cli import build_parser, main  # noqa: E402
-import agent_rails.cli as cli_module  # noqa: E402
-from agent_rails.core.audit import clear_audit, log_verdict  # noqa: E402
-from agent_rails.core.budget import read_state as budget_read_state  # noqa: E402
-from agent_rails.core.budget import reset as budget_reset  # noqa: E402
-from agent_rails.detectors.base import BLOCK, NUDGE, Verdict  # noqa: E402
+from hamingja.cli import build_parser, main  # noqa: E402
+import hamingja.cli as cli_module  # noqa: E402
+from hamingja.core.audit import clear_audit, log_verdict  # noqa: E402
+from hamingja.core.budget import read_state as budget_read_state  # noqa: E402
+from hamingja.core.budget import reset as budget_reset  # noqa: E402
+from hamingja.detectors.base import BLOCK, NUDGE, Verdict  # noqa: E402
 
 
 def _run(argv) -> str:
@@ -35,7 +36,7 @@ def _run_err(argv) -> tuple[int, str]:
 
 
 def test_version():
-    assert "agent-rails" in _run(["version"])
+    assert "hamingja" in _run(["version"])
 
 
 def test_status_emits_config():
@@ -45,13 +46,103 @@ def test_status_emits_config():
 
 def test_commands_lists_workflow_wrappers():
     out = _run(["commands"])
-    assert "Available agent-rails wrappers" in out
-    assert "agent-rails pr-create --title <title> --body-file <path>" in out
-    assert "agent-rails pr-merge <pr>" in out
-    assert "agent-rails ci-status [pr] --wait" in out
-    assert "agent-rails ci-preflight [pr]" in out
-    assert "agent-rails ci-failures --pr <pr>" in out
+    assert "Available hamingja wrappers" in out
+    assert "hamingja pr-create --title <title> --body-file <path>" in out
+    assert "hamingja pr-merge <pr>" in out
+    assert "hamingja ci-status [pr] --wait" in out
+    assert "hamingja ci-preflight [pr]" in out
+    assert "hamingja ci-failures --pr <pr>" in out
     assert "sandbox escalation" in out
+
+
+def test_uninstall_preserves_other_hooks_and_is_idempotent(tmp_path, monkeypatch):
+    claude = tmp_path / "settings.json"
+    codex = tmp_path / "hooks.json"
+    for path in (claude, codex):
+        path.write_text(__import__("json").dumps({"hooks": {
+            "PreToolUse": [{"matcher": "*", "hooks": [
+                {"type": "command", "command": "echo keep"},
+                {"type": "command", "command": "echo labeled", "statusMessage": "Checking hamingja"},
+                {"type": "command", "command": "python /repo/hamingja/adapters/codex/notrecord.py"},
+                {"type": "command", "command": 'python "/repo/hamingja/adapters/codex/tripwire.py"'},
+            ]}],
+            "Stop": [{"hooks": [{"type": "command", "command": "echo stop"}]}],
+        }}), encoding="utf-8")
+        path.chmod(0o640)
+    monkeypatch.setenv("CLAUDE_SETTINGS", str(claude))
+    monkeypatch.setenv("CODEX_HOOKS", str(codex))
+
+    assert main(["uninstall", "all"]) == 0
+    for path in (claude, codex):
+        cfg = __import__("json").loads(path.read_text(encoding="utf-8"))
+        assert cfg["hooks"]["PreToolUse"][0]["hooks"] == [
+            {"type": "command", "command": "echo keep"},
+            {"type": "command", "command": "echo labeled", "statusMessage": "Checking hamingja"},
+            {"type": "command", "command": "python /repo/hamingja/adapters/codex/notrecord.py"},
+        ]
+        assert "Stop" in cfg["hooks"]
+        assert stat.S_IMODE(path.stat().st_mode) == 0o640
+        assert len(list(tmp_path.glob(f"{path.name}.bak.uninstall.*"))) == 1
+
+    assert main(["uninstall", "all"]) == 0
+    assert len(list(tmp_path.glob("*.bak.uninstall.*"))) == 2
+
+
+def test_uninstall_refuses_malformed_config(tmp_path, monkeypatch):
+    hooks = tmp_path / "hooks.json"
+    hooks.write_text("not-json", encoding="utf-8")
+    monkeypatch.setenv("CODEX_HOOKS", str(hooks))
+    err = io.StringIO()
+    with redirect_stderr(err):
+        rc = main(["uninstall", "codex"])
+    assert rc == 1
+    assert "refusing to modify malformed" in err.getvalue()
+    assert hooks.read_text(encoding="utf-8") == "not-json"
+
+
+def test_uninstall_preserves_symlinked_config(tmp_path, monkeypatch):
+    target = tmp_path / "dotfiles" / "hooks.json"
+    target.parent.mkdir()
+    target.write_text(__import__("json").dumps({"hooks": {
+        "PreToolUse": [{"hooks": [{
+            "type": "command",
+            "command": "python /repo/hamingja/adapters/codex/tripwire.py",
+        }]}],
+    }}), encoding="utf-8")
+    hooks = tmp_path / "hooks.json"
+    hooks.symlink_to(target)
+    monkeypatch.setenv("CODEX_HOOKS", str(hooks))
+
+    assert main(["uninstall", "codex"]) == 0
+    assert hooks.is_symlink()
+    assert __import__("json").loads(target.read_text(encoding="utf-8"))["hooks"] == {}
+
+
+def test_uninstall_reports_write_failure_and_preserves_backup(tmp_path, monkeypatch):
+    import hamingja.hook_lifecycle as lifecycle
+
+    hooks = tmp_path / "hooks.json"
+    original = __import__("json").dumps({"hooks": {
+        "PreToolUse": [{"hooks": [{
+            "type": "command",
+            "command": "python /repo/hamingja/adapters/codex/tripwire.py",
+        }]}],
+    }})
+    hooks.write_text(original, encoding="utf-8")
+    monkeypatch.setenv("CODEX_HOOKS", str(hooks))
+
+    def fail_write(path, config):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(lifecycle, "_atomic_write", fail_write)
+    err = io.StringIO()
+    with redirect_stderr(err):
+        assert main(["uninstall", "codex"]) == 1
+    assert "unable to update hook config" in err.getvalue()
+    assert "backup preserved" in err.getvalue()
+    assert "malformed" not in err.getvalue()
+    assert hooks.read_text(encoding="utf-8") == original
+    assert len(list(tmp_path.glob("hooks.json.bak.uninstall.*"))) == 1
 
 
 def test_report_empty():
@@ -140,7 +231,7 @@ def test_workflow_subcommands_parse():
 def test_commands_lists_repo_local_preflights():
     with tempfile.TemporaryDirectory() as tmp:
         repo = os.path.join(tmp, "repo")
-        preflight_dir = os.path.join(repo, ".agent-rails", "preflight")
+        preflight_dir = os.path.join(repo, ".hamingja", "preflight")
         os.makedirs(preflight_dir)
         script = os.path.join(preflight_dir, "full-suite-readiness")
         with open(script, "w", encoding="utf-8") as f:
@@ -155,7 +246,7 @@ def test_commands_lists_repo_local_preflights():
             os.chdir(old_cwd)
 
     assert "Preflight:" in out
-    assert "agent-rails preflight full-suite-readiness" in out
+    assert "hamingja preflight full-suite-readiness" in out
 
 
 def test_ledger_add_check_relevant_and_stale():
@@ -354,14 +445,14 @@ def test_ledger_rejects_scope_that_escapes_repo():
 def test_preflight_lists_and_runs_repo_script():
     with tempfile.TemporaryDirectory() as tmp:
         repo = os.path.join(tmp, "repo")
-        preflight_dir = os.path.join(repo, ".agent-rails", "preflight")
+        preflight_dir = os.path.join(repo, ".hamingja", "preflight")
         os.makedirs(preflight_dir)
         script = os.path.join(preflight_dir, "echo-args")
         out_file = os.path.join(repo, "out.txt")
         with open(script, "w", encoding="utf-8") as f:
             f.write(
                 "#!/bin/sh\n"
-                "printf '%s\\n' \"$AGENT_RAILS_REPO_ROOT\" \"$AGENT_RAILS_PREFLIGHT_NAME\" \"$@\" > out.txt\n"
+                "printf '%s\\n' \"$HAMINGJA_REPO_ROOT\" \"$HAMINGJA_PREFLIGHT_NAME\" \"$@\" > out.txt\n"
             )
         os.chmod(script, os.stat(script).st_mode | stat.S_IXUSR)
 
@@ -388,7 +479,7 @@ def test_preflight_lists_and_runs_repo_script():
 def test_preflight_rejects_unknown_and_non_executable():
     with tempfile.TemporaryDirectory() as tmp:
         repo = os.path.join(tmp, "repo")
-        preflight_dir = os.path.join(repo, ".agent-rails", "preflight")
+        preflight_dir = os.path.join(repo, ".hamingja", "preflight")
         os.makedirs(preflight_dir)
         with open(os.path.join(preflight_dir, "not-executable"), "w", encoding="utf-8") as f:
             f.write("#!/bin/sh\nexit 0\n")
@@ -414,7 +505,7 @@ def test_preflight_rejects_unknown_and_non_executable():
 def test_preflight_rejects_symlink_escape():
     with tempfile.TemporaryDirectory() as tmp:
         repo = os.path.join(tmp, "repo")
-        preflight_dir = os.path.join(repo, ".agent-rails", "preflight")
+        preflight_dir = os.path.join(repo, ".hamingja", "preflight")
         os.makedirs(preflight_dir)
         outside = os.path.join(tmp, "outside-preflight")
         with open(outside, "w", encoding="utf-8") as f:
@@ -442,8 +533,8 @@ def test_budget_short_form_status_shows_next_steps():
     out = _run(["budget", session])
 
     assert "no budget state found" in out
-    assert f"agent-rails budget {session} add 20" in out
-    assert f"agent-rails budget {session} reset" in out
+    assert f"hamingja budget {session} add 20" in out
+    assert f"hamingja budget {session} reset" in out
 
 
 def test_budget_short_form_add_reset_and_subagent():
@@ -470,7 +561,7 @@ def test_budget_short_form_rejects_bad_add_value():
 
     assert rc == 2
     assert "add requires a positive integer" in err.getvalue()
-    assert "agent-rails budget cli-budget-bad-add add 20" in err.getvalue()
+    assert "hamingja budget cli-budget-bad-add add 20" in err.getvalue()
 
 
 def test_budget_short_form_rejects_flag_without_session():
@@ -497,10 +588,10 @@ def test_budget_self_approve_rejects_nonexistent_session():
 
 
 def test_recover_handoff_is_bounded_and_reset_preserves_audit(tmp_path, monkeypatch):
-    from agent_rails.core.events import ToolEvent
-    from agent_rails.core.state import append_event, read_recent
+    from hamingja.core.events import ToolEvent
+    from hamingja.core.state import append_event, read_recent
 
-    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("HAMINGJA_STATE_DIR", str(tmp_path))
     sid = "recover-cli"
     append_event(ToolEvent.record(sid, "Bash", {"command": "pytest"}, False))
     log_verdict(sid, "Bash", Verdict(
@@ -516,7 +607,7 @@ def test_recover_handoff_is_bounded_and_reset_preserves_audit(tmp_path, monkeypa
     assert "exact signature: exact-abc" in out
     assert "git diff --stat" in out
     assert "Fresh session:" in out
-    assert f"agent-rails recover {sid} reset" in out
+    assert f"hamingja recover {sid} reset" in out
 
     out = _run(["recover", sid, "reset"])
     assert "detector state cleared" in out
@@ -525,11 +616,11 @@ def test_recover_handoff_is_bounded_and_reset_preserves_audit(tmp_path, monkeypa
 
 
 def test_recover_canonicalizes_untrusted_session_in_output(tmp_path, monkeypatch):
-    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("HAMINGJA_STATE_DIR", str(tmp_path))
     raw = "bad`\ncommand"
     out = _run(["recover", raw, "handoff"])
     assert raw not in out
-    assert "agent-rails recover bad__command reset" in out
+    assert "hamingja recover bad__command reset" in out
 
 
 def test_pr_create_body_dash_reads_stdin_and_writes_temp_body():
@@ -645,7 +736,7 @@ def test_pr_create_body_rejects_empty_value():
 
 
 def test_ci_status_json_emits_only_versioned_lifecycle(monkeypatch):
-    from agent_rails.workflows import LifecycleResult
+    from hamingja.workflows import LifecycleResult
 
     def fake_ci_status(pr, **kwargs):
         print("human text that JSON mode must suppress")

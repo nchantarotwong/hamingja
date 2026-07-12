@@ -4,7 +4,7 @@ Date: 2026-07-12
 
 ## Question
 
-Can agent-rails prove parent/child lineage for nested Codex and Claude Code
+Can hamingja prove parent/child lineage for nested Codex and Claude Code
 subagents strongly enough to enforce delegation depth or parent-scoped grants?
 
 ## Evidence
