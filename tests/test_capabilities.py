@@ -1,6 +1,6 @@
-from agent_rails.adapters.capabilities import manifest
-from agent_rails.adapters.claude_code import CAPABILITIES as CLAUDE_CAPABILITIES
-from agent_rails.adapters.codex import CAPABILITIES as CODEX_CAPABILITIES
+from hamingja.adapters.capabilities import manifest
+from hamingja.adapters.claude_code import CAPABILITIES as CLAUDE_CAPABILITIES
+from hamingja.adapters.codex import CAPABILITIES as CODEX_CAPABILITIES
 
 
 def test_first_class_manifests_are_versioned_and_runtime_specific():

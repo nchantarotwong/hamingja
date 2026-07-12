@@ -1,4 +1,4 @@
-"""Tests for agent_rails.adapters.claude_code.quota (context-fill probe).
+"""Tests for hamingja.adapters.claude_code.quota (context-fill probe).
 
 Synthetic transcripts only. Claude has no persisted rate-limit signal, so the
 probe reports only context occupancy; these pin that estimate and the fail-open
@@ -10,8 +10,8 @@ import json
 
 import pytest
 
-from agent_rails.adapters.claude_code.quota import read_quota
-from agent_rails.adapters.codex.quota import QuotaReading
+from hamingja.adapters.claude_code.quota import read_quota
+from hamingja.adapters.codex.quota import QuotaReading
 
 SID = "b920153f-0187-4fb0-8ccd-3b6f2e09d036"
 

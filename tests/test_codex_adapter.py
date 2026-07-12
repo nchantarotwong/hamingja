@@ -12,21 +12,21 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-_STATE_DIR = tempfile.mkdtemp(prefix="agent-rails-codex-test-")
+_STATE_DIR = tempfile.mkdtemp(prefix="hamingja-codex-test-")
 
-from agent_rails.core.events import ERROR, OK, ToolEvent  # noqa: E402
-from agent_rails.core.state import append_event, read_recent  # noqa: E402
-from agent_rails.adapters.codex.tripwire import _is_budget_command  # noqa: E402
-from agent_rails.ledger import add_record  # noqa: E402
+from hamingja.core.events import ERROR, OK, ToolEvent  # noqa: E402
+from hamingja.core.state import append_event, read_recent  # noqa: E402
+from hamingja.adapters.codex.tripwire import _is_budget_command  # noqa: E402
+from hamingja.ledger import add_record  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TRIPWIRE = os.path.join(ROOT, "agent_rails", "adapters", "codex", "tripwire.py")
-RECORDER = os.path.join(ROOT, "agent_rails", "adapters", "codex", "record.py")
-INSTALL = os.path.join(ROOT, "agent_rails", "adapters", "codex", "install.sh")
+TRIPWIRE = os.path.join(ROOT, "hamingja", "adapters", "codex", "tripwire.py")
+RECORDER = os.path.join(ROOT, "hamingja", "adapters", "codex", "record.py")
+INSTALL = os.path.join(ROOT, "hamingja", "adapters", "codex", "install.sh")
 
 
 def _proj(files=None):
-    d = tempfile.mkdtemp(prefix="agent-rails-codex-proj-")
+    d = tempfile.mkdtemp(prefix="hamingja-codex-proj-")
     os.mkdir(os.path.join(d, ".git"))
     for name, content in (files or {}).items():
         with open(os.path.join(d, name), "w", encoding="utf-8") as f:
@@ -36,7 +36,7 @@ def _proj(files=None):
 
 def _run_script(script, payload, env=None):
     e = os.environ.copy()
-    e["AGENT_RAILS_STATE_DIR"] = _STATE_DIR
+    e["HAMINGJA_STATE_DIR"] = _STATE_DIR
     if env:
         e.update(env)
     return subprocess.run(
@@ -50,7 +50,7 @@ def _run_script(script, payload, env=None):
 
 
 def _reset_state_env():
-    os.environ["AGENT_RAILS_STATE_DIR"] = _STATE_DIR
+    os.environ["HAMINGJA_STATE_DIR"] = _STATE_DIR
 
 
 def test_codex_record_marks_nonzero_exit_as_error():
@@ -103,7 +103,7 @@ def test_codex_tripwire_denies_in_enforce_after_repetition():
         "tool_name": "Bash",
         "tool_input": args,
     }
-    p = _run_script(TRIPWIRE, payload, {"AGENT_RAILS_MODE": "enforce"})
+    p = _run_script(TRIPWIRE, payload, {"HAMINGJA_MODE": "enforce"})
     assert p.returncode == 0
     out = json.loads(p.stdout)
     hso = out["hookSpecificOutput"]
@@ -134,7 +134,7 @@ def test_codex_tripwire_observe_downgrades_block_to_context():
     assert "WOULD BE BLOCKED" in hso["additionalContext"]
 
 
-def test_codex_tripwire_nudges_agent_rails_wrapper_to_escalate():
+def test_codex_tripwire_nudges_hamingja_wrapper_to_escalate():
     _reset_state_env()
     d = _proj()
     payload = {
@@ -142,7 +142,7 @@ def test_codex_tripwire_nudges_agent_rails_wrapper_to_escalate():
         "session_id": "codex-escalate-wrapper",
         "cwd": d,
         "tool_name": "Bash",
-        "tool_input": {"command": "agent-rails ci-status 12"},
+        "tool_input": {"command": "hamingja ci-status 12"},
     }
     p = _run_script(TRIPWIRE, payload)
     assert p.returncode == 0
@@ -151,7 +151,7 @@ def test_codex_tripwire_nudges_agent_rails_wrapper_to_escalate():
     assert hso["hookEventName"] == "PreToolUse"
     assert "permissionDecision" not in hso
     assert "sandbox_permissions" in hso["additionalContext"]
-    assert "agent-rails ci-status" in hso["additionalContext"]
+    assert "hamingja ci-status" in hso["additionalContext"]
 
 
 def test_codex_tripwire_skips_escalation_nudge_when_already_escalated():
@@ -163,7 +163,7 @@ def test_codex_tripwire_skips_escalation_nudge_when_already_escalated():
         "cwd": d,
         "tool_name": "Bash",
         "tool_input": {
-            "command": "agent-rails ci-status 12",
+            "command": "hamingja ci-status 12",
             "sandbox_permissions": "require_escalated",
         },
     }
@@ -175,13 +175,13 @@ def test_codex_tripwire_skips_escalation_nudge_when_already_escalated():
 def test_codex_tripwire_recognizes_timeout_wrapped_budget_command():
     assert _is_budget_command(
         "Bash",
-        {"command": "timeout 30 agent-rails budget codex-session add 3 --self"},
+        {"command": "timeout 30 hamingja budget codex-session add 3 --self"},
     ) is True
     assert _is_budget_command(
         "Bash",
-        {"command": "timeout 30 /usr/local/bin/agent-rails budget codex-session"},
+        {"command": "timeout 30 /usr/local/bin/hamingja budget codex-session"},
     ) is True
-    assert _is_budget_command("Bash", {"command": "timeout 30 agent-rails status"}) is False
+    assert _is_budget_command("Bash", {"command": "timeout 30 hamingja status"}) is False
 
 
 def test_codex_tripwire_nudges_large_unscoped_read_to_locate():
@@ -201,7 +201,7 @@ def test_codex_tripwire_nudges_large_unscoped_read_to_locate():
     hso = out["hookSpecificOutput"]
     assert hso["hookEventName"] == "PreToolUse"
     assert "permissionDecision" not in hso
-    assert "agent-rails locate" in hso["additionalContext"]
+    assert "hamingja locate" in hso["additionalContext"]
     assert "offset+limit" in hso["additionalContext"]
 
 
@@ -273,13 +273,13 @@ def test_codex_missing_bash_command_is_not_enforceable_repetition():
         "tool_name": "Bash",
         "tool_input": args,
     }
-    p = _run_script(TRIPWIRE, payload, {"AGENT_RAILS_MODE": "enforce"})
+    p = _run_script(TRIPWIRE, payload, {"HAMINGJA_MODE": "enforce"})
     assert p.returncode == 0
     assert p.stdout == ""
 
 
 def test_codex_install_merges_and_is_idempotent():
-    d = tempfile.mkdtemp(prefix="agent-rails-codex-install-")
+    d = tempfile.mkdtemp(prefix="hamingja-codex-install-")
     hooks_path = os.path.join(d, "hooks.json")
     with open(hooks_path, "w", encoding="utf-8") as f:
         json.dump({
@@ -294,7 +294,7 @@ def test_codex_install_merges_and_is_idempotent():
                     "hooks": [{
                         "type": "command",
                         "command": "python /old/agent_rails/adapters/delegation.py",
-                        "statusMessage": "Recording agent-rails subagent start",
+                        "statusMessage": "Recording hamingja subagent start",
                     }],
                 }],
             }
@@ -322,7 +322,7 @@ def test_codex_install_merges_and_is_idempotent():
 
 
 def test_codex_install_refuses_malformed_hooks():
-    d = tempfile.mkdtemp(prefix="agent-rails-codex-malformed-")
+    d = tempfile.mkdtemp(prefix="hamingja-codex-malformed-")
     hooks_path = os.path.join(d, "hooks.json")
     with open(hooks_path, "w", encoding="utf-8") as f:
         f.write("not-json")
@@ -337,7 +337,7 @@ def test_codex_install_refuses_malformed_hooks():
 
 
 def test_codex_install_refuses_malformed_managed_event():
-    d = tempfile.mkdtemp(prefix="agent-rails-codex-malformed-event-")
+    d = tempfile.mkdtemp(prefix="hamingja-codex-malformed-event-")
     hooks_path = os.path.join(d, "hooks.json")
     original = json.dumps({"hooks": {"PostToolUse": "unexpected"}})
     with open(hooks_path, "w", encoding="utf-8") as f:

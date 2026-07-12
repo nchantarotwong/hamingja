@@ -4,9 +4,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agent_rails.core.events import OK, PENDING, ToolEvent  # noqa: E402
-from agent_rails.detectors.base import BLOCK, NUDGE  # noqa: E402
-from agent_rails.detectors.oscillation import OscillationDetector  # noqa: E402
+from hamingja.core.events import OK, PENDING, ToolEvent  # noqa: E402
+from hamingja.detectors.base import BLOCK, NUDGE  # noqa: E402
+from hamingja.detectors.oscillation import OscillationDetector  # noqa: E402
 
 CFG = {
     "detectors": {

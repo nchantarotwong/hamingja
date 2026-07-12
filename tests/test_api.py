@@ -10,15 +10,15 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-_TMP = tempfile.mkdtemp(prefix="agent-rails-test-")
-os.environ["AGENT_RAILS_STATE_DIR"] = _TMP
+_TMP = tempfile.mkdtemp(prefix="hamingja-test-")
+os.environ["HAMINGJA_STATE_DIR"] = _TMP
 
-from agent_rails.core.api import check, record  # noqa: E402
-from agent_rails.core.state import read_recent  # noqa: E402
+from hamingja.core.api import check, record  # noqa: E402
+from hamingja.core.state import read_recent  # noqa: E402
 
 
 def _proj(files):
-    d = tempfile.mkdtemp(prefix="agent-rails-api-")
+    d = tempfile.mkdtemp(prefix="hamingja-api-")
     for name, content in files.items():
         with open(os.path.join(d, name), "w", encoding="utf-8") as f:
             f.write(content)
@@ -26,9 +26,9 @@ def _proj(files):
 
 
 def test_check_blocks_after_repeats_via_api_in_enforce():
-    old = os.environ.get("AGENT_RAILS_MODE")
+    old = os.environ.get("HAMINGJA_MODE")
     try:
-        os.environ["AGENT_RAILS_MODE"] = "enforce"
+        os.environ["HAMINGJA_MODE"] = "enforce"
         d = _proj({})
         args = {"command": "npm test"}
         for _ in range(3):
@@ -37,9 +37,9 @@ def test_check_blocks_after_repeats_via_api_in_enforce():
         assert v.action == "block"
     finally:
         if old is None:
-            os.environ.pop("AGENT_RAILS_MODE", None)
+            os.environ.pop("HAMINGJA_MODE", None)
         else:
-            os.environ["AGENT_RAILS_MODE"] = old
+            os.environ["HAMINGJA_MODE"] = old
 
 
 def test_enforced_block_records_marker_and_breaks_streak():
@@ -51,9 +51,9 @@ def test_enforced_block_records_marker_and_breaks_streak():
     marker for the denied call, which is not an ERROR, so the streak resets and
     the agent can run a *different* (diagnostic) call.
     """
-    old = os.environ.get("AGENT_RAILS_MODE")
+    old = os.environ.get("HAMINGJA_MODE")
     try:
-        os.environ["AGENT_RAILS_MODE"] = "enforce"
+        os.environ["HAMINGJA_MODE"] = "enforce"
         d = _proj({})
         for _ in range(6):
             record("wedge", "Bash", {"command": "broken"}, ok=False, project_dir=d)
@@ -63,15 +63,15 @@ def test_enforced_block_records_marker_and_breaks_streak():
         assert check("wedge", "Bash", {"command": "diagnose"}, project_dir=d).action == "allow"
     finally:
         if old is None:
-            os.environ.pop("AGENT_RAILS_MODE", None)
+            os.environ.pop("HAMINGJA_MODE", None)
         else:
-            os.environ["AGENT_RAILS_MODE"] = old
+            os.environ["HAMINGJA_MODE"] = old
 
 
 def test_enforced_repetition_block_marker_keeps_identical_retry_blocked():
-    old = os.environ.get("AGENT_RAILS_MODE")
+    old = os.environ.get("HAMINGJA_MODE")
     try:
-        os.environ["AGENT_RAILS_MODE"] = "enforce"
+        os.environ["HAMINGJA_MODE"] = "enforce"
         d = _proj({})
         args = {"command": "rg foo"}
         for _ in range(3):
@@ -82,15 +82,15 @@ def test_enforced_repetition_block_marker_keeps_identical_retry_blocked():
         assert check("repeat-marker", "Bash", {"command": "git status -sb"}, project_dir=d).action == "allow"
     finally:
         if old is None:
-            os.environ.pop("AGENT_RAILS_MODE", None)
+            os.environ.pop("HAMINGJA_MODE", None)
         else:
-            os.environ["AGENT_RAILS_MODE"] = old
+            os.environ["HAMINGJA_MODE"] = old
 
 
 def test_enforced_repetition_block_marker_survives_window_rollover():
-    old = os.environ.get("AGENT_RAILS_MODE")
+    old = os.environ.get("HAMINGJA_MODE")
     try:
-        os.environ["AGENT_RAILS_MODE"] = "enforce"
+        os.environ["HAMINGJA_MODE"] = "enforce"
         d = _proj({})
         args = {"command": "rg foo"}
         for _ in range(3):
@@ -101,9 +101,9 @@ def test_enforced_repetition_block_marker_survives_window_rollover():
         assert check("repeat-rollover", "Bash", {"command": "git status -sb"}, project_dir=d).action == "allow"
     finally:
         if old is None:
-            os.environ.pop("AGENT_RAILS_MODE", None)
+            os.environ.pop("HAMINGJA_MODE", None)
         else:
-            os.environ["AGENT_RAILS_MODE"] = old
+            os.environ["HAMINGJA_MODE"] = old
 
 
 def test_observe_block_does_not_record_marker():
@@ -117,7 +117,7 @@ def test_observe_block_does_not_record_marker():
 
 
 def test_record_is_inert_when_off():
-    d = _proj({".agent-rails-off": ""})
+    d = _proj({".hamingja-off": ""})
     for _ in range(6):
         record("sx", "Bash", {"command": "t"}, ok=False, project_dir=d)
     assert read_recent("sx", 50) == []

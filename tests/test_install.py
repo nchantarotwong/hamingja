@@ -1,4 +1,4 @@
-"""Tests for `agent-rails install` — harness auto-detection and dispatch.
+"""Tests for `hamingja install` — harness auto-detection and dispatch.
 
 Install ultimately shells out to a bash install.sh, which would touch
 ~/.claude or ~/.codex; we don't want tests doing that. So we exercise:
@@ -16,8 +16,8 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agent_rails import cli  # noqa: E402
-from agent_rails.cli import _detect_harnesses, main  # noqa: E402
+from hamingja import cli  # noqa: E402
+from hamingja.cli import _detect_harnesses, main  # noqa: E402
 
 
 # ---- _detect_harnesses ----------------------------------------------------
@@ -53,7 +53,7 @@ def test_detect_both_stable_order():
 
 
 def _run_install_capture(argv, *, home=None, monkey_subprocess=True):
-    """Invoke `agent-rails install ...`, capturing subprocess.call invocations.
+    """Invoke `hamingja install ...`, capturing subprocess.call invocations.
 
     Returns (rc, stdout, stderr, calls), where calls is a list of (cmd,)
     tuples that would have been spawned.

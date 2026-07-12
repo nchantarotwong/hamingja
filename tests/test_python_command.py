@@ -11,9 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from agent_rails.core.events import ToolEvent
-from agent_rails.detectors.base import NUDGE
-from agent_rails.detectors.python_command import PythonCommandDetector
+from hamingja.core.events import ToolEvent
+from hamingja.detectors.base import NUDGE
+from hamingja.detectors.python_command import PythonCommandDetector
 
 SESSION = "test-python-detector"
 

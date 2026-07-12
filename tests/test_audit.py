@@ -10,16 +10,16 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-_TMP = tempfile.mkdtemp(prefix="agent-rails-audit-")
-os.environ["AGENT_RAILS_STATE_DIR"] = _TMP
+_TMP = tempfile.mkdtemp(prefix="hamingja-audit-")
+os.environ["HAMINGJA_STATE_DIR"] = _TMP
 
-from agent_rails.core.audit import (  # noqa: E402
+from hamingja.core.audit import (  # noqa: E402
     clear_audit,
     log_verdict,
     read_audit,
     summarize,
 )
-from agent_rails.detectors.base import ALLOW, BLOCK, NUDGE, Verdict  # noqa: E402
+from hamingja.detectors.base import ALLOW, BLOCK, NUDGE, Verdict  # noqa: E402
 
 
 def setup_function(_):

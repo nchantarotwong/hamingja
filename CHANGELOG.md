@@ -1,9 +1,12 @@
 # Changelog
 
-All notable changes to agent-rails are recorded here.
+All notable changes to hamingja are recorded here.
 
-## 0.1.0 - Unreleased
+## 0.1.0 - 2026-07-12
 
+- Launch under the Hamingja name. Installers recognize pre-release
+  `agent_rails/adapters/` hook paths once so editable-checkout users can refresh
+  them in place with `hamingja install all`.
 - Establish Python 3.13 as the supported runtime floor.
 - Add fail-open mechanical tripwires and observe/enforce rollout controls.
 - Add progress-aware operator budgets, quota/context signals, operator-turn

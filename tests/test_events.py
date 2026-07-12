@@ -8,7 +8,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agent_rails.core.events import ToolEvent, hash_output  # noqa: E402
+from hamingja.core.events import ToolEvent, hash_output  # noqa: E402
 
 
 def test_bash_payload_variants_normalize_to_command_identity():

@@ -5,11 +5,11 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-_TMP = tempfile.mkdtemp(prefix="agent-rails-test-")
-os.environ["AGENT_RAILS_STATE_DIR"] = _TMP
+_TMP = tempfile.mkdtemp(prefix="hamingja-test-")
+os.environ["HAMINGJA_STATE_DIR"] = _TMP
 
-from agent_rails.core.events import OK, ToolEvent  # noqa: E402
-from agent_rails.core.state import append_event, read_recent  # noqa: E402
+from hamingja.core.events import OK, ToolEvent  # noqa: E402
+from hamingja.core.state import append_event, read_recent  # noqa: E402
 
 
 def test_round_trip_preserves_order():

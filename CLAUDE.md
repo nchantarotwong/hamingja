@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-You are working on **agent-rails** — a small Python library that ships fail-open
+You are working on **hamingja** — a small Python library that ships fail-open
 partner rails for Codex and Claude Code. Its core event/detector model remains
 harness-neutral, but Codex and Claude are the tested runtime promises; other
 loops use the generic adapter on a best-effort basis. It installs globally and
@@ -36,7 +36,7 @@ When you touch `core/`, `detectors/`, `config.py`, or any adapter:
 - Wrap risky work in `try/except` at the boundary and return an `allow` verdict
   on any unexpected error.
 - Sanitize untrusted config: canonicalize modes, coerce ints with safe floors,
-  refuse to escalate (`.agent-rails.json` may only *relax*, never tighten).
+  refuse to escalate (`.hamingja.json` may only *relax*, never tighten).
 - Keep detector mode separate from operator-budget authority: `observe` lowers
   mechanical detector blocks, but does not silently reinterpret or arm an
   operator stop.
@@ -81,10 +81,10 @@ Before adding anything:
 
 Use the repo-level navigation layer before reading large files:
 
-1. Run `agent-rails code-atlas` when you need a map of symbols/sections.
-2. Run `agent-rails locate "<what you need>"` to get bounded line ranges.
+1. Run `hamingja code-atlas` when you need a map of symbols/sections.
+2. Run `hamingja locate "<what you need>"` to get bounded line ranges.
 3. Read only the suggested range, not the whole file.
-4. Run `agent-rails repo-health` when a large file keeps attracting broad reads
+4. Run `hamingja repo-health` when a large file keeps attracting broad reads
    or unrelated edits; use the output as split-pressure visibility, not an
    automatic refactor mandate.
 
@@ -149,7 +149,7 @@ commit captured real sessions**.
 ## Verify before claiming something is absent
 
 Before saying "X isn't implemented" or "the library can't do this," check
-`agent_rails/`, `.venv/`, `__init__.py` re-exports, `config.default.json`,
+`hamingja/`, `.venv/`, `__init__.py` re-exports, `config.default.json`,
 adapter install scripts, README, and tests. Absence-of-use is not
 absence-of-feature.
 
@@ -197,15 +197,15 @@ When the user says they merged a PR, treat that as authoritative:
    authorization for this specific deletion — no separate confirm needed.
 5. Stop and report.
 
-Use the agent-rails wrappers when available:
-- `agent-rails pr-create --title <title> --body-file <path>` before `gh pr create`;
+Use the hamingja wrappers when available:
+- `hamingja pr-create --title <title> --body-file <path>` before `gh pr create`;
   write a concise PR body to a temporary/repo-local markdown file first, or use
   `--body -` with stdin. Do not pass a literal body string to `--body`.
-- `agent-rails pr-merge <pr>` before `gh pr merge`
-- `agent-rails post-merge-cleanup [branch]` before raw git cleanup
+- `hamingja pr-merge <pr>` before `gh pr merge`
+- `hamingja post-merge-cleanup [branch]` before raw git cleanup
 
 If a wrapper is unavailable or fails loudly, rerun the raw fallback with
-`AGENT_RAILS_ALLOW_RAW=1` and note why.
+`HAMINGJA_ALLOW_RAW=1` and note why.
 
 ## Communication
 

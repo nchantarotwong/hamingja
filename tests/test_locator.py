@@ -8,9 +8,9 @@ from types import SimpleNamespace
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import agent_rails.cli as cli_module  # noqa: E402
-from agent_rails.cli import main  # noqa: E402
-from agent_rails.locator import Location, _rg_hits, format_locations, locate  # noqa: E402
+import hamingja.cli as cli_module  # noqa: E402
+from hamingja.cli import main  # noqa: E402
+from hamingja.locator import Location, _rg_hits, format_locations, locate  # noqa: E402
 
 
 def test_locate_returns_ranked_ranges_not_contents(tmp_path):
@@ -75,7 +75,7 @@ def test_locate_honors_glob(tmp_path):
 def test_locate_fallback_scans_single_file_root(tmp_path, monkeypatch):
     path = tmp_path / "server.py"
     path.write_text("def route():\n    return 'pick directory'\n")
-    monkeypatch.setattr("agent_rails.locator.shutil.which", lambda _name: None)
+    monkeypatch.setattr("hamingja.locator.shutil.which", lambda _name: None)
 
     results = locate("pick directory", root=path)
 
@@ -127,12 +127,12 @@ def test_rg_json_parsing_handles_colons_in_filenames(tmp_path, monkeypatch):
         },
     }
 
-    monkeypatch.setattr("agent_rails.locator.shutil.which", lambda _name: "/usr/bin/rg")
+    monkeypatch.setattr("hamingja.locator.shutil.which", lambda _name: "/usr/bin/rg")
 
     def fake_run(*_args, **_kwargs):
         return SimpleNamespace(returncode=0, stdout=json.dumps(payload) + "\n")
 
-    monkeypatch.setattr("agent_rails.locator.subprocess.run", fake_run)
+    monkeypatch.setattr("hamingja.locator.subprocess.run", fake_run)
 
     hits = _rg_hits(tmp_path, ["pick", "directory"], None)
 

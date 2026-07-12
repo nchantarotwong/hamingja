@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-INSTALL = ROOT / "agent_rails" / "adapters" / "claude_code" / "install.sh"
+INSTALL = ROOT / "hamingja" / "adapters" / "claude_code" / "install.sh"
 
 
 def test_claude_install_registers_lifecycle_hooks_idempotently(tmp_path):

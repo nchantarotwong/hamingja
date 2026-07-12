@@ -1,4 +1,4 @@
-"""Tests for `agent-rails init` — the offline AGENTS.md generator.
+"""Tests for `hamingja init` — the offline AGENTS.md generator.
 
 Init is not on the tool-call hot path, so these are conventional CLI tests
 (no fail-open semantics to honor here). Coverage: listing, dry-run, default
@@ -16,8 +16,8 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agent_rails.cli import main  # noqa: E402
-from agent_rails.profiles import ALL_PROFILES, DEFAULT_PROFILES  # noqa: E402
+from hamingja.cli import main  # noqa: E402
+from hamingja.profiles import ALL_PROFILES, DEFAULT_PROFILES  # noqa: E402
 
 
 def _run(argv, cwd=None) -> tuple[int, str, str]:
@@ -52,8 +52,8 @@ def test_dry_run_prints_default_set_and_does_not_write():
         for name in DEFAULT_PROFILES:
             assert f"# {name}" in out
         assert "# compiler_language" not in out
-        assert "<!-- BEGIN agent-rails workflow profiles -->" in out
-        assert "## Workflow rails (agent-rails)" in out
+        assert "<!-- BEGIN hamingja workflow profiles -->" in out
+        assert "## Workflow rails (hamingja)" in out
         # default would also produce the AGENTS.md symlink — dry-run announces it
         assert "would also create symlink" in out
         assert "AGENTS.md" in out
@@ -76,7 +76,7 @@ def test_default_includes_wrapper_usage_guidance():
     with tempfile.TemporaryDirectory() as d:
         rc, out, _ = _run(["init", "--dry-run"], cwd=d)
         assert rc == 0
-        assert "run `agent-rails commands`" in out
+        assert "run `hamingja commands`" in out
         assert "use the listed wrapper if one exists" in out
         assert "fallback behavior only when the wrapper is unavailable or fails loudly" in out
 
@@ -85,9 +85,9 @@ def test_default_includes_locate_before_large_read_guidance():
     with tempfile.TemporaryDirectory() as d:
         rc, out, _ = _run(["init", "--dry-run"], cwd=d)
         assert rc == 0
-        assert 'agent-rails locate "<what you need>"' in out
-        assert "agent-rails code-atlas" in out
-        assert "agent-rails repo-health" in out
+        assert 'hamingja locate "<what you need>"' in out
+        assert "hamingja code-atlas" in out
+        assert "hamingja repo-health" in out
         assert "read only the returned line range" in out
 
 
@@ -120,8 +120,8 @@ def test_default_writes_claude_md_and_symlinks_agents_md():
         # symlink resolves to the same content
         assert agents.read_text(encoding="utf-8") == claude.read_text(encoding="utf-8")
         body = claude.read_text(encoding="utf-8")
-        assert "<!-- BEGIN agent-rails workflow profiles -->" in body
-        assert "## Workflow rails (agent-rails)" in body
+        assert "<!-- BEGIN hamingja workflow profiles -->" in body
+        assert "## Workflow rails (hamingja)" in body
         assert "# base" in body
         assert "wrote CLAUDE.md" in out
         assert "linked AGENTS.md -> CLAUDE.md" in out
@@ -190,7 +190,7 @@ def test_existing_claude_md_gets_managed_block_appended_without_force():
         assert err == ""
         body = (Path(d) / "CLAUDE.md").read_text(encoding="utf-8")
         assert body.startswith("preexisting\n\n")
-        assert body.count("<!-- BEGIN agent-rails workflow profiles -->") == 1
+        assert body.count("<!-- BEGIN hamingja workflow profiles -->") == 1
         assert "# base" in body
         assert "appended to CLAUDE.md" in out
         assert not (Path(d) / "AGENTS.md").exists()
@@ -205,7 +205,7 @@ def test_existing_agents_md_gets_managed_block_appended_without_force():
         assert not (Path(d) / "CLAUDE.md").exists()
         body = (Path(d) / "AGENTS.md").read_text(encoding="utf-8")
         assert body.startswith("preexisting AGENTS\n\n")
-        assert body.count("<!-- BEGIN agent-rails workflow profiles -->") == 1
+        assert body.count("<!-- BEGIN hamingja workflow profiles -->") == 1
         assert "# base" in body
         assert "appended to AGENTS.md" in out
 
@@ -216,9 +216,9 @@ def test_existing_managed_block_is_replaced_not_duplicated():
             [
                 "# local instructions",
                 "",
-                "<!-- BEGIN agent-rails workflow profiles -->",
+                "<!-- BEGIN hamingja workflow profiles -->",
                 "old managed content",
-                "<!-- END agent-rails workflow profiles -->",
+                "<!-- END hamingja workflow profiles -->",
                 "",
                 "tail note",
                 "",
@@ -232,8 +232,8 @@ def test_existing_managed_block_is_replaced_not_duplicated():
         assert "# local instructions" in body
         assert "tail note" in body
         assert "old managed content" not in body
-        assert body.count("<!-- BEGIN agent-rails workflow profiles -->") == 1
-        assert body.count("<!-- END agent-rails workflow profiles -->") == 1
+        assert body.count("<!-- BEGIN hamingja workflow profiles -->") == 1
+        assert body.count("<!-- END hamingja workflow profiles -->") == 1
         assert "# base" in body
         assert "# debugging" not in body
         assert "updated CLAUDE.md" in out

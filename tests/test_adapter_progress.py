@@ -1,8 +1,8 @@
 import json
 
-from agent_rails.adapters.progress import record_workflow_progress
-from agent_rails.core import budget
-from agent_rails.core.api import record
+from hamingja.adapters.progress import record_workflow_progress
+from hamingja.core import budget
+from hamingja.core.api import record
 
 
 def _seed(session_id: str):
@@ -12,10 +12,10 @@ def _seed(session_id: str):
 
 
 def test_ready_ci_lifecycle_credits_anchored_workflow_progress(tmp_path, monkeypatch):
-    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("HAMINGJA_STATE_DIR", str(tmp_path))
     sid = "adapter-ci-ready"
     _seed(sid)
-    args = {"command": "agent-rails ci-status 12 --json"}
+    args = {"command": "hamingja ci-status 12 --json"}
     result = {"stdout": json.dumps({
         "schema_version": 1,
         "operation": "ci_status",
@@ -31,10 +31,10 @@ def test_ready_ci_lifecycle_credits_anchored_workflow_progress(tmp_path, monkeyp
 
 
 def test_pending_or_malformed_lifecycle_earns_nothing(tmp_path, monkeypatch):
-    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("HAMINGJA_STATE_DIR", str(tmp_path))
     sid = "adapter-not-progress"
     _seed(sid)
-    args = {"command": "agent-rails ci-status 12 --json"}
+    args = {"command": "hamingja ci-status 12 --json"}
     record(sid, "Bash", args, True, project_dir=str(tmp_path), output={"stdout": "pending"})
     before = budget.read_state(sid)["weighted_calls"]
     assert record_workflow_progress(sid, "Bash", args, {"stdout": "not-json"}, str(tmp_path)) is False
@@ -45,7 +45,7 @@ def test_pending_or_malformed_lifecycle_earns_nothing(tmp_path, monkeypatch):
 
 
 def test_arbitrary_command_cannot_farm_lifecycle_credit(tmp_path, monkeypatch):
-    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("HAMINGJA_STATE_DIR", str(tmp_path))
     sid = "adapter-fake-progress"
     _seed(sid)
     args = {"command": "echo '{\"operation\":\"pr_merge\",\"state\":\"merged\"}'"}
@@ -59,10 +59,10 @@ def test_arbitrary_command_cannot_farm_lifecycle_credit(tmp_path, monkeypatch):
 
 
 def test_wrapper_pipeline_cannot_farm_lifecycle_credit(tmp_path, monkeypatch):
-    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("HAMINGJA_STATE_DIR", str(tmp_path))
     sid = "adapter-pipeline-progress"
     _seed(sid)
-    args = {"command": "agent-rails pr-merge 12 --json || echo fake"}
+    args = {"command": "hamingja pr-merge 12 --json || echo fake"}
     result = {"stdout": json.dumps({
         "schema_version": 1, "operation": "pr_merge", "state": "merged",
     })}
@@ -71,10 +71,10 @@ def test_wrapper_pipeline_cannot_farm_lifecycle_credit(tmp_path, monkeypatch):
 
 
 def test_arbitrary_executable_prefix_cannot_spoof_wrapper(tmp_path, monkeypatch):
-    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("HAMINGJA_STATE_DIR", str(tmp_path))
     sid = "adapter-prefix-progress"
     _seed(sid)
-    args = {"command": "fake-runner agent-rails pr-merge 12 --json"}
+    args = {"command": "fake-runner hamingja pr-merge 12 --json"}
     result = {"stdout": json.dumps({
         "schema_version": 1, "operation": "pr_merge", "state": "merged",
     })}
@@ -83,11 +83,11 @@ def test_arbitrary_executable_prefix_cannot_spoof_wrapper(tmp_path, monkeypatch)
 
 
 def test_stale_previous_event_cannot_anchor_current_wrapper(tmp_path, monkeypatch):
-    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("HAMINGJA_STATE_DIR", str(tmp_path))
     sid = "adapter-stale-anchor"
     _seed(sid)
     record(sid, "Bash", {"command": "echo prior"}, True, project_dir=str(tmp_path))
-    args = {"command": "agent-rails ci-status 12 --json"}
+    args = {"command": "hamingja ci-status 12 --json"}
     result = {"stdout": json.dumps({
         "schema_version": 1, "operation": "ci_status", "state": "ready",
     })}

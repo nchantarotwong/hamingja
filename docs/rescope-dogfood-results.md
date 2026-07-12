@@ -34,7 +34,7 @@ branch, full-suite, PR, merge, and cleanup loops. A bounded four-hour report
 window avoided mixing older pre-rescope audit records into the tuning sample:
 
 ```bash
-agent-rails report --since-hours 4 --json
+hamingja report --since-hours 4 --json
 ```
 
 Aggregate result: 3 local sessions, 7 advisories, 0 would-blocks, and 0 blocks.
