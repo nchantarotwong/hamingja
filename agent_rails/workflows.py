@@ -36,6 +36,8 @@ class LifecycleResult:
     failing: int = 0
     pending: int = 0
     detail: str = ""
+    resumable: bool = False
+    next_action: str = ""
 
 
 def _lifecycle(sink, operation: str, state: str, exit_code: int, **kwargs) -> int:
@@ -45,6 +47,14 @@ def _lifecycle(sink, operation: str, state: str, exit_code: int, **kwargs) -> in
     except Exception:
         pass  # structured reporting must never change the workflow result
     return exit_code
+
+
+def _failed_lifecycle(sink, operation: str, exit_code: int, detail: str,
+                      *, state: str = "failed", next_action: str = "safe to rerun") -> int:
+    return _lifecycle(
+        sink, operation, state, exit_code, detail=str(detail)[:1000],
+        resumable=True, next_action=next_action[:500],
+    )
 
 
 Runner = Callable[[Sequence[str]], RunResult]
@@ -169,31 +179,31 @@ def create_pr(
     if not title.strip():
         lines.append("- error: --title cannot be empty")
         _print_lines(lines)
-        return 2
+        return _failed_lifecycle(outcome, "pr_create", 2, "title is empty", next_action="provide a non-empty --title")
     try:
         if not body_file.is_file():
             lines.append(f"- error: body file not found: {body_file}")
             _print_lines(lines)
-            return 1
+            return _failed_lifecycle(outcome, "pr_create", 1, "body file not found", next_action="provide a readable --body-file")
     except OSError as e:
         lines.append(f"- error: could not inspect body file {body_file}: {e}")
         _print_lines(lines)
-        return 1
+        return _failed_lifecycle(outcome, "pr_create", 1, str(e), next_action="provide a readable --body-file")
 
     if not head:
         branch = _git_current_branch(runner)
         if not branch:
             lines.append("- error: could not determine current branch; pass --head")
             _print_lines(lines)
-            return 1
+            return _failed_lifecycle(outcome, "pr_create", 1, "current branch unknown", next_action="pass --head or checkout a topic branch")
         if branch == base:
             lines.append(f"- error: refusing to create a PR from base branch {base}; checkout a topic branch or pass --head")
             _print_lines(lines)
-            return 1
+            return _failed_lifecycle(outcome, "pr_create", 1, "refusing base branch", next_action="checkout a topic branch or pass --head")
         if not _valid_remote_name(remote):
             lines.append("- error: --remote must be a non-option remote name")
             _print_lines(lines)
-            return 2
+            return _failed_lifecycle(outcome, "pr_create", 2, "invalid remote", next_action="provide a non-option remote name")
         upstream = runner(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
         if upstream.returncode != 0:
             refspec = f"HEAD:refs/heads/{branch}"
@@ -201,7 +211,7 @@ def create_pr(
             if pushed.returncode != 0:
                 lines.append(f"- error: {_err(pushed)}")
                 _print_lines(lines)
-                return pushed.returncode or 1
+                return _failed_lifecycle(outcome, "pr_create", pushed.returncode or 1, _err(pushed), next_action="fix the push failure, then rerun")
             lines.append(f"- ok: git push -u {remote} {refspec}")
         else:
             upstream_name = upstream.stdout.strip() or "@{u}"
@@ -209,17 +219,17 @@ def create_pr(
             if counts.returncode != 0:
                 lines.append(f"- error: {_err(counts)}")
                 _print_lines(lines)
-                return counts.returncode or 1
+                return _failed_lifecycle(outcome, "pr_create", counts.returncode or 1, _err(counts), next_action="repair or inspect upstream tracking, then rerun")
             parsed = _parse_ahead_behind(counts.stdout)
             if parsed is None:
                 lines.append(f"- error: could not parse upstream ahead/behind counts: {counts.stdout.strip()!r}")
                 _print_lines(lines)
-                return 1
+                return _failed_lifecycle(outcome, "pr_create", 1, "malformed upstream counts", next_action="inspect git upstream tracking, then rerun")
             behind, ahead = parsed
             if behind:
                 lines.append(f"- error: branch is behind or diverged from {upstream_name}; pull/rebase before creating a PR")
                 _print_lines(lines)
-                return 1
+                return _failed_lifecycle(outcome, "pr_create", 1, "branch behind or diverged", next_action="pull or rebase the topic branch, then rerun")
             if ahead:
                 upstream_remote = runner(["git", "config", "--get", f"branch.{branch}.remote"])
                 upstream_merge = runner(["git", "config", "--get", f"branch.{branch}.merge"])
@@ -227,13 +237,13 @@ def create_pr(
                 if upstream_remote.returncode != 0 or upstream_merge.returncode != 0 or push_target is None:
                     lines.append("- error: could not determine configured upstream push target")
                     _print_lines(lines)
-                    return 1
+                    return _failed_lifecycle(outcome, "pr_create", 1, "upstream push target unknown", next_action="repair branch upstream configuration, then rerun")
                 push_remote, push_ref = push_target
                 pushed = runner(["git", "push", push_remote, f"HEAD:{push_ref}"])
                 if pushed.returncode != 0:
                     lines.append(f"- error: {_err(pushed)}")
                     _print_lines(lines)
-                    return pushed.returncode or 1
+                    return _failed_lifecycle(outcome, "pr_create", pushed.returncode or 1, _err(pushed), next_action="fix the push failure, then rerun")
                 lines.append(f"- ok: git push {push_remote} HEAD:{push_ref}")
 
     cmd = [
@@ -255,7 +265,7 @@ def create_pr(
     if res.returncode != 0:
         lines.append(f"- error: {_err(res)}")
         _print_lines(lines)
-        return res.returncode or 1
+        return _failed_lifecycle(outcome, "pr_create", res.returncode or 1, _err(res), next_action="inspect gh authentication or PR state, then rerun")
     url = (res.stdout or "").strip()
     lines.append("- ok: gh pr create --body-file")
     if url:
@@ -393,24 +403,25 @@ def merge_pr(
     if view.returncode != 0:
         lines.append(f"- error: {_err(view)}")
         _print_lines(lines)
-        return view.returncode or 1
+        return _failed_lifecycle(outcome, "pr_merge", view.returncode or 1, _err(view), next_action="restore gh access, then rerun; PR state is rechecked")
     info = _json_object_from(view)
     if not _valid_pr_view(info, require_state=True, require_head=True):
         lines.append("- error: gh returned malformed PR data")
         _print_lines(lines)
-        return 1
+        return _failed_lifecycle(outcome, "pr_merge", 1, "malformed PR data", next_action="inspect PR state with gh, then rerun")
     branch = info.get("headRefName")
 
     flag = {"squash": "--squash", "merge": "--merge", "rebase": "--rebase"}.get(method)
     if flag is None:
         lines.append(f"- error: unknown merge method {method!r}")
         _print_lines(lines)
-        return 2
+        return _failed_lifecycle(outcome, "pr_merge", 2, "unknown merge method", next_action="choose squash, merge, or rebase")
 
     if skip_ci_reason:
         lines.append("- ci gate SKIPPED")
         lines.append(f"- local validation override: {skip_ci_reason}")
     else:
+        gate_state: list[str] = []
         gate_rc = _ci_gate(
             pr,
             lines,
@@ -418,10 +429,15 @@ def merge_pr(
             ci_poll_s=ci_poll_s,
             runner=runner,
             sleeper=sleeper,
+            outcome_state=gate_state,
         )
         if gate_rc != 0:
             _print_lines(lines)
-            return gate_rc
+            return _failed_lifecycle(
+                outcome, "pr_merge", gate_rc, lines[-1] if lines else "CI gate failed",
+                state=gate_state[-1] if gate_state else ("blocked" if gate_rc == 2 else "failed"),
+                next_action="resolve or await CI, then rerun; no merge was attempted",
+            )
 
     state = None
     merge = runner(["gh", "pr", "merge", pr, flag, "--delete-branch"])
@@ -433,14 +449,14 @@ def merge_pr(
             if not _valid_pr_view(recovered_info, require_state=True):
                 lines.append("- error: gh returned malformed PR data")
                 _print_lines(lines)
-                return 1
+                return _failed_lifecycle(outcome, "pr_merge", 1, "malformed recovery PR data", next_action="inspect PR state with gh, then rerun")
             state = recovered_info.get("state")
         else:
             state = None
         if state != "MERGED":
             lines.append(f"- error: PR state after merge failure is {state or 'unknown'}")
             _print_lines(lines)
-            return merge.returncode or 1
+            return _failed_lifecycle(outcome, "pr_merge", merge.returncode or 1, f"merge failed; PR state {state or 'unknown'}", next_action="inspect PR state with gh, then rerun")
         lines.append("- recovered: PR is already MERGED")
     else:
         lines.append("- merge command accepted")
@@ -454,12 +470,12 @@ def merge_pr(
         if poll.returncode != 0:
             lines.append(f"- error: could not poll PR state: {_err(poll)}")
             _print_lines(lines)
-            return poll.returncode or 1
+            return _failed_lifecycle(outcome, "pr_merge", poll.returncode or 1, _err(poll), state="pending", next_action="rerun; wrapper rechecks PR state before merging")
         poll_info = _json_object_from(poll)
         if not _valid_pr_view(poll_info, require_state=True):
             lines.append("- error: gh returned malformed PR data")
             _print_lines(lines)
-            return 1
+            return _failed_lifecycle(outcome, "pr_merge", 1, "malformed poll PR data", state="pending", next_action="inspect PR state with gh, then rerun")
         state = poll_info.get("state")
         if state == "MERGED":
             lines.append("- state: MERGED")
@@ -467,7 +483,7 @@ def merge_pr(
         if time.monotonic() >= deadline:
             lines.append(f"- timeout: PR state is {state or 'unknown'}")
             _print_lines(lines)
-            return 1
+            return _failed_lifecycle(outcome, "pr_merge", 1, f"timeout while PR state was {state or 'unknown'}", state="pending", next_action="rerun; wrapper rechecks PR state before merging")
         sleeper(poll_s)
 
     if cleanup and branch and state == "MERGED":
@@ -484,6 +500,8 @@ def merge_pr(
         return _lifecycle(
             outcome, "pr_merge", "merged", cleanup_rc,
             detail="local cleanup failed" if cleanup_rc else "",
+            resumable=bool(cleanup_rc),
+            next_action="run agent-rails post-merge-cleanup" if cleanup_rc else "",
         )
     _print_lines(lines)
     return _lifecycle(outcome, "pr_merge", "merged", 0)
@@ -678,6 +696,7 @@ def _ci_gate(
     ci_poll_s: float,
     runner: Runner,
     sleeper: Callable[[float], None],
+    outcome_state: Optional[list[str]] = None,
 ) -> int:
     """Refuse to merge until every CI check on the PR has passed.
 
@@ -693,6 +712,13 @@ def _ci_gate(
     no_checks_deadline = time.monotonic() + min(max(0, ci_timeout_s), NO_CHECKS_GRACE_SECONDS)
     waiting_logged = False
     passed_fingerprint: Optional[tuple[tuple[str, str], ...]] = None
+    def finish(state: str, rc: int) -> int:
+        try:
+            if isinstance(outcome_state, list):
+                outcome_state[:] = [state]
+        except Exception:
+            pass
+        return rc
     while True:
         checks, error = _fetch_checks(pr, runner=runner)
         if error is not None:
@@ -704,7 +730,7 @@ def _ci_gate(
             else:
                 lines.append(f"- error: {error}")
                 lines.append("- refusing to merge: CI state unknown; retry, or pass --skip-ci-reason with local validation")
-                return 1
+                return finish("failed", 1)
         failing, pending = _classify_checks(checks)
         if failing:
             lines.append(f"- ci: {len(checks)} checks, {len(failing)} failing, {len(pending)} pending")
@@ -712,16 +738,16 @@ def _ci_gate(
             if ci_block:
                 lines.append(f"- blocked: {ci_block}")
                 lines.append("- refusing to merge: CI appears unavailable; confirm GitHub Actions budget/availability before rerunning")
-                return 2
+                return finish("blocked", 2)
             for c in failing[:20]:
                 lines.append(_check_line("failed", c))
             lines.append("- refusing to merge: CI checks are failing; fix CI, or pass --skip-ci-reason with local validation")
-            return 1
+            return finish("failed", 1)
         if checks and not pending:
             fingerprint = _checks_fingerprint(checks)
             if passed_fingerprint == fingerprint:
                 lines.append(f"- ci: all {len(checks)} checks passed")
-                return 0
+                return finish("ready", 0)
             passed_fingerprint = fingerprint
             lines.append(f"- ci: all {len(checks)} reported checks passed; verifying stable check set")
             sleeper(min(max(ci_poll_s, 0), 5))
@@ -733,19 +759,19 @@ def _ci_gate(
             if conflict_reason:
                 lines.append(f"- mergeability: {conflict_reason}")
                 lines.append("- refusing to merge: resolve branch conflicts, then rerun the wrapper")
-                return 1
+                return finish("failed", 1)
             if _repo_has_no_ci_workflows():
                 lines.append("- ci gate SKIPPED")
                 lines.append("- no GitHub Actions workflows found locally; treating missing checks as no CI")
-                return 0
+                return finish("ready", 0)
             lines.append("- refusing to merge: no CI checks reported for this PR; if this repo has no CI, pass --skip-ci-reason")
-            return 1
+            return finish("pending", 1)
         if now >= deadline:
             lines.append(f"- ci: {len(pending)} check(s) still pending after {ci_timeout_s}s")
             for c in pending[:20]:
                 lines.append(_check_line("pending", c))
             lines.append("- refusing to merge: CI did not finish in time; raise --ci-timeout or rerun later")
-            return 1
+            return finish("pending", 1)
         if not waiting_logged and pending:
             lines.append(f"- ci: waiting for {len(pending)} pending check(s)")
             waiting_logged = True

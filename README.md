@@ -507,6 +507,12 @@ agent-rails preflight --list          # list repo-owned readiness checks
 agent-rails preflight full-suite-readiness
 ```
 
+Workflow JSON includes `resumable` and a bounded `next_action`. Interrupted or
+partially completed PR operations can be rerun safely: create rechecks branch
+and upstream state, while merge rechecks the remote PR state before attempting
+another merge. Direct Python callers receive the same lifecycle metadata on
+failure as well as success.
+
 `pr-create` checks the current branch when `--head` is omitted. If the branch
 has no upstream, it runs `git push -u origin HEAD:refs/heads/<branch>` before
 calling `gh pr create`; use `--remote <name>` to push somewhere other than

@@ -519,6 +519,18 @@ def test_create_pr_requires_body_file():
     assert "body file not found" in out
 
 
+def test_create_pr_failure_emits_resumable_structured_state():
+    outcome = []
+    rc, _ = _capture(
+        create_pr, title="Add wrapper",
+        body_file=Path("/definitely/missing/pr-body.md"), outcome=outcome,
+    )
+    assert rc == 1
+    assert outcome[0].state == "failed"
+    assert outcome[0].resumable is True
+    assert "body-file" in outcome[0].next_action
+
+
 def test_cleanup_after_merge_runs_checkout_pull_delete():
     runner = FakeRunner([
         RunResult(["git", "branch", "--show-current"], 0, "feature\n", ""),
@@ -756,6 +768,42 @@ def test_merge_pr_rejects_malformed_recovery_pr_view_without_crashing():
 
     assert rc == 1
     assert "malformed PR data" in out
+
+
+def test_merge_pr_failure_emits_structured_recovery_state():
+    runner = FakeRunner([
+        RunResult(
+            ["gh", "pr", "view", "12", "--json", "headRefName,state,url"],
+            0, '{"headRefName":"topic","state":"OPEN"}', "",
+        ),
+        *_checks_passing_stable(),
+        RunResult(["gh", "pr", "merge", "12", "--squash", "--delete-branch"], 1, "", "denied"),
+        RunResult(["gh", "pr", "view", "12", "--json", "state,url"], 0, '{"state":"OPEN"}', ""),
+    ])
+    outcome = []
+    rc, _ = _capture(merge_pr, "12", runner=runner, sleeper=lambda _s: None, poll_s=0, outcome=outcome)
+    assert rc == 1
+    assert outcome[0].state == "failed"
+    assert outcome[0].resumable is True
+    assert "PR state" in outcome[0].next_action
+
+
+def test_merge_pr_pending_ci_emits_pending_resumable_state():
+    runner = FakeRunner([
+        RunResult(
+            ["gh", "pr", "view", "12", "--json", "headRefName,state,url"],
+            0, '{"headRefName":"topic","state":"OPEN"}', "",
+        ),
+        RunResult(CHECKS_CMD, 0, '[{"name":"ci","state":"IN_PROGRESS"}]', ""),
+    ])
+    outcome = []
+    rc, _ = _capture(
+        merge_pr, "12", runner=runner, sleeper=lambda _s: None,
+        ci_timeout_s=0, poll_s=0, outcome=outcome,
+    )
+    assert rc == 1
+    assert outcome[0].state == "pending"
+    assert outcome[0].resumable is True
 
 
 def test_merge_pr_fails_when_merge_command_error_did_not_merge_pr():
