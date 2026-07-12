@@ -186,6 +186,8 @@ def _default_state(checkpoint_at: int) -> dict:
         "credit_log": [],
         "last_budget_advisory": "",
         "weighted_at_last_progress": 0.0,
+        "weighted_at_last_operator": 0.0,
+        "operator_turn_observed": False,
         "last_progress": None,
     }
 
@@ -254,6 +256,12 @@ def _load_locked(fh, checkpoint_at: int) -> dict:
         v = data.get("weighted_at_last_progress")
         if isinstance(v, (int, float)) and not isinstance(v, bool):
             state["weighted_at_last_progress"] = max(0.0, float(v))
+        v = data.get("weighted_at_last_operator")
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            state["weighted_at_last_operator"] = max(0.0, float(v))
+        v = data.get("operator_turn_observed")
+        if isinstance(v, bool):
+            state["operator_turn_observed"] = v
         v = data.get("last_progress")
         state["last_progress"] = _clean_progress_evidence(v)
     except Exception:
@@ -705,11 +713,25 @@ def increment_and_check(
             )))
         except (TypeError, ValueError):
             stall_window = 30.0
+        try:
+            unattended_window = max(
+                1.0, float(stop_cfg.get("unattended_window_weighted", 30))
+            )
+        except (TypeError, ValueError):
+            unattended_window = 30.0
         since_progress = wc - float(state.get("weighted_at_last_progress", 0.0))
+        since_operator = wc - float(state.get("weighted_at_last_operator", 0.0))
+        proven_unattended = (
+            state.get("operator_turn_observed") is True
+            and since_operator >= unattended_window
+        )
         positive_danger = mechanical_signal is True or _quota_scarce(quota_reading, cfg)
         if (stop_enabled and wc > hard_block_at and wc > approved_tc
                 and since_progress >= stall_window
-                and (unconditional or (positive_danger and unattended_signal is True))):
+                and (unconditional or (
+                    positive_danger
+                    and (proven_unattended or unattended_signal is True)
+                ))):
             hard_msg = (
                 f"[agent-rails budget] Hard limit: {_fmt_calls(wc, tc)}/{hard_block_at} weighted calls{type_tag}.\n\n"
                 f"Extend the budget:\n"
@@ -853,6 +875,26 @@ def increment_and_check(
 
     except Exception:
         return BudgetVerdict(ALLOW, "")
+
+
+def mark_operator_turn(session_id: str, cfg: dict) -> dict:
+    """Anchor unattended-work recency without storing prompt content."""
+    try:
+        checkpoint = _cfg_int(cfg, "checkpoint_at")
+        path = _budget_path(session_id)
+        with path.open("a+", encoding="utf-8") as fh:
+            _lock(fh, exclusive=True)
+            try:
+                state = _load_locked(fh, checkpoint)
+                state["weighted_at_last_operator"] = float(state.get("weighted_calls", 0.0))
+                state["operator_turn_observed"] = True
+                state["last_budget_advisory"] = ""
+                _save_locked(fh, state)
+                return dict(state)
+            finally:
+                _unlock(fh)
+    except Exception:
+        return {}
 
 
 def approve(

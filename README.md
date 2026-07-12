@@ -84,10 +84,11 @@ as advisory context before edit/write tools touch a scoped path.
 agent-rails install claude
 ```
 
-Merges five hooks into `~/.claude/settings.json` — a `PreToolUse` tripwire,
+Merges six hooks into `~/.claude/settings.json` — a `PreToolUse` tripwire,
 a recorder on both `PostToolUse` (success) and `PostToolUseFailure` (failure, so
 error detection is by event, not by parsing an undocumented result shape), and
-`SubagentStart` / `SubagentStop` lifecycle recorders. The
+`SubagentStart` / `SubagentStop` lifecycle recorders, and a prompt-free
+`UserPromptSubmit` operator-turn anchor. The
 merge preserves your other hooks, is idempotent, self-heals a moved repo path,
 and backs up only when it actually changes something. Default mode is `observe`,
 so nothing is blocked until you flip to `enforce`.
@@ -98,9 +99,10 @@ so nothing is blocked until you flip to `enforce`.
 agent-rails install codex
 ```
 
-Merges four hooks into `~/.codex/hooks.json` — a `PreToolUse` tripwire, a
+Merges five hooks into `~/.codex/hooks.json` — a `PreToolUse` tripwire, a
 `PostToolUse` recorder, and `SubagentStart` / `SubagentStop` lifecycle
-recorders. The merge preserves your other hooks, is idempotent,
+recorders, plus a prompt-free `UserPromptSubmit` operator-turn anchor. The
+merge preserves your other hooks, is idempotent,
 self-heals a moved repo path, and backs up only when it actually changes
 something. Codex may ask you to review/trust the new hooks with `/hooks`.
 Default mode is `observe`, so nothing is blocked until you flip to `enforce`.
@@ -249,9 +251,10 @@ work, plus positive danger evidence: either a strong mechanical non-convergence
 signature or fresh measured quota scarcity. Call volume alone only advises.
 Trusted configuration may set
 `budget.operator_stop.unconditional: true`; repository configuration may relax
-or disable the stop but cannot tighten it. Current Codex and Claude tool hooks
-do not prove operator-turn recency, so the conditional stop fails open to
-advisory behavior there until an adapter can supply that evidence.
+or disable the stop but cannot tighten it. Codex and Claude `UserPromptSubmit`
+hooks record only the current weighted-work counter—never prompt text—so a
+recent operator intervention deterministically disarms the unattended branch.
+Missing or malformed prompt events fail open and cannot arm a stop.
 
 - **Claude Code** does not persist a rate-limit percent (it lives on API
   response headers), so its probe reports only **context occupancy** from the

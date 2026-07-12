@@ -15,10 +15,13 @@ from agent_rails.core.delegation import record_lifecycle  # noqa: E402
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
+        cfg = load_config(payload.get("cwd")) if isinstance(payload, dict) else {}
+        if isinstance(cfg, dict) and cfg.get("mode") == "off":
+            print("{}")
+            return 0
         state = record_lifecycle(payload)
         output = {}
         if payload.get("hook_event_name") == "SubagentStart" and state:
-            cfg = load_config(payload.get("cwd"))
             delegation = cfg.get("delegation", {}) if isinstance(cfg, dict) else {}
             limit = max(1, int(delegation.get("max_active_children", 1)))
             if state.get("active_children", 0) > limit:

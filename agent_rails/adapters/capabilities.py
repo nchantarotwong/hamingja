@@ -10,13 +10,14 @@ from copy import deepcopy
 
 _MANIFESTS = {
     "codex": {
-        "version": 2,
+        "version": 3,
         "runtime": "codex",
         "pre_tool_enforcement": "partial",
         "post_tool_outcomes": "partial",
         "quota_probe": True,
         "quota_ttl_seconds": 300,
         "context_probe": True,
+        "operator_turn_observed": True,
         "delegation_spawn": True,
         "delegation_completion": True,
         "delegation_identity": True,
@@ -24,13 +25,14 @@ _MANIFESTS = {
         "delegation_fallback": "monotonic_grants",
     },
     "claude_code": {
-        "version": 2,
+        "version": 3,
         "runtime": "claude_code",
         "pre_tool_enforcement": "full",
         "post_tool_outcomes": "full",
         "quota_probe": False,
         "quota_ttl_seconds": None,
         "context_probe": True,
+        "operator_turn_observed": True,
         "delegation_spawn": True,
         "delegation_completion": True,
         "delegation_identity": True,
