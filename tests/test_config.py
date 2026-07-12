@@ -406,6 +406,26 @@ def test_project_can_raise_hard_block_at():
     _no_env(body)
 
 
+def test_project_can_relax_rescoped_budget_stop_but_not_tighten():
+    def body():
+        d = _proj({".agent-rails.json": json.dumps({"budget": {
+            "checkpoint_deny": True,
+            "operator_stop": {
+                "enabled": False,
+                "unconditional": True,
+                "stall_window_weighted": 99,
+                "scarcity_used_pct": 99,
+            },
+        }})})
+        budget = load_config(d)["budget"]
+        assert budget["checkpoint_deny"] is False
+        assert budget["operator_stop"]["enabled"] is False
+        assert budget["operator_stop"]["unconditional"] is False
+        assert budget["operator_stop"]["stall_window_weighted"] == 99
+        assert budget["operator_stop"]["scarcity_used_pct"] == 99
+    _no_env(body)
+
+
 def test_project_can_raise_self_approve_max_add():
     def body():
         d = _proj({".agent-rails.json": json.dumps(

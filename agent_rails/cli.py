@@ -302,7 +302,20 @@ def _cmd_code_atlas(args: argparse.Namespace) -> int:
             max_files=args.max_files,
             max_entries_per_file=args.max_entries,
         )
-        print(format_code_atlas(atlas, root=root))
+        if args.json:
+            resolved = root.resolve()
+            print(json.dumps({
+                "schema_version": 1,
+                "kind": "code_atlas",
+                "incomplete": len(atlas) >= args.max_files,
+                "files": [{
+                    "path": str(item.path.relative_to(resolved)),
+                    "line_count": item.line_count,
+                    "entries": [vars(entry) for entry in item.entries],
+                } for item in atlas],
+            }, sort_keys=True))
+        else:
+            print(format_code_atlas(atlas, root=root))
     except Exception:
         print("No code atlas entries found.")
     return 0
@@ -318,7 +331,21 @@ def _cmd_repo_health(args: argparse.Namespace) -> int:
             max_files=args.max_files,
             max_suggestions=args.max_suggestions,
         )
-        print(format_repo_health(health, root=root))
+        if args.json:
+            resolved = root.resolve()
+            print(json.dumps({
+                "schema_version": 1,
+                "kind": "repo_health",
+                "incomplete": len(health) >= args.max_files,
+                "files": [{
+                    "path": str(item.path.relative_to(resolved)),
+                    "line_count": item.line_count,
+                    "estimated_tokens": item.estimated_tokens,
+                    "suggestions": item.suggestions,
+                } for item in health],
+            }, sort_keys=True))
+        else:
+            print(format_repo_health(health, root=root))
     except Exception:
         print("No large source files found.")
     return 0
@@ -1291,6 +1318,7 @@ def build_parser() -> argparse.ArgumentParser:
     atlas.add_argument("--min-lines", type=int, default=200, help="minimum file size to include (default: 200)")
     atlas.add_argument("--max-files", type=int, default=50, help="maximum files to print (default: 50)")
     atlas.add_argument("--max-entries", type=int, default=80, help="maximum entries per file (default: 80)")
+    atlas.add_argument("--json", action="store_true", help="emit versioned structured output")
     atlas.set_defaults(func=_cmd_code_atlas)
 
     health = sub.add_parser("repo-health", help="show large-file retrieval cost and split hints")
@@ -1299,6 +1327,7 @@ def build_parser() -> argparse.ArgumentParser:
     health.add_argument("--min-lines", type=int, default=1000, help="minimum file size to include (default: 1000)")
     health.add_argument("--max-files", type=int, default=50, help="maximum files to print (default: 50)")
     health.add_argument("--max-suggestions", type=int, default=8, help="maximum split hints per file (default: 8)")
+    health.add_argument("--json", action="store_true", help="emit versioned structured output")
     health.set_defaults(func=_cmd_repo_health)
 
     def add_locate_args(parser: argparse.ArgumentParser) -> None:

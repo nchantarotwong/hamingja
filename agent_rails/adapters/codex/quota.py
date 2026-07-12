@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -50,6 +51,7 @@ from .._jsonl_tail import iter_complete_lines_reversed
 # newest token_count. Past the cap we fail open rather than scan the whole file.
 _TAIL_INITIAL = 64 * 1024
 _TAIL_CAP = 2 * 1024 * 1024
+_READING_TTL_SECONDS = 300
 
 
 @dataclass(frozen=True)
@@ -183,6 +185,12 @@ def read_quota(session_id: str, home: Optional[Path] = None) -> Optional[QuotaRe
         base = home or _codex_home()
         path = _find_rollout(session_id, base)
         if path is None:
+            return None
+        try:
+            age = time.time() - path.stat().st_mtime
+        except OSError:
+            return None
+        if age < 0 or age > _READING_TTL_SECONDS:
             return None
         for raw in _iter_complete_lines_reversed(path):
             # Cheap pre-filter before json.loads: skip lines that can't be the

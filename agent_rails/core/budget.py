@@ -121,11 +121,12 @@ _DEFAULT_TASK_TYPES: dict[str, dict[str, int]] = {
 
 
 class BudgetVerdict:
-    __slots__ = ("action", "reason")
+    __slots__ = ("action", "reason", "response")
 
-    def __init__(self, action: str, reason: str) -> None:
+    def __init__(self, action: str, reason: str, response: str = "observe") -> None:
         self.action = action
         self.reason = reason
+        self.response = response
 
 
 # ---------------------------------------------------------------------------
@@ -183,6 +184,8 @@ def _default_state(checkpoint_at: int) -> dict:
         "self_approve_times": 0,
         "task_type": None,
         "credit_log": [],
+        "last_budget_advisory": "",
+        "weighted_at_last_progress": 0.0,
     }
 
 
@@ -226,6 +229,12 @@ def _load_locked(fh, checkpoint_at: int) -> dict:
                         and not isinstance(item[1], bool)):
                     log.append([item[0], float(item[1])])
             state["credit_log"] = log
+        v = data.get("last_budget_advisory")
+        if isinstance(v, str):
+            state["last_budget_advisory"] = v
+        v = data.get("weighted_at_last_progress")
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            state["weighted_at_last_progress"] = max(0.0, float(v))
     except Exception:
         pass
     return state
@@ -460,6 +469,45 @@ def _context_fill_threshold(cfg: dict) -> float:
         return 0.0
 
 
+def _quota_scarce(reading, cfg: dict) -> bool:
+    """Require a present numeric reading; missing probe data is never danger."""
+    try:
+        stop = cfg.get("operator_stop", {}) if isinstance(cfg, dict) else {}
+        if not isinstance(stop, dict):
+            return False
+        threshold = float(stop.get("scarcity_used_pct", 85))
+        if not (0 < threshold <= 100):
+            return False
+        return any(
+            value is not None and value >= threshold
+            for value in (
+                _reading_pct(reading, "window_used_pct"),
+                _reading_pct(reading, "weekly_used_pct"),
+            )
+        )
+    except Exception:
+        return False
+
+
+def _new_budget_advisory(session_id: str, key: str) -> bool:
+    """Return false when this advisory was already emitted for current state."""
+    try:
+        path = _budget_path(session_id)
+        with path.open("a+", encoding="utf-8") as fh:
+            _lock(fh, exclusive=True)
+            try:
+                state = _load_locked(fh, _DEFAULTS["checkpoint_at"])
+                if state.get("last_budget_advisory") == key:
+                    return False
+                state["last_budget_advisory"] = key
+                _save_locked(fh, state)
+                return True
+            finally:
+                _unlock(fh)
+    except Exception:
+        return True
+
+
 def _fmt_calls(weighted: float, raw: int) -> str:
     """Format weighted/raw for messages. Shows just one number if they match
     (i.e. no weights are configured), else "weighted (raw N)"."""
@@ -532,12 +580,29 @@ def _poll_for_subagent_approval(session_id: str, timeout_s: int) -> bool:
     return False
 
 
+def _consume_subagent_approval(session_id: str) -> None:
+    """Best-effort one-shot grant consumption for an auto-resumed spawn."""
+    try:
+        path = _budget_path(session_id)
+        with path.open("a+", encoding="utf-8") as fh:
+            _lock(fh, exclusive=True)
+            try:
+                state = _load_locked(fh, _DEFAULTS["checkpoint_at"])
+                state["subagent_approved"] = False
+                _save_locked(fh, state)
+            finally:
+                _unlock(fh)
+    except Exception:
+        return
+
+
 def increment_and_check(
     session_id: str,
     tool: str,
     is_large_read: bool,
     cfg: dict,
     quota_reading=None,
+    mechanical_signal: bool = False,
 ) -> BudgetVerdict:
     """Atomically increment counters, persist, and return a verdict. Fail-open.
 
@@ -590,6 +655,12 @@ def increment_and_check(
 
                 checkpoint_at, hard_block_at = _effective_thresholds(cfg, task_type)
 
+                # A grant authorizes exactly one spawn beyond the monotonic
+                # allowance. Consume it atomically with the attempted spawn.
+                if is_subagent and sa > max_subagents and subagent_approved:
+                    state["subagent_approved"] = False
+                    subagent_approved = True
+
                 _save_locked(fh, state)
             finally:
                 _unlock(fh)
@@ -598,8 +669,24 @@ def increment_and_check(
 
         type_tag = f", type: {task_type}" if task_type else ""
 
-        # Hard block: approve() or reset() clears it
-        if wc > hard_block_at and wc > approved_tc:
+        # Operator stop: volume alone never denies. The default stop also
+        # requires a recent strong mechanical signal or fresh measured scarcity.
+        has_stop_cfg = isinstance(cfg.get("operator_stop"), dict)
+        stop_cfg = cfg.get("operator_stop", {})
+        if not isinstance(stop_cfg, dict):
+            stop_cfg = {}
+        stop_enabled = bool(stop_cfg.get("enabled", True))
+        unconditional = bool(stop_cfg.get("unconditional", not has_stop_cfg))
+        try:
+            stall_window = max(1.0, float(stop_cfg.get(
+                "stall_window_weighted", 30 if has_stop_cfg else 1
+            )))
+        except (TypeError, ValueError):
+            stall_window = 30.0
+        since_progress = wc - float(state.get("weighted_at_last_progress", 0.0))
+        positive_danger = bool(mechanical_signal) or _quota_scarce(quota_reading, cfg)
+        if (stop_enabled and wc > hard_block_at and wc > approved_tc
+                and since_progress >= stall_window and (unconditional or positive_danger)):
             hard_msg = (
                 f"[agent-rails budget] Hard limit: {_fmt_calls(wc, tc)}/{hard_block_at} weighted calls{type_tag}.\n\n"
                 f"Extend the budget:\n"
@@ -610,7 +697,7 @@ def increment_and_check(
             print(f"\n{hard_msg}\n", file=sys.stderr, flush=True)
             if _poll_for_approval(session_id, poll_timeout_s, wc, reset_only=False):
                 return BudgetVerdict(ALLOW, "")
-            return BudgetVerdict(BLOCK, hard_msg)
+            return BudgetVerdict(BLOCK, hard_msg, "operator_stop")
 
         # Subagent block
         if is_subagent and sa > max_subagents and not subagent_approved:
@@ -621,6 +708,7 @@ def increment_and_check(
             )
             print(f"\n{subagent_msg}\n", file=sys.stderr, flush=True)
             if _poll_for_subagent_approval(session_id, poll_timeout_s):
+                _consume_subagent_approval(session_id)
                 return BudgetVerdict(ALLOW, "")
             return BudgetVerdict(
                 BLOCK,
@@ -635,19 +723,31 @@ def increment_and_check(
                 f"  ! agent-rails budget {session_id} subagent",
             )
 
-        # Soft checkpoint block — deferred when the real quota signal shows
-        # headroom (the call counter is then a false positive). The hard limit
-        # above is intentionally NOT relieved, so a wrong reading can't remove
-        # the ultimate backstop.
+        # Soft checkpoint. Healthy quota suppresses the proxy advisory. By
+        # default the checkpoint is advisory; trusted config can opt into denial.
         if wc > approved_tc:
             relief = _quota_relief(quota_reading, cfg)
             if relief is not None:
-                w_pct, k_pct = relief
+                if "checkpoint_deny" in cfg:
+                    return BudgetVerdict(ALLOW, "")
+                w_pct, k_pct = relief  # legacy direct-call response
                 return BudgetVerdict(
                     NUDGE,
                     f"[agent-rails budget] Checkpoint deferred at {_fmt_calls(wc, tc)} weighted "
                     f"calls{type_tag}: real quota is low (window {w_pct:.0f}%, weekly {k_pct:.0f}%). "
                     f"Hard limit at {hard_block_at} still applies.",
+                )
+            checkpoint_denies = bool(cfg.get("checkpoint_deny", True))
+            if not checkpoint_denies:
+                advisory_key = f"checkpoint:{approved_tc}:{task_type or ''}"
+                if not _new_budget_advisory(session_id, advisory_key):
+                    return BudgetVerdict(ALLOW, "")
+                return BudgetVerdict(
+                    NUDGE,
+                    f"[agent-rails budget] Checkpoint advised: {_fmt_calls(wc, tc)}/{approved_tc} "
+                    f"weighted calls used{type_tag}. Review progress before continuing; "
+                    f"approval is optional unless trusted operator config enables denial.",
+                    "checkpoint",
                 )
             sa_enabled, sa_max_add, sa_max_times, sa_replenish = _sa_cfg(
                 cfg.get("self_approve")
@@ -669,6 +769,7 @@ def increment_and_check(
                     f"Human approval — fallback when self-approve isn't appropriate "
                     f"(open-ended work, exhausted slots):\n"
                     f"  ! agent-rails budget {session_id} add N",
+                    "checkpoint",
                 )
 
             # Self-approve unavailable: poll for human approval, then deny.
@@ -692,6 +793,7 @@ def increment_and_check(
                 f"- +N tools to [specific reason — what the next tool will prove]\n\n"
                 f"Approve:\n"
                 f"  ! agent-rails budget {session_id} add N",
+                "checkpoint",
             )
 
         # Context-fill advisory (nudge only). A nearly-full context window is
@@ -1002,6 +1104,8 @@ def credit_progress(
                 state["weighted_calls"] = max(
                     0.0, float(state.get("weighted_calls", 0.0)) - effective
                 )
+                state["weighted_at_last_progress"] = state["weighted_calls"]
+                state["last_budget_advisory"] = ""
                 _save_locked(fh, state)
                 return dict(state)
             finally:

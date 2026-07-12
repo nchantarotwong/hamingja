@@ -5,8 +5,16 @@
     "nudge_at": 8,
     "checkpoint_at": 12,
     "hard_block_at": 20,
+    "checkpoint_deny": false,
+    "operator_stop": {
+      "enabled": true,
+      "unconditional": false,
+      "stall_window_weighted": 30,
+      "unattended_window_weighted": 30,
+      "scarcity_used_pct": 85
+    },
     "max_large_reads": 2,
-    "max_subagents": 2,
+    "max_subagents": 1,
     "self_approve": {
       "enabled": true,
       "max_add": 3,

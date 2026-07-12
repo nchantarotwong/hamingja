@@ -101,8 +101,15 @@ def evaluate(
                 continue  # a broken detector never blocks a call
             if not v:
                 continue
+            if v.action == BLOCK:
+                v.response = "tripwire"
+            elif v.action == NUDGE:
+                v.response = "advise"
             if det_mode != "enforce" and v.action == BLOCK:
-                v = Verdict(NUDGE, v.detector, v.reason, would_block=True)
+                v = Verdict(
+                    NUDGE, v.detector, v.reason,
+                    would_block=True, response="tripwire",
+                )
             if v.rank > best.rank:
                 best = v
 

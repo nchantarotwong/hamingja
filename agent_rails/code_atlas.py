@@ -29,6 +29,10 @@ _SKIP_DIRS = {
     ".pytest_cache",
     "dist",
     "build",
+    "generated",
+    "vendor",
+    "target",
+    "out",
     ".mypy_cache",
     ".ruff_cache",
 }

@@ -47,6 +47,7 @@ agent-rails locate-symbol "do_GET"
 agent-rails locate-edit "where should I add repo root field?"
 agent-rails code-atlas
 agent-rails repo-health
+agent-rails code-atlas --json       # versioned output; flags possible truncation
 ```
 
 The locator is the generic fallback before reading a large file. `code-atlas`
@@ -152,8 +153,11 @@ interface, registered in `core/engine.py`.
 
 ### Budget gate
 
-The budget gate is a session-level checkpoint for long-running agent work. When
-it blocks, the message includes the session id; use that id with the CLI:
+The budget gate is a resource/workflow system, separate from mechanical
+non-convergence tripwires. Its weighted-call checkpoint is advisory by default
+and is emitted once per material checkpoint state. Trusted operator config may
+set `budget.checkpoint_deny: true`; when denial is enabled, the message includes
+the session id for the CLI recovery commands:
 
 ```bash
 agent-rails budget <session-id>          # show current counters
@@ -164,14 +168,16 @@ agent-rails budget <session-id> subagent # approve one subagent spawn
 agent-rails budget <session-id> add 3 --self  # agent self-approve, if config allows it
 ```
 
-`reset` is the hard-block recovery path: it deletes the session budget state so
+`reset` is the operator-stop recovery path: it deletes the session budget state so
 the next tool call starts from fresh counters. `reset N` also grants runway
 above the configured checkpoint for the resumed session.
 
-Subagent spawns get a small default allowance (`budget.max_subagents`, default
-2) so routine fan-out and fresh-context recovery from a poisoned main context
-are not taxed per spawn — the checkpoint only fires once spawns exceed the
-allowance, and `budget <session-id> subagent` approves one more.
+Subagent spawns use a conservative monotonic allowance
+(`budget.max_subagents`, default 1) because current hooks cannot reliably prove
+child completion and lineage. Once the allowance is spent,
+`budget <session-id> subagent` grants exactly one additional spawn. Static
+capability manifests keep this limitation explicit; active-child accounting
+must remain observe-only until adapter fixtures prove completion visibility.
 
 #### Progress crediting
 
@@ -208,16 +214,24 @@ real scarce resource is the rate-limit window, not dollars-per-token — so wher
 the harness records its own quota, agent-rails reads it and gates on the real
 signal instead of the proxy. Each adapter ships a fail-open probe that tails the
 harness's own session log; a missing or unreadable signal falls straight back to
-the call-count gate, so this can only ever *relax* or *add advisory*, never block
-on its own.
+the advisory call-count path. Missing, stale, malformed, or throwing probes
+never imply scarcity and cannot arm a denial.
 
 - **Codex** logs server-side rate limits in its session rollout: a 5-hour
   rolling window (`primary`) and a weekly cap (`secondary`) as a used-percent.
-  When both are comfortably low, a soft checkpoint is **deferred** — the counter
-  is a false positive when real quota is plentiful. Relief never touches the hard
-  limit, and the `repetition`/`oscillation`/`error_streak` detectors still block
-  independently. Tune with `budget.quota_relief_below_pct` (default 50; `0`
-  disables).
+  When both are comfortably low, the proxy checkpoint is suppressed until
+  material state changes. A fresh reading at or above the configured scarcity
+  threshold can arm the separately configured operator stop, but only after its
+  volume and stall predicates are also satisfied. The mechanical detectors
+  still block independently. Tune checkpoint suppression with
+  `budget.quota_relief_below_pct` (default 50; `0` disables).
+
+The default operator stop is not an unconditional call ceiling. It requires
+work beyond the configured hard ceiling and stall window plus positive danger
+evidence: either a strong mechanical non-convergence signature or fresh measured
+quota scarcity. Call volume alone only advises. Trusted configuration may set
+`budget.operator_stop.unconditional: true`; repository configuration may relax
+or disable the stop but cannot tighten it.
 - **Claude Code** does not persist a rate-limit percent (it lives on API
   response headers), so its probe reports only **context occupancy** from the
   transcript's per-message `usage`. A nearly-full context window is re-sent every
@@ -378,7 +392,8 @@ agent_rails/
                repetition.py, oscillation.py, error_streak.py
   config.py    config loading, trusted policy registry, trust model, sanitization
   config.default.json      packaged trusted defaults (ships in the wheel)
-  adapters/    claude_code/  PreToolUse tripwire + PostToolUse recorder + install.sh
+  adapters/    capabilities.py  versioned Codex/Claude observability manifests
+               claude_code/  PreToolUse tripwire + PostToolUse recorder + install.sh
                codex/        PreToolUse tripwire + PostToolUse recorder + install.sh
                generic/      observe()/check() for any custom agent loop
   profiles/    base / non_convergence / debugging / ...   <-- SOFT layer (advisory)

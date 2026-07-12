@@ -246,7 +246,7 @@ def test_shipped_defaults_have_allowance_and_cap():
     from agent_rails.config import load_config
     with temp_state() as d:
         cfg = load_config(d)  # no project config in a fresh temp dir -> baseline
-        assert cfg["budget"]["max_subagents"] == 2
+        assert cfg["budget"]["max_subagents"] == 1
         assert cfg["budget"]["progress"]["max_credit_per_window"] == 12
 
 

@@ -49,6 +49,7 @@ def test_enforce_mode_blocks_repetition():
     v = evaluate(s, cfg("enforce"), candidate=cand(s, arg="a"))
     assert v.action == BLOCK
     assert v.would_block is False
+    assert v.response == "tripwire"
 
 
 def test_observe_mode_downgrades_block_to_nudge():
@@ -57,6 +58,7 @@ def test_observe_mode_downgrades_block_to_nudge():
     v = evaluate(s, cfg("observe"), candidate=cand(s, arg="a"))
     assert v.action == NUDGE
     assert v.would_block is True  # carried as structured data, not prose
+    assert v.response == "tripwire"
 
 
 def test_detector_enforce_overrides_global_observe():
