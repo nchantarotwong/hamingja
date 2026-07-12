@@ -1,20 +1,35 @@
 # CLAUDE.md
 
-You are working on **agent-rails** — a small Python library that ships a
-harness-neutral guardrail for LLM coding agents. It installs globally and runs
-inline on tool calls, so correctness and safety dominate. Optimize for changes
-that are **easy to verify and hard to get subtly wrong**.
+You are working on **agent-rails** — a small Python library that ships fail-open
+partner rails for Codex and Claude Code. Its core event/detector model remains
+harness-neutral, but Codex and Claude are the tested runtime promises; other
+loops use the generic adapter on a best-effort basis. It installs globally and
+runs inline on tool calls, so correctness and safety dominate. Optimize for
+changes that are **easy to verify and hard to get subtly wrong**.
 
-Read `README.md` first if you haven't already; it carries the design model
-(detectors, modes, trust boundary, graduated response) that the rest of this
-file assumes.
+The product is broader than a circuit breaker: it combines mechanical
+non-convergence tripwires, advisory-by-default operator resource budgets,
+bounded recovery/delegation/audit state, and deterministic navigation and
+workflow wrappers. Do not blur their authority boundaries.
+
+Read `README.md` first if you haven't already; it carries the current product
+model, runtime capability table, trust boundary, and graduated responses. The
+completed architectural record is
+`docs/codex-claude-partner-rails-rescope.md`. Treat documented capability gaps
+as intentional until released wire contracts and fixtures prove otherwise.
 
 ## The hard rule: fail open
 
-Every layer of agent-rails fails open. The only thing that ever blocks a call
-is an **explicit, tested tripwire**. Anything else — exceptions, missing files,
-unparseable JSON, bad types, out-of-range ints, throwing detectors, bad config —
-must default to *allow*.
+Every guardrail-evaluation layer fails open. The only things that may deny a
+tool call are an **explicit, tested mechanical tripwire** or an **explicit,
+tested operator authority boundary**. Anything else — exceptions, missing
+files, unparseable JSON, bad types, out-of-range ints, throwing detectors,
+missing runtime observations, bad config — must default to *allow*.
+
+Fail-open does not mean workflow wrappers should perform unsafe external
+mutations when CI, PR, or branch state is unknown. Wrappers fail loudly and
+return bounded, resumable error state; they must never turn their own failure
+into an inline hook denial.
 
 When you touch `core/`, `detectors/`, `config.py`, or any adapter:
 
@@ -22,6 +37,13 @@ When you touch `core/`, `detectors/`, `config.py`, or any adapter:
   on any unexpected error.
 - Sanitize untrusted config: canonicalize modes, coerce ints with safe floors,
   refuse to escalate (`.agent-rails.json` may only *relax*, never tighten).
+- Keep detector mode separate from operator-budget authority: `observe` lowers
+  mechanical detector blocks, but does not silently reinterpret or arm an
+  operator stop.
+- Upgrade runtime capability claims only from released, stable wire fields plus
+  adapter fixtures. Missing, undocumented, delayed, or ambiguous observations
+  may only downgrade behavior; never infer identity/lineage from timing,
+  transcript layout, shared session/turn IDs, or agent prose.
 - If a change *could* cause a fail-closed regression, add a test that proves
   the bad-input path still allows.
 
