@@ -38,12 +38,14 @@ around install scripts and file generation.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import re
 import subprocess
 import sys
 import tempfile
+from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Optional
 
@@ -571,12 +573,25 @@ def _cmd_post_merge_cleanup(args: argparse.Namespace) -> int:
 
 
 def _cmd_ci_status(args: argparse.Namespace) -> int:
-    return ci_status(
-        args.pr,
-        runner=timed_runner(args.command_timeout),
-        wait_timeout_s=args.timeout if args.wait else 0,
-        poll_s=args.poll,
-    )
+    kwargs = {
+        "runner": timed_runner(args.command_timeout),
+        "wait_timeout_s": args.timeout if args.wait else 0,
+        "poll_s": args.poll,
+    }
+    if not args.json:
+        return ci_status(args.pr, **kwargs)
+    outcome = []
+    captured = io.StringIO()
+    with redirect_stdout(captured):
+        rc = ci_status(args.pr, outcome=outcome, **kwargs)
+    if outcome:
+        print(json.dumps(outcome[-1].__dict__, sort_keys=True))
+    else:
+        print(json.dumps({
+            "schema_version": 1, "operation": "ci_status",
+            "state": "unknown", "exit_code": rc,
+        }, sort_keys=True))
+    return rc
 
 
 def _cmd_ci_preflight(args: argparse.Namespace) -> int:
@@ -1538,6 +1553,7 @@ def build_parser() -> argparse.ArgumentParser:
     cis.add_argument("--wait", action="store_true", help="poll with backoff until checks finish or timeout")
     cis.add_argument("--timeout", type=int, default=600, help="seconds to wait with --wait (default: 600)")
     cis.add_argument("--poll", type=float, default=10, help="initial seconds between --wait polls (default: 10; backs off up to 60)")
+    cis.add_argument("--json", action="store_true", help="emit a versioned lifecycle state")
     cis.add_argument(
         "--command-timeout",
         type=float,

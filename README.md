@@ -480,6 +480,7 @@ agent-rails post-merge-cleanup topic  # checkout main, pull --ff-only, branch -d
 agent-rails post-merge-cleanup topic --force-delete  # for squash/rebase-cleaned branches
 agent-rails ci-status 123             # compact PR check summary; flags Actions budget/quota blocks
 agent-rails ci-status 123 --wait      # poll with backoff until checks finish or timeout
+agent-rails ci-status 123 --json      # versioned ready/pending/failed/blocked state
 agent-rails ci-preflight 123          # classify CI quota/infrastructure readiness before reruns
 agent-rails ci-failures 123           # shorthand for --pr 123
 agent-rails ci-failures --pr 123      # failed-run log summary for the PR branch

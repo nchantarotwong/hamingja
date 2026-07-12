@@ -609,6 +609,24 @@ def test_pr_create_body_rejects_empty_value():
     assert "--body only supports '-'" in buf.getvalue()
 
 
+def test_ci_status_json_emits_only_versioned_lifecycle(monkeypatch):
+    from agent_rails.workflows import LifecycleResult
+
+    def fake_ci_status(pr, **kwargs):
+        print("human text that JSON mode must suppress")
+        kwargs["outcome"].append(LifecycleResult(
+            1, "ci_status", "pending", 0, total=2, pending=1,
+        ))
+        return 0
+
+    monkeypatch.setattr(cli_module, "ci_status", fake_ci_status)
+    out = _run(["ci-status", "12", "--json"])
+    payload = __import__("json").loads(out)
+    assert payload["schema_version"] == 1
+    assert payload["state"] == "pending"
+    assert "human text" not in out
+
+
 if __name__ == "__main__":
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from _run import run_module_tests
