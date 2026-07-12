@@ -186,7 +186,26 @@ def _default_state(checkpoint_at: int) -> dict:
         "credit_log": [],
         "last_budget_advisory": "",
         "weighted_at_last_progress": 0.0,
+        "last_progress": None,
     }
+
+
+def _clean_progress_evidence(value) -> dict | None:
+    if not isinstance(value, dict):
+        return None
+    allowed = {
+        "kind", "anchor", "validation_id", "hypothesis_id",
+        "state_before", "state_after", "failure_count_before",
+        "failure_count_after",
+    }
+    clean: dict = {}
+    for key in allowed:
+        item = value.get(key)
+        if isinstance(item, str):
+            clean[key] = item[:256]
+        elif isinstance(item, int) and not isinstance(item, bool) and item >= 0:
+            clean[key] = item
+    return clean or None
 
 
 def _load_locked(fh, checkpoint_at: int) -> dict:
@@ -235,6 +254,8 @@ def _load_locked(fh, checkpoint_at: int) -> dict:
         v = data.get("weighted_at_last_progress")
         if isinstance(v, (int, float)) and not isinstance(v, bool):
             state["weighted_at_last_progress"] = max(0.0, float(v))
+        v = data.get("last_progress")
+        state["last_progress"] = _clean_progress_evidence(v)
     except Exception:
         pass
     return state
@@ -1043,6 +1064,7 @@ def credit_progress(
     credit: float,
     max_per_window: float = 0.0,
     window: int = 0,
+    evidence: dict | None = None,
 ) -> dict:
     """Relieve budget pressure by an observed-progress credit.
 
@@ -1106,6 +1128,8 @@ def credit_progress(
                 )
                 state["weighted_at_last_progress"] = state["weighted_calls"]
                 state["last_budget_advisory"] = ""
+                if isinstance(evidence, dict):
+                    state["last_progress"] = _clean_progress_evidence(evidence)
                 _save_locked(fh, state)
                 return dict(state)
             finally:
@@ -1127,6 +1151,10 @@ def read_state(session_id: str) -> dict:
             finally:
                 _unlock(fh)
         data = json.loads(raw)
-        return data if isinstance(data, dict) else {}
+        if not isinstance(data, dict):
+            return {}
+        if "last_progress" in data:
+            data["last_progress"] = _clean_progress_evidence(data.get("last_progress"))
+        return data
     except Exception:
         return {}

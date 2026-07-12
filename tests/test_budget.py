@@ -246,6 +246,23 @@ def test_corrupt_state_file_allows(tmp_path, monkeypatch):
     assert bv.action in (ALLOW, NUDGE)
 
 
+def test_oversized_progress_state_is_bounded_on_read():
+    path = _budget_path(SESSION)
+    path.write_text(json.dumps({
+        "tool_calls": 1,
+        "weighted_calls": 1,
+        "last_progress": {
+            "kind": "x" * 10000,
+            "validation_id": "y" * 10000,
+            "nested": {"huge": "z" * 10000},
+        },
+    }), encoding="utf-8")
+    progress = read_state(SESSION)["last_progress"]
+    assert len(progress["kind"]) == 256
+    assert len(progress["validation_id"]) == 256
+    assert "nested" not in progress
+
+
 def test_bad_cfg_values_dont_raise():
     bad_cfg = {"nudge_at": "oops", "checkpoint_at": None, "hard_block_at": "bad"}
     bv = increment_and_check(SESSION, "Bash", False, bad_cfg)

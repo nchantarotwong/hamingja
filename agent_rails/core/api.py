@@ -14,10 +14,10 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from .audit import log_verdict
-from .budget import credit_progress
+from .budget import credit_progress, read_state as read_budget_state
 from .engine import evaluate
 from .events import ToolEvent
-from .progress import assess_progress
+from .progress import admit_structured_progress, assess_progress
 from .state import append_event, read_recent
 from ..config import load_config
 from ..detectors.base import ALLOW, BLOCK, Verdict
@@ -104,3 +104,55 @@ def _credit_observed_progress(session_id: str, cfg: dict) -> None:
             )
     except Exception:
         return
+
+
+def record_progress(
+    session_id: str,
+    evidence: object,
+    project_dir: Optional[str] = None,
+) -> bool:
+    """Admit anchored adapter/workflow progress and relieve budget pressure.
+
+    This additive API never trusts narration: the supplied anchor must match a
+    recent recorded tool argument/output hash. Returns false on invalid input or
+    any internal error and never raises.
+    """
+    try:
+        cfg = load_config(project_dir)
+        if cfg.get("mode") == "off":
+            return False
+        budget_cfg = cfg.get("budget")
+        if not isinstance(budget_cfg, dict) or not budget_cfg.get("enabled", True):
+            return False
+        try:
+            window = max(1, int(cfg.get("window", 12)))
+        except (TypeError, ValueError):
+            window = 12
+        signal = admit_structured_progress(
+            evidence, read_recent(session_id, window), budget_cfg
+        )
+        if signal is None or signal.credit <= 0:
+            return False
+        prog = budget_cfg.get("progress", {})
+        cap = 0.0
+        if isinstance(prog, dict):
+            try:
+                cap = max(0.0, float(prog.get("max_credit_per_window", 0)))
+            except (TypeError, ValueError):
+                cap = 0.0
+        before = read_budget_state(session_id)
+        before_weighted = before.get("weighted_calls") if isinstance(before, dict) else None
+        state = credit_progress(
+            session_id, signal.credit, max_per_window=cap, window=window,
+            evidence=signal.evidence,
+        )
+        after_weighted = state.get("weighted_calls") if isinstance(state, dict) else None
+        return (
+            isinstance(before_weighted, (int, float))
+            and isinstance(after_weighted, (int, float))
+            and not isinstance(before_weighted, bool)
+            and not isinstance(after_weighted, bool)
+            and after_weighted < before_weighted
+        )
+    except Exception:
+        return False

@@ -166,6 +166,8 @@ agent-rails budget <session-id> reset    # clear all counters for the session
 agent-rails budget <session-id> reset 20 # reset, then pre-approve 20 calls
 agent-rails budget <session-id> subagent # approve one subagent spawn
 agent-rails budget <session-id> add 3 --self  # agent self-approve, if config allows it
+agent-rails recover <session-id> handoff      # bounded fresh-session packet
+agent-rails recover <session-id> reset        # clear detector history; preserve audit
 ```
 
 `reset` is the operator-stop recovery path: it deletes the session budget state so
@@ -192,6 +194,13 @@ outcomes the agent cannot fake from narration:
 - a test or build going **red→green** (strongest),
 - a real **error streak breaking** on a success,
 - a **clean validation** run with nothing already failing (smallest).
+
+Automatic red→green credit is scoped to the exact normalized validation
+identity, so an unrelated green test cannot erase pressure from a different
+failure. Adapters and deterministic workflow wrappers may submit richer
+evidence with `record_progress()`. A claim earns credit only when its anchor
+matches a recent recorded argument/output hash and its kind-specific transition
+fields validate.
 
 Tool success alone, a novel command, or a self-asserted "done" earn nothing —
 crediting those would refuel exactly the doom loop the budget exists to catch
@@ -664,11 +673,21 @@ that repo.
 
 ```python
 from agent_rails.adapters.generic import observe, check
+from agent_rails.core.api import record_progress
 
 verdict = check(session_id, tool_name, tool_args)   # before the call
 if verdict.action == "block":
     ...                                              # re-plan; verdict.reason says why
 observe(session_id, tool_name, tool_args, ok=succeeded)  # after the call
+
+# Optional adapter/workflow evidence; anchor must match a recent event hash.
+record_progress(session_id, {
+    "kind": "failure_set_shrank",
+    "anchor": observed_event_hash,
+    "validation_id": "pytest:targeted",
+    "failure_count_before": 12,
+    "failure_count_after": 3,
+})
 ```
 
 ## Tests

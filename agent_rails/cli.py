@@ -58,6 +58,8 @@ from .core.budget import read_state as _budget_read_state
 from .core.budget import reset as _budget_reset
 from .core.budget import self_approve as _budget_self_approve
 from .core.budget import set_task_type as _budget_set_task_type
+from .core.state import read_recent as _read_recent_events
+from .core.state import reset_session as _reset_detector_session
 from .ledger import add_record as _ledger_add
 from .ledger import check_records as _ledger_check
 from .ledger import discover_root as _ledger_root
@@ -612,6 +614,64 @@ def _copy_stdin_to_body_file(body_file) -> str | None:
         if total > MAX_STDIN_BODY_BYTES:
             return f"- error: stdin PR body exceeds {MAX_STDIN_BODY_BYTES} bytes; use --body-file for larger content"
         body_file.write(chunk)
+
+
+def _cmd_recover(args: argparse.Namespace) -> int:
+    """Show a bounded recovery/handoff packet or explicitly reset detectors."""
+    try:
+        session_id = str(args.session_id).strip()
+        if not session_id:
+            print("error: session id must not be empty", file=sys.stderr)
+            return 2
+        if args.action == "reset":
+            changed = _reset_detector_session(session_id)
+            print(
+                f"reset: detector state {'cleared' if changed else 'already empty'} "
+                f"for session: {session_id}"
+            )
+            print("audit history preserved")
+            return 0
+
+        state = _budget_read_state(session_id)
+        events = _read_recent_events(session_id, 8)
+        print(f"# agent-rails recovery handoff: {session_id}")
+        print("")
+        progress = state.get("last_progress") if isinstance(state, dict) else None
+        print("Last observed progress:")
+        print(json.dumps(progress, sort_keys=True) if isinstance(progress, dict) else "none")
+        print("")
+        print("Recent mechanical signatures:")
+        if not events:
+            print("none")
+        for event in events:
+            print(
+                f"- {event.status} {event.tool} {event.arg_kind or 'unclassified'} "
+                f"signature={event.arg_hash}"
+            )
+        paths = [event.read_path for event in events if event.read_path]
+        ruled_out = []
+        try:
+            if paths:
+                ruled_out = _ledger_relevant(_ledger_root(Path.cwd()), paths)[:5]
+        except Exception:
+            ruled_out = []
+        print("")
+        print("Relevant ruled-out hypotheses:")
+        if not ruled_out:
+            print("none")
+        for record in ruled_out:
+            print(f"- {record.slug}: {record.claim}")
+        print("")
+        print("Minimal next action:")
+        print("- Run one materially different, read-only diagnostic.")
+        print("")
+        print("Recovery commands:")
+        print(f"- agent-rails recover {session_id} reset")
+        print(f"- agent-rails budget {session_id} reset")
+        return 0
+    except Exception:
+        print("Recovery packet unavailable; no state was changed.")
+        return 0
 
 
 def _cmd_budget(args: argparse.Namespace) -> int:
@@ -1579,6 +1639,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bgt.add_argument("budget_args", nargs=argparse.REMAINDER, metavar="...")
     bgt.set_defaults(func=_cmd_budget, _parser=bgt)
+
+    recover = sub.add_parser(
+        "recover",
+        help="show a bounded session handoff or reset detector state",
+    )
+    recover.add_argument("session_id", help="session identifier from a tripwire")
+    recover.add_argument(
+        "action", nargs="?", choices=["handoff", "reset"], default="handoff",
+        help="handoff (default) or explicit detector-state reset",
+    )
+    recover.set_defaults(func=_cmd_recover)
 
     return p
 

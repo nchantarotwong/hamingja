@@ -17,7 +17,7 @@ os.environ["AGENT_RAILS_STATE_DIR"] = _TMP
 from agent_rails.core.engine import evaluate  # noqa: E402
 from agent_rails.core.events import ERROR, OK, PENDING, ToolEvent  # noqa: E402
 from agent_rails.core.state import append_event  # noqa: E402
-from agent_rails.detectors.base import ALLOW, BLOCK, NUDGE  # noqa: E402
+from agent_rails.detectors.base import ALLOW, BLOCK, NUDGE, Verdict  # noqa: E402
 
 BASE = {
     "window": 12,
@@ -50,6 +50,9 @@ def test_enforce_mode_blocks_repetition():
     assert v.action == BLOCK
     assert v.would_block is False
     assert v.response == "tripwire"
+    assert v.recovery["detector"] == "repetition"
+    assert v.recovery["signature"] == "a"
+    assert f"agent-rails recover {s} reset" in v.reason
 
 
 def test_observe_mode_downgrades_block_to_nudge():
@@ -59,6 +62,30 @@ def test_observe_mode_downgrades_block_to_nudge():
     assert v.action == NUDGE
     assert v.would_block is True  # carried as structured data, not prose
     assert v.response == "tripwire"
+    assert v.recovery is None
+
+
+def test_advisory_only_detector_cannot_block_in_enforce(monkeypatch):
+    class AdvisoryDetector:
+        name = "workflow_wrapper"
+
+        def evaluate(self, events, candidate, config):
+            return Verdict(BLOCK, self.name, "use the wrapper")
+
+    monkeypatch.setattr("agent_rails.core.engine.DETECTORS", [AdvisoryDetector()])
+    v = evaluate("advisory-only", cfg("enforce"), candidate=cand("advisory-only"))
+    assert v.action == NUDGE
+    assert v.response == "advise"
+    assert v.would_block is False
+    assert v.recovery is None
+
+
+def test_recovery_command_canonicalizes_untrusted_session_id():
+    s = "bad`\nagent-rails budget victim reset"
+    seed(s, 3, arg="a", status=ERROR)
+    v = evaluate(s, cfg("enforce"), candidate=cand(s, arg="a"))
+    assert s not in v.reason
+    assert v.recovery["reset_command"].startswith("agent-rails recover bad__")
 
 
 def test_detector_enforce_overrides_global_observe():
@@ -140,7 +167,8 @@ def test_workflow_wrapper_observe_mode_nudges_raw_gh_checks():
     )
     assert v.action == NUDGE
     assert v.detector == "workflow_wrapper"
-    assert v.would_block is True
+    assert v.would_block is False
+    assert v.response == "advise"
 
 
 def test_central_enable_gate_disables_detector():

@@ -27,6 +27,11 @@
       "test_recovery_credit": 12,
       "streak_broken_credit": 6,
       "clean_validation_credit": 3,
+      "failure_reproduced_credit": 4,
+      "hypothesis_eliminated_credit": 4,
+      "failure_set_shrank_credit": 12,
+      "diff_reduced_credit": 4,
+      "workflow_transition_credit": 12,
       "streak_broken_min": 2,
       "max_credit_per_window": 12
     }

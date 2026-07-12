@@ -477,6 +477,26 @@ def test_budget_self_approve_rejects_nonexistent_session():
     assert budget_read_state(session) == {}
 
 
+def test_recover_handoff_is_bounded_and_reset_preserves_audit(tmp_path, monkeypatch):
+    from agent_rails.core.events import ToolEvent
+    from agent_rails.core.state import append_event, read_recent
+
+    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    sid = "recover-cli"
+    append_event(ToolEvent.record(sid, "Bash", {"command": "pytest"}, False))
+
+    out = _run(["recover", sid, "handoff"])
+    assert "Recent mechanical signatures:" in out
+    assert "Relevant ruled-out hypotheses:" in out
+    assert "Minimal next action:" in out
+    assert f"agent-rails recover {sid} reset" in out
+
+    out = _run(["recover", sid, "reset"])
+    assert "detector state cleared" in out
+    assert "audit history preserved" in out
+    assert read_recent(sid, 8) == []
+
+
 def test_pr_create_body_dash_reads_stdin_and_writes_temp_body():
     calls = []
 
