@@ -55,3 +55,18 @@ def test_codex_lifecycle_proves_identity_but_not_parent_lineage():
 def test_malformed_delegation_payload_fails_open():
     assert delegation_observation("claude_code", None) is None
     assert delegation_observation("unknown", {"tool_name": "Task"}) is None
+
+
+def test_undocumented_parent_field_cannot_upgrade_lineage():
+    for runtime in ("codex", "claude_code"):
+        observed = delegation_observation(runtime, {
+            "hook_event_name": "SubagentStart",
+            "session_id": "session-1",
+            "turn_id": "turn-1",
+            "agent_id": "child-1",
+            "agent_type": "review",
+            "parent_agent_id": "claimed-parent",
+        })
+        assert observed["lineage_observed"] is False
+        assert "parent_agent_id" not in observed
+        assert manifest(runtime)["delegation_lineage"] is False

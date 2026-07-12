@@ -1,8 +1,14 @@
 # Codex + Claude Partner Rails Rescope
 
-Status: accepted direction — architectural consensus reached 2026-07-11
+Status: completed 2026-07-12
 Audience: human operator, Codex, Claude
 Scope: first-class support for Codex and Claude coding-agent runtimes
+
+Implementation record: PRs #53–#58 delivered the rescope, adapter lifecycle
+and operator-turn observability, framework progress extraction, structured
+recovery, and observe-mode dogfooding. Final rescope validation passed 615
+tests. Parent-agent lineage remains an intentional fail-open capability gap;
+see [delegation-lineage-investigation.md](delegation-lineage-investigation.md).
 
 ## Purpose
 
