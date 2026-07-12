@@ -20,7 +20,7 @@ def test_claude_install_registers_lifecycle_hooks_idempotently(tmp_path):
     assert first.returncode == second.returncode == 0
     cfg = json.loads(settings.read_text(encoding="utf-8"))
     assert "Stop" in cfg["hooks"]
-    for event in ("PreToolUse", "PostToolUse", "PostToolUseFailure", "SubagentStart", "SubagentStop"):
+    for event in ("PreToolUse", "PostToolUse", "PostToolUseFailure", "SubagentStart", "SubagentStop", "UserPromptSubmit"):
         assert len(cfg["hooks"][event]) == 1
     assert "adapters/delegation.py" in cfg["hooks"]["SubagentStop"][0]["hooks"][0]["command"]
     assert "already up to date" in second.stdout

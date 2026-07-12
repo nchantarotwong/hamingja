@@ -306,6 +306,7 @@ def test_codex_install_merges_and_is_idempotent():
     assert len(cfg["hooks"]["PostToolUse"]) == 1
     assert len(cfg["hooks"]["SubagentStart"]) == 1
     assert len(cfg["hooks"]["SubagentStop"]) == 1
+    assert len(cfg["hooks"]["UserPromptSubmit"]) == 1
     assert "adapters/delegation.py" in cfg["hooks"]["SubagentStart"][0]["hooks"][0]["command"]
     assert cfg["hooks"]["PreToolUse"][0]["hooks"][0]["command"] == "python /tmp/tripwire.py"
     assert "already up to date" in second.stdout

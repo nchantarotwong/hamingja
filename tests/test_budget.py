@@ -13,6 +13,7 @@ from agent_rails.core.budget import (
     _default_state,
     approve,
     increment_and_check,
+    mark_operator_turn,
     read_state,
     reset,
     self_approve,
@@ -696,6 +697,39 @@ def test_malformed_evidence_flags_cannot_arm_operator_stop():
     v = increment_and_check(
         "bad-stop-flags", "Edit", False, cfg,
         mechanical_signal="true", unattended_signal="true",  # type: ignore[arg-type]
+    )
+    assert v.action != BLOCK
+
+
+def test_observed_operator_anchor_arms_stop_only_after_unattended_window():
+    cfg = _rescoped_cfg(
+        checkpoint_at=2,
+        hard_block_at=4,
+        operator_stop={
+            "enabled": True,
+            "unconditional": False,
+            "stall_window_weighted": 3,
+            "unattended_window_weighted": 3,
+            "scarcity_used_pct": 85,
+        },
+    )
+    mark_operator_turn("operator-window", cfg)
+    for _ in range(4):
+        increment_and_check("operator-window", "Edit", False, cfg)
+    v = increment_and_check(
+        "operator-window", "Edit", False, cfg, mechanical_signal=True,
+    )
+    assert v.action == BLOCK
+
+
+def test_recent_operator_turn_disarms_conditional_stop():
+    cfg = _rescoped_cfg(checkpoint_at=2, hard_block_at=4)
+    for _ in range(4):
+        increment_and_check("recent-operator", "Edit", False, cfg)
+    mark_operator_turn("recent-operator", cfg)
+    v = increment_and_check(
+        "recent-operator", "Edit", False, cfg,
+        mechanical_signal=True, quota_reading=_Reading(99.0, 99.0),
     )
     assert v.action != BLOCK
 

@@ -75,6 +75,15 @@ def test_adapter_stop_returns_valid_empty_json(tmp_path, monkeypatch, capsys):
     assert json.loads(capsys.readouterr().out) == {}
 
 
+def test_adapter_mode_off_records_nothing(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(adapter, "load_config", lambda cwd=None: {"mode": "off"})
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(_event("SubagentStart", "a1"))))
+    assert adapter.main() == 0
+    assert json.loads(capsys.readouterr().out) == {}
+    assert read_state("parent-session") == {}
+
+
 def test_cli_exposes_bounded_delegation_state(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("AGENT_RAILS_STATE_DIR", str(tmp_path))
     record_lifecycle(_event("SubagentStart", "a1"))
