@@ -708,6 +708,12 @@ record_progress(session_id, {
 })
 ```
 
+The Claude Code and Codex adapters also recognize standalone pytest,
+unittest, Cargo, and Jest-family test commands. They retain only bounded
+failure counts keyed by the observed command hash and credit progress when the
+same validation's reported failure count shrinks; command text and test output
+are not persisted.
+
 ## Tests
 
 ```bash
