@@ -17,7 +17,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from hamingja import cli  # noqa: E402
-from hamingja.cli import _detect_harnesses, main  # noqa: E402
+from hamingja.cli import _detect_harnesses, _stable_installer_python, main  # noqa: E402
 
 
 # ---- _detect_harnesses ----------------------------------------------------
@@ -96,6 +96,37 @@ def test_install_no_arg_no_harness_detected_errors():
         assert rc == 1
         assert "no harness detected" in err
         assert calls == []
+
+
+def test_install_passes_running_python_to_adapter(monkeypatch):
+    captured = {}
+
+    def fake_call(cmd, **kwargs):
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(cli.subprocess, "call", fake_call)
+    assert main(["install", "codex"]) == 0
+    expected = _stable_installer_python(
+        getattr(sys, "_base_executable", None) or sys.executable
+    )
+    assert captured["env"]["HAMINGJA_PYTHON"] == expected
+
+
+def test_stable_installer_python_rewrites_homebrew_cellar_path(tmp_path):
+    prefix = tmp_path / "homebrew"
+    candidate = prefix / "opt" / "python@3.13" / "bin" / "python3.13"
+    candidate.parent.mkdir(parents=True)
+    candidate.touch()
+    cellar = (
+        prefix / "Cellar" / "python@3.13" / "3.13.14_1" / "Frameworks"
+        / "Python.framework" / "Versions" / "3.13" / "bin" / "python3.13"
+    )
+    assert _stable_installer_python(str(cellar)) == str(candidate)
+
+
+def test_stable_installer_python_preserves_non_homebrew_path():
+    assert _stable_installer_python("/usr/local/bin/python3") == "/usr/local/bin/python3"
 
 
 def test_install_no_arg_runs_only_detected_harness():

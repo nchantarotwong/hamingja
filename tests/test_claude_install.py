@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -80,3 +81,15 @@ def test_claude_install_preserves_symlinked_settings(tmp_path):
     assert result.returncode == 0
     assert settings.is_symlink()
     assert "PreToolUse" in json.loads(target.read_text(encoding="utf-8"))["hooks"]
+
+
+def test_claude_install_honors_explicit_python(tmp_path):
+    settings = tmp_path / "settings.json"
+    settings.write_text("{}", encoding="utf-8")
+    env = os.environ.copy()
+    env["CLAUDE_SETTINGS"] = str(settings)
+    env["HAMINGJA_PYTHON"] = sys.executable
+    result = subprocess.run(["bash", str(INSTALL)], text=True, capture_output=True, env=env)
+    assert result.returncode == 0
+    command = json.loads(settings.read_text(encoding="utf-8"))["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+    assert command.startswith(f'"{sys.executable}" ')
