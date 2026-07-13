@@ -28,7 +28,10 @@ POST="$REPO_ROOT/hamingja/adapters/codex/record.py"
 LIFECYCLE="$REPO_ROOT/hamingja/adapters/delegation.py"
 OPERATOR="$REPO_ROOT/hamingja/adapters/operator_turn.py"
 
-PYBIN="$(command -v python3 || command -v python || true)"
+PYBIN="${HAMINGJA_PYTHON:-}"
+if [ -z "$PYBIN" ]; then
+    PYBIN="$(command -v python3 || command -v python || true)"
+fi
 if [ -z "$PYBIN" ]; then
     echo "error: python3 not found on PATH" >&2
     exit 1

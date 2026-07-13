@@ -480,6 +480,24 @@ MAX_STDIN_BODY_BYTES = 1_000_000
 STDIN_BODY_CHUNK_CHARS = 64_000
 # All harnesses hamingja knows how to install for. Order matters: when
 # installing multiple, we run them in this order so output is predictable.
+
+
+def _stable_installer_python(executable: str) -> str:
+    """Prefer Homebrew's stable opt symlink over a versioned Cellar path."""
+    try:
+        path = Path(executable)
+        parts = path.parts
+        cellar = parts.index("Cellar")
+        formula = parts[cellar + 1]
+        prefix = Path(*parts[:cellar])
+        candidate = prefix / "opt" / formula / "bin" / path.name
+        if candidate.exists():
+            return str(candidate)
+    except (IndexError, ValueError, OSError):
+        pass
+    return executable
+
+
 def _run_single_install(harness: str) -> int:
     script = (
         Path(__file__).resolve().parent
@@ -491,7 +509,13 @@ def _run_single_install(harness: str) -> int:
         print(f"error: no installer for harness {harness!r}", file=sys.stderr)
         return 1
     try:
-        return subprocess.call(["bash", str(script)])
+        env = os.environ.copy()
+        base_python = getattr(sys, "_base_executable", None)
+        selected = (
+            base_python if isinstance(base_python, str) and base_python else sys.executable
+        )
+        env["HAMINGJA_PYTHON"] = _stable_installer_python(selected)
+        return subprocess.call(["bash", str(script)], env=env)
     except FileNotFoundError:
         print("error: bash not found on PATH", file=sys.stderr)
         return 1
