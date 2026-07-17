@@ -33,3 +33,28 @@ def test_sdist_manifest_carries_release_and_runtime_assets():
         "hamingja/adapters/codex/install.sh",
     ):
         assert required in manifest
+
+
+def test_release_workflow_is_bounded_to_trusted_publishing():
+    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+
+    assert "release:\n    types: [published]" in workflow
+    assert "push:" not in workflow
+    assert "pull_request:" not in workflow
+    assert "workflow_dispatch:" not in workflow
+    assert "environment:\n      name: pypi" in workflow
+    assert workflow.count("id-token: write") == 1
+    assert "ref: ${{ github.event.release.tag_name }}" in workflow
+    assert "persist-credentials: false" in workflow
+    assert "python -m build" in workflow
+    assert "pypa/gh-action-pypi-publish@" in workflow
+
+    build_job, publish_job = workflow.split("\n  publish:", maxsplit=1)
+    assert "id-token: write" not in build_job
+    assert "needs: build" in publish_job
+    assert "contents: read" not in publish_job
+    assert workflow.count("name: python-package-distributions") == 2
+
+    action_refs = re.findall(r"uses: [^@\s]+@([^\s]+)", workflow)
+    assert len(action_refs) == 5
+    assert all(re.fullmatch(r"[0-9a-f]{40}", ref) for ref in action_refs)
