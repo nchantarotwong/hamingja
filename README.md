@@ -48,15 +48,6 @@ hamingja install all       # both, regardless of what's already set up
 hamingja uninstall all     # remove only hamingja hooks; preserve others
 ```
 
-Until the package is published, install from a checkout instead:
-
-```bash
-git clone https://github.com/nchantarotwong/hamingja.git
-cd hamingja
-pipx install --python python3.13 --editable .
-hamingja install
-```
-
 `hamingja install` runs the bundled installer; with no argument it picks
 up whatever it finds under `~/.claude/` and `~/.codex/`. The raw
 `bash hamingja/adapters/<harness>/install.sh` still works if you'd rather
