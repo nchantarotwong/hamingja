@@ -49,22 +49,23 @@ hamingja uninstall all     # remove only hamingja hooks; preserve others
 ```
 
 `hamingja install` runs the bundled installer; with no argument it picks
-up whatever it finds under `~/.claude/` and `~/.codex/`. The raw
-`bash hamingja/adapters/<harness>/install.sh` still works if you'd rather
-not install the package. After installing, `hamingja status` prints the
-resolved config for any directory, `hamingja report` shows what has fired,
-`hamingja locate` ranks small line ranges to inspect before reading large
-files, and `hamingja init` generates a `CLAUDE.md` (+ `AGENTS.md` symlink)
-for the project's soft workflow rails.
+up whatever it finds under `~/.claude/` and `~/.codex/`. After installing,
+`hamingja status` prints the resolved config for any directory, `hamingja
+report` shows what has fired, `hamingja locate` ranks small line ranges to
+inspect before reading large files, and `hamingja init` generates a `CLAUDE.md`
+(+ `AGENTS.md` symlink) for the project's soft workflow rails.
 
 `hamingja uninstall claude|codex|all` removes only recognized hamingja
 hook commands, preserves every unrelated hook and setting, writes a backup only
 when it changes a file, and refuses to rewrite malformed configuration.
 
-To upgrade, run `pipx upgrade hamingja` (or reinstall the editable checkout),
-then `hamingja install all` to refresh hook paths. Claude and Codex processes
-cache hook commands for the life of a session or application process; restart
-running sessions after changing the Python installation or hook paths.
+Install hamingja once globally, then run `hamingja init` in each repo that needs
+local workflow instructions; projects do not need to vendor the package.
+
+To upgrade, run `pipx upgrade hamingja`, then `hamingja install all` to refresh
+hook paths. Claude and Codex processes cache hook commands for the life of a
+session or application process; restart running sessions after changing the
+Python installation or hook paths.
 
 ### Code locator
 
@@ -659,112 +660,6 @@ environment failures.
 This keeps hamingja generic: it owns discovery, path hygiene, argument
 forwarding, and consistent command shape. The target repo owns what "ready"
 means.
-
-### Use from another repo
-
-Install hamingja once from its own checkout, then use it across all of your
-coding-agent repos. The hamingja checkout does **not** need to live inside
-each repo; a common sibling layout is enough:
-
-```
-~/dev/
-  hamingja/        # checked out once
-  myrepo/               # your language/compiler repo
-  other-repo/
-```
-
-From the hamingja checkout:
-
-```bash
-cd ~/dev/hamingja
-pipx install --python python3.13 --editable .
-hamingja install       # installs for whichever of claude_code / codex is on this machine
-```
-
-That global install is the mechanical layer: it puts the CLI on PATH and
-merges hooks into `~/.claude/settings.json` and/or `~/.codex/hooks.json`. The
-hooks resolve the installed package, so every repo gets the guardrail without
-vendoring hamingja.
-
-Each target repo only needs local configuration and instructions:
-
-```
-myrepo/
-  .hamingja.json   # optional guardrail thresholds / mode relaxations
-  CLAUDE.md           # generated soft workflow instructions
-  AGENTS.md -> CLAUDE.md
-```
-
-One command for the per-repo instructions. A first `hamingja init` uses the
-default profiles. Re-running without `--profile` preserves the profile set in
-the existing managed block, including opt-ins like `compiler_language`.
-`--profile` is still explicit: it writes exactly the set you pass.
-
-```bash
-cd ~/dev/myrepo
-hamingja init                                                      # default profiles
-# or, with the opt-in compiler-language profile:
-hamingja init --force --profile base,non-convergence,debugging,escalation,review-passes,compiler-language
-```
-
-Either form writes `./CLAUDE.md` and drops `./AGENTS.md` as a relative
-symlink. If `AGENTS.md` already exists as a real file, `init` refuses; pass
-`--force` only after preserving anything you still need from it.
-
-Use `.hamingja.json` only for the hard guardrail runtime config. Project
-config is untrusted and may only relax the installed baseline: raise thresholds,
-disable detectors, lower `window`, downgrade `mode` toward `off`, or extend the
-read-only exemption list. It cannot force `enforce` or lower thresholds.
-
-Use `~/.hamingja/policies/*.json` for repo-specific strict rules, such as
-"if this semantic tool fails, do not fall back to broad text search over that
-protected file." Those policies are trusted local operator state and can tighten
-detectors, including setting only that detector to `enforce`, without putting
-private repo names or paths in this public package.
-
-Example repo-local config:
-
-```json
-{
-  "mode": "observe",
-  "detectors": {
-    "repetition": {
-      "nudge_at": 3,
-      "block_at": 5
-    },
-    "oscillation": {
-      "nudge_at": 4,
-      "block_at": 7
-    },
-    "error_streak": {
-      "nudge_at": 4,
-      "block_at": 8
-    },
-    "read_discipline": {
-      "block_first_read_at_lines": 1000
-    }
-  }
-}
-```
-
-Profiles are **not** runtime config. They are markdown copied into `CLAUDE.md`
-by `hamingja init`, so changing the profile set means regenerating or
-editing the file.
-
-Run in `observe` first, then inspect what would have fired:
-
-```bash
-hamingja report
-```
-
-When you are ready to enforce blocks, set trusted mode from your shell:
-
-```bash
-HAMINGJA_MODE=enforce claude
-```
-
-Use `.hamingja-off` at a repo root to stand the guard down completely for
-that repo.
 
 ---
 
