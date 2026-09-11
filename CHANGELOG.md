@@ -2,7 +2,7 @@
 
 All notable changes to hamingja are recorded here.
 
-## 0.1.1 - Unreleased
+## 0.1.1 - 2026-09-10
 
 - Require a fresh, timezone-aware Codex quota event timestamp. Unrelated
   rollout activity can no longer revive stale scarcity evidence for an
