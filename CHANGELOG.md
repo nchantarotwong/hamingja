@@ -2,6 +2,16 @@
 
 All notable changes to hamingja are recorded here.
 
+## 0.1.2 - 2026-09-11
+
+- Select completed failing CI runs for the PR's current head commit instead
+  of trying to read a newer pending run or failures from an older revision.
+- Report bounded diagnostic context for non-pytest failures, including
+  Homebrew audits and compiler errors, from primary or failed-job logs.
+- Reject malformed CI metadata explicitly and label unrecognized log tails
+  without inventing a test failure or infrastructure diagnosis.
+- Keep the workflow regression file runnable directly as well as with pytest.
+
 ## 0.1.1 - 2026-09-10
 
 - Require a fresh, timezone-aware Codex quota event timestamp. Unrelated

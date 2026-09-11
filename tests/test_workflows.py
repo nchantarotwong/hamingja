@@ -5,11 +5,13 @@ mechanics into concise summaries without requiring network, real CI, or branch
 mutation during tests.
 """
 import io
+import json
 import os
 import sys
 import subprocess
 import tempfile
 import time
+from unittest.mock import patch
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -25,6 +27,7 @@ from hamingja.workflows import (  # noqa: E402
     default_runner,
     merge_pr,
     summarize_pytest_log,
+    summarize_ci_log,
     test_summary as workflow_test_summary,
 )
 
@@ -1542,8 +1545,8 @@ def test_ci_status_wait_polls_with_backoff_until_checks_finish():
     assert "1 total, 0 failing, 0 pending" in out
 
 
-def test_ci_status_wait_treats_no_checks_reported_as_waitable(monkeypatch):
-    monkeypatch.setattr("hamingja.workflows._repo_has_no_ci_workflows", lambda: False)
+@patch("hamingja.workflows._repo_has_no_ci_workflows", lambda: False)
+def test_ci_status_wait_treats_no_checks_reported_as_waitable():
     sleeps = []
     runner = FakeRunner([
         RunResult(
@@ -1568,8 +1571,8 @@ def test_ci_status_wait_treats_no_checks_reported_as_waitable(monkeypatch):
     assert "1 total, 0 failing, 0 pending" in out
 
 
-def test_ci_status_wait_returns_after_grace_when_local_repo_has_no_ci(monkeypatch):
-    monkeypatch.setattr("hamingja.workflows._repo_has_no_ci_workflows", lambda: True)
+@patch("hamingja.workflows._repo_has_no_ci_workflows", lambda: True)
+def test_ci_status_wait_returns_after_grace_when_local_repo_has_no_ci():
     runner = FakeRunner([
         RunResult(
             ["gh", "pr", "checks", "12", "--json", "name,state,link"],
@@ -1778,14 +1781,14 @@ def test_ci_status_counts_pending_without_double_counting_failures():
 
 def test_ci_failures_pr_scopes_to_head_branch():
     runner = FakeRunner([
-        RunResult(["gh", "pr", "view", "12", "--json", "headRefName"], 0, '{"headRefName":"topic"}', ""),
+        RunResult(["gh", "pr", "view", "12", "--json", "headRefName,headRefOid"], 0, '{"headRefName":"topic","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}', ""),
         RunResult(
             [
-                "gh", "run", "list", "--limit", "1", "--json",
-                "databaseId,conclusion,status,workflowName,url", "--branch", "topic",
+                "gh", "run", "list", "--status", "failure", "--limit", "1", "--json",
+                "databaseId,conclusion,status,workflowName,url,headSha", "--branch", "topic", "--commit", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             ],
             0,
-            '[{"databaseId":456,"workflowName":"tests","url":"https://ci/run"}]',
+            '[{"databaseId":456,"workflowName":"tests","url":"https://ci/run","status":"completed","conclusion":"failure","headSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]',
             "",
         ),
         RunResult(
@@ -1798,8 +1801,8 @@ def test_ci_failures_pr_scopes_to_head_branch():
     rc, out = _capture(ci_failures, pr="12", runner=runner)
     assert rc == 1
     assert runner.calls[1] == [
-        "gh", "run", "list", "--limit", "1", "--json",
-        "databaseId,conclusion,status,workflowName,url", "--branch", "topic",
+        "gh", "run", "list", "--status", "failure", "--limit", "1", "--json",
+        "databaseId,conclusion,status,workflowName,url,headSha", "--branch", "topic", "--commit", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     ]
     assert "tests (topic) #456" in out
     assert "failing test: tests/foo_test.py::test_bar" in out
@@ -1903,7 +1906,7 @@ def test_ci_failures_fallback_fails_open_on_malformed_jobs():
     rc, out = _capture(ci_failures, run_id="456", runner=runner)
 
     assert rc == 1
-    assert "failed log fetched, but no pytest-style failures were extracted" in out
+    assert "unclassified failed-log tail" in out
 
 
 def test_ci_failures_rejects_malformed_pr_view_without_crashing():
@@ -2189,6 +2192,73 @@ def test_test_summary_reads_saved_log():
         rc, out = _capture(workflow_test_summary, p)
     assert rc == 1
     assert "failing test: tests/foo_test.py::test_bar" in out
+
+
+def test_ci_failures_homebrew_diagnostic_with_actions_prefixes():
+    log = "\n".join("audit\tAudit formula\t2026-09-11T07:38:25.000Z " + line for line in [
+        "##[error]1 problem in 1 formula detected.",
+        "nchantarotwong/heat/heat",
+        "  * Stable: `version 0.6.2` is redundant with version scanned from URL",
+        "##[error]Process completed with exit code 1.",
+    ])
+    for raw_job in (False, True):
+        results = [RunResult([], 0, '{"workflowName":"Homebrew","url":null}'),
+                   RunResult([], 0, "see raw logs" if raw_job else log)]
+        if raw_job:
+            results += [RunResult([], 0, '{"jobs":[{"databaseId":123,"conclusion":"failure"}]}'), RunResult([], 0, log)]
+        runner = FakeRunner(results)
+        rc, out = _capture(ci_failures, run_id="456", runner=runner)
+        assert rc == 1
+        assert "failure context:" in out
+        assert "version 0.6.2` is redundant" in out
+        assert "failing test:" not in out
+        assert "2026-09" not in out
+
+
+def test_ci_failure_context_is_bounded_and_does_not_classify_prose():
+    summary = summarize_ci_log("An error occurred in a hypothetical example\n0 failures, all passed\nerror handling guide")
+    assert not summary.failure_context
+    summary = summarize_ci_log("\n".join("##[error]" + "x" * 1000 for _ in range(100)))
+    assert len(summary.failure_context) == 20
+    assert all(len(line) <= 400 for line in summary.failure_context)
+    summary = summarize_ci_log("\x1b[31merror: compilation refused\x1b[0m")
+    assert summary.failure_context == ("error: compilation refused",)
+
+
+def test_ci_failures_rejects_malformed_run_shapes_and_wrong_heads():
+    good = dict(databaseId=456, workflowName="tests", url=None,
+                status="completed", conclusion="failure", headSha="a" * 40)
+    invalid = [None, {}, "bad JSON", [None], [good, good]]
+    for field, values in [('status', [None, [], 'in_progress']), ('conclusion', [None, False, 'success']),
+                          ('headSha', [None, {}, 'b' * 40, 'a' * 41])]:
+        invalid += [[dict(good, **{field: value})] for value in values]
+    for value in invalid:
+        runner = FakeRunner([RunResult([], 0, json.dumps(dict(headRefName='topic', headRefOid='a' * 40))),
+                             RunResult([], 0, json.dumps(value))])
+        rc, out = _capture(ci_failures, pr="12", runner=runner)
+        assert rc == 1, value
+        assert 'malformed run data' in out, value
+        assert len(runner.calls) == 2
+
+
+def test_ci_failures_current_head_without_failures_does_not_fetch_pending_logs():
+    runner = FakeRunner([RunResult([], 0, json.dumps(dict(headRefName='topic', headRefOid='a' * 40))),
+                         RunResult([], 0, '[]')])
+    rc, out = _capture(ci_failures, pr="12", runner=runner)
+    assert rc == 0
+    assert 'current PR head' in out
+    assert runner.calls[1][3:5] == ['--status', 'failure']
+    assert runner.calls[1][-2:] == ['--commit', 'a' * 40]
+    assert len(runner.calls) == 2
+
+
+def test_ci_failures_rejects_missing_or_invalid_pr_commit():
+    for value in [None, 123, {}, 'a' * 41, '']:
+        runner = FakeRunner([RunResult([], 0, json.dumps(dict(headRefName='topic', headRefOid=value)))])
+        rc, out = _capture(ci_failures, pr="12", runner=runner)
+        assert rc == 1
+        assert 'malformed PR data' in out
+        assert len(runner.calls) == 1
 
 
 if __name__ == "__main__":
