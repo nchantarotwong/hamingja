@@ -591,7 +591,7 @@ hamingja ci-status 123 --wait      # poll with backoff until checks finish or ti
 hamingja ci-status 123 --json      # versioned ready/pending/failed/blocked state
 hamingja ci-preflight 123          # classify CI quota/infrastructure readiness before reruns
 hamingja ci-failures 123           # shorthand for --pr 123
-hamingja ci-failures --pr 123      # failed-run log summary for the PR branch
+hamingja ci-failures --pr 123      # failed-run log summary for the current PR commit
 hamingja ci-failures --run 456     # failed-run log summary for a run id
 hamingja test-summary .pytest_output.log
 hamingja preflight --list          # list repo-owned readiness checks
@@ -629,10 +629,15 @@ quota/infrastructure blocks, including runs where every failed job completed
 before any job steps were recorded. `ci-status --wait` polls with backoff so an
 agent does not burn repeated tool calls manually checking pending jobs.
 
-`ci-failures` summarizes pytest-style failures from both stdout and stderr of
-`gh run view --log-failed`, including GitHub timestamp-prefixed and ANSI-colored
-pytest summary lines. If failed logs are unavailable, it falls back to run
-metadata and reports no-step CI infrastructure/budget failures directly.
+`ci-failures --pr` selects a completed failing workflow for the PR’s current
+head commit, even when a newer workflow is still pending. It preserves pytest
+summaries and otherwise quotes bounded context around compiler errors or
+GitHub error annotations, including Homebrew audit details. Timestamp and ANSI
+prefixes are removed. If no diagnostic is recognized, it labels a bounded
+failed-log tail as unclassified instead of claiming that no failure exists.
+Raw failed-job logs are a fallback when the primary log lacks details; when
+logs are unavailable, run metadata can identify no-step CI infrastructure or
+budget failures. Malformed metadata produces an explicit error.
 
 The rule for project instructions is simple: run `hamingja commands` before
 PR creation/merge/cleanup, CI status/failure extraction, or saved test-log

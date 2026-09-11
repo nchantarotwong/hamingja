@@ -936,8 +936,9 @@ def ci_failures(
 ) -> int:
     if run_id is None:
         branch = None
+        head = None
         if pr:
-            view = runner(["gh", "pr", "view", pr, "--json", "headRefName"])
+            view = runner(["gh", "pr", "view", pr, "--json", "headRefName,headRefOid"])
             if view.returncode != 0:
                 print("ci failures")
                 print(f"- error: {_err(view)}")
@@ -948,29 +949,40 @@ def ci_failures(
                 print("- error: gh returned malformed PR data")
                 return 1
             branch = view_info.get("headRefName")
-            if not _non_empty_string(branch):
+            head = view_info.get("headRefOid")
+            if not _non_empty_string(branch) or not isinstance(head, str) or not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", head):
                 print("ci failures")
                 print("- error: gh returned malformed PR data")
                 return 1
-        cmd = ["gh", "run", "list", "--limit", "1", "--json", "databaseId,conclusion,status,workflowName,url"]
+        cmd = ["gh", "run", "list", "--status", "failure", "--limit", "1", "--json", "databaseId,conclusion,status,workflowName,url,headSha"]
         if branch:
-            cmd.extend(["--branch", branch])
+            cmd.extend(["--branch", branch, "--commit", head])
         res = runner(cmd)
         if res.returncode != 0:
             print("ci failures")
             print(f"- error: {_err(res)}")
             return res.returncode or 1
         runs = _json_from(res)
-        if not isinstance(runs, list) or not runs:
+        if not isinstance(runs, list):
             print("ci failures")
-            print("- no workflow runs found")
+            print("- error: gh returned malformed run data")
+            return 1
+        if not runs:
+            print("ci failures")
+            print("- no completed failing workflow runs found" + (" for the current PR head" if head else ""))
             return 0
         run = runs[0]
         if not isinstance(run, dict) or not _valid_run_id(run.get("databaseId")):
             print("ci failures")
             print("- error: gh returned malformed run data")
             return 1
-        if not _string_or_none(run.get("workflowName")) or not _string_or_none(run.get("url")):
+        if (len(runs) != 1
+                or not _string_or_none(run.get("workflowName"))
+                or not _string_or_none(run.get("url"))
+                or run.get("status") != "completed" or run.get("conclusion") != "failure"
+                or not isinstance(run.get("headSha"), str)
+                or not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", run["headSha"])
+                or (head is not None and run["headSha"] != head)):
             print("ci failures")
             print("- error: gh returned malformed run data")
             return 1
@@ -1007,25 +1019,31 @@ def ci_failures(
             return 2
         print(f"- error: {_err(log)}")
         return log.returncode or 1
-    summary = summarize_pytest_log(f"{log.stdout}\n{log.stderr}")
+    summary = summarize_ci_log(f"{log.stdout}\n{log.stderr}")
     if not _test_summary_has_signal(summary):
         fallback = _failed_job_log_summary(run_id, runner=runner)
         if fallback is not None and _test_summary_has_signal(fallback):
             print("- fallback: scanned failed job logs")
             _emit_test_summary(fallback)
             return 1
-        print("- failed log fetched, but no pytest-style failures were extracted")
+        tail = [_log_message(line)[:400] for line in (log.stdout + "\n" + log.stderr).splitlines() if line.strip()][-12:]
+        if tail:
+            print("- unclassified failed-log tail (no recognized diagnostic):")
+            for line in tail:
+                print(f"  | {line}")
+        else:
+            print("- failed log was empty; no diagnostic could be extracted")
         return 1
     _emit_test_summary(summary)
     return 1
 
 
 def _test_summary_has_signal(summary: TestSummary) -> bool:
-    return bool(summary.failures or summary.errors or summary.trace_lines)
+    return bool(summary.failures or summary.errors or summary.trace_lines or summary.failure_context)
 
 
 def _failed_job_log_summary(run_id: str, *, runner: Runner) -> Optional[TestSummary]:
-    """Fetch raw logs for failed jobs in one run and summarize pytest failures.
+    """Fetch raw logs for failed jobs in one run and summarize recognized failures.
 
     This is deliberately scoped to the run id `ci_failures` already selected,
     then narrowed again to jobs whose metadata says `conclusion == failure`.
@@ -1055,7 +1073,7 @@ def _failed_job_log_summary(run_id: str, *, runner: Runner) -> Optional[TestSumm
         chunks.append(f"{job_log.stdout}\n{job_log.stderr}")
     if not chunks:
         return None
-    return summarize_pytest_log("\n".join(chunks))
+    return summarize_ci_log("\n".join(chunks))
 
 
 @dataclass
@@ -1064,6 +1082,7 @@ class TestSummary:
     errors: list[str]
     trace_lines: list[str]
     final_line: Optional[str]
+    failure_context: tuple[str, ...] = ()
 
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
@@ -1095,6 +1114,25 @@ def summarize_pytest_log(text: str, *, max_items: int = 20) -> TestSummary:
             if cleaned not in trace_lines:
                 trace_lines.append(cleaned)
     return TestSummary(failures, errors, trace_lines, final_line)
+
+
+def summarize_ci_log(text: str) -> TestSummary:
+    """Keep structured pytest details, otherwise quote bounded diagnostics.
+
+    Context is original tool output, never an inferred test or infrastructure
+    classification. Ordinary mentions of errors/failures are not markers.
+    """
+    summary = summarize_pytest_log(text)
+    if _test_summary_has_signal(summary):
+        return summary
+    lines = [_log_message(line) for line in text.splitlines()]
+    indices: set[int] = set()
+    marker = re.compile(r"^(?:##\[error\]|::error(?:\s+[^:]*)?::|(?:fatal\s+)?error:|[^:]+:\d+(?::\d+)?:\s*(?:fatal\s+)?error:)", re.I)
+    for index, line in enumerate(lines):
+        if marker.match(line):
+            indices.update(range(max(0, index - 3), min(len(lines), index + 4)))
+    summary.failure_context = tuple(lines[index][:400] for index in sorted(indices) if lines[index].strip())[:20]
+    return summary
 
 
 def _log_message(line: str) -> str:
@@ -1131,5 +1169,9 @@ def _emit_test_summary(summary: TestSummary) -> None:
     if summary.trace_lines:
         for item in summary.trace_lines[:10]:
             print(f"- error line: {item}")
-    if not summary.failures and not summary.errors and not summary.trace_lines:
+    if summary.failure_context:
+        print("- failure context:")
+        for line in summary.failure_context:
+            print(f"  | {line}")
+    if not _test_summary_has_signal(summary):
         print("- no pytest failures detected")
