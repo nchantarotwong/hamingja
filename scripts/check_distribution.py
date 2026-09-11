@@ -1,5 +1,6 @@
 """Smoke test an installed wheel; run with its clean venv's Python and -I."""
 
+import argparse
 import json
 import os
 from importlib import metadata, resources
@@ -11,13 +12,17 @@ import tempfile
 import hamingja
 
 
-def main():
+def main(release_tag=None):
     # Do not let an editable/source import conceal an incomplete wheel.
     installed_path = Path(hamingja.__file__).resolve()
     if not installed_path.is_relative_to(Path(sys.prefix).resolve()):
         raise RuntimeError(f"Expected an installed wheel, imported {installed_path}")
     if metadata.version("hamingja") != hamingja.__version__:
         raise RuntimeError("Installed metadata and module versions differ")
+    if release_tag is not None and release_tag.removeprefix("v") != hamingja.__version__:
+        raise RuntimeError(
+            f"Release tag {release_tag!r} does not match installed version {hamingja.__version__}"
+        )
 
     package = resources.files("hamingja")
     if not isinstance(json.loads(package.joinpath("config.default.json").read_text()), dict):
@@ -39,16 +44,29 @@ def main():
             raise RuntimeError(f"Empty packaged asset: {relative}")
 
     cli = Path(sys.executable).parent / "hamingja"
-    subprocess.run([str(cli), "--version"], check=True, timeout=30)
-    subprocess.run([str(cli), "--help"], check=True, timeout=30, stdout=subprocess.DEVNULL)
     with tempfile.TemporaryDirectory(prefix="hamingja-install-smoke-") as temporary:
         directory = Path(temporary)
+        # Bound project config discovery and keep operator state outside this check.
+        (directory / ".git").mkdir()
         settings = directory / "claude-settings.json"
         hooks = directory / "codex-hooks.json"
-        environment = dict(os.environ, CLAUDE_SETTINGS=str(settings), CODEX_HOOKS=str(hooks))
-        for arguments in (["status", temporary], ["init"], ["install", "all"]):
+        # -I is not inherited by CLI/installer subprocesses. Strip Python import
+        # overrides as well as running the installed entry point in isolated mode.
+        environment = {
+            key: value for key, value in os.environ.items()
+            if not key.startswith(("PYTHON", "HAMINGJA_"))
+        }
+        environment.update(
+            CLAUDE_SETTINGS=str(settings), CODEX_HOOKS=str(hooks),
+            HAMINGJA_HOME=str(directory / "operator-config"),
+            HAMINGJA_STATE_DIR=str(directory / "operator-state"),
+        )
+        command = [sys.executable, "-I", str(cli)]
+        for arguments in (
+            ["--version"], ["--help"], ["status", temporary], ["init"], ["install", "all"]
+        ):
             subprocess.run(
-                [str(cli), *arguments], cwd=directory, env=environment,
+                [*command, *arguments], cwd=directory, env=environment,
                 check=True, timeout=30, stdout=subprocess.DEVNULL,
             )
         if not (directory / "CLAUDE.md").is_file() or not (directory / "AGENTS.md").is_file():
@@ -57,7 +75,7 @@ def main():
             if not json.loads(path.read_text())["hooks"].get("PreToolUse"):
                 raise RuntimeError(f"Installer did not register pre-tool hooks: {path}")
         subprocess.run(
-            [str(cli), "uninstall", "all"], cwd=directory, env=environment,
+            [*command, "uninstall", "all"], cwd=directory, env=environment,
             check=True, timeout=30, stdout=subprocess.DEVNULL,
         )
         for path in (settings, hooks):
@@ -67,4 +85,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--release-tag", help="Require the installed version to match this release tag")
+    main(release_tag=parser.parse_args().release_tag)

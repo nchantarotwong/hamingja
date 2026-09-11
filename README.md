@@ -317,6 +317,8 @@ never imply scarcity and cannot arm a denial.
   activity. Unrelated log writes cannot refresh an old observation. Missing or
   invalid timestamps supply no quota evidence; this best-effort rollout probe
   falls back to the advisory counter.
+  Each window also expires at its reported reset time. Invalid percentages
+  and malformed session identities cannot supply scarcity evidence.
 
 The default operator stop is not an unconditional call ceiling. It requires
 work beyond the configured hard ceiling and stall window, proven unattended

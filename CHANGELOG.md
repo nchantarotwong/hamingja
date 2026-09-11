@@ -8,6 +8,8 @@ All notable changes to hamingja are recorded here.
   rollout activity can no longer revive stale scarcity evidence for an
   operator stop; missing or invalid timestamps fall back to the configured
   budget behavior (advisory by default).
+- Reject non-finite/out-of-range quota percentages and wildcard session IDs;
+  expire rolling and weekly quota evidence independently at their reset times.
 - Validate pull requests and release artifacts with the synthetic suite,
   distribution metadata checks, and an isolated installed-wheel smoke test.
 - Keep ordinary status questions from forcing a stop, allow bounded

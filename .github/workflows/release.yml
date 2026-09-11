@@ -44,7 +44,7 @@ jobs:
           smoke_env=$(mktemp -d)
           python -m venv "$smoke_env"
           "$smoke_env/bin/python" -m pip install --no-deps dist/*.whl
-          "$smoke_env/bin/python" -I scripts/check_distribution.py
+          "$smoke_env/bin/python" -I scripts/check_distribution.py --release-tag "$GITHUB_REF_NAME"
 
       - name: Store distributions
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

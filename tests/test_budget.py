@@ -679,6 +679,17 @@ def test_fresh_scarcity_arms_rescoped_operator_stop():
     assert v.action == BLOCK
 
 
+@pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan"), -1, 101])
+def test_invalid_quota_percent_never_arms_operator_stop(value):
+    cfg = _rescoped_cfg(checkpoint_at=2, hard_block_at=4)
+    for _ in range(5):
+        verdict = increment_and_check(
+            "invalid-percentage", "Edit", False, cfg,
+            quota_reading=_Reading(value, value), unattended_signal=True,
+        )
+    assert verdict.action != BLOCK
+
+
 def test_positive_danger_without_unattended_proof_cannot_stop():
     cfg = _rescoped_cfg(checkpoint_at=2, hard_block_at=4)
     for _ in range(4):

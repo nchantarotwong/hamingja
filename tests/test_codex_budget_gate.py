@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import json
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -104,8 +105,8 @@ def _write_rollout(codex_home, session_id, *, window, weekly):
                 "model_context_window": 258400,
             },
             "rate_limits": {
-                "primary": {"used_percent": window, "window_minutes": 300, "resets_at": 1},
-                "secondary": {"used_percent": weekly, "window_minutes": 10080, "resets_at": 2},
+                "primary": {"used_percent": window, "window_minutes": 300, "resets_at": int(time.time()) + 300},
+                "secondary": {"used_percent": weekly, "window_minutes": 10080, "resets_at": int(time.time()) + 10080},
                 "plan_type": "prolite",
             },
         },

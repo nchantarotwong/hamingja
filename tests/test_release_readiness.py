@@ -73,6 +73,7 @@ def test_release_validates_before_uploading_distributions():
     )
     positions = [build_job.index(check) for check in checks]
     assert positions == sorted(positions)
+    assert '--release-tag "$GITHUB_REF_NAME"' in build_job
 
 
 def test_pull_requests_run_tests_and_isolated_wheel_smoke():

@@ -36,8 +36,8 @@ def _token_count_event(
     *,
     primary_pct=6.0,
     secondary_pct=30.0,
-    primary_reset=1783137258,
-    secondary_reset=1783395399,
+    primary_reset=None,
+    secondary_reset=None,
     last_total=198513,
     ctx_window=258400,
     plan="prolite",
@@ -56,12 +56,12 @@ def _token_count_event(
             "primary": {
                 "used_percent": primary_pct,
                 "window_minutes": 300,
-                "resets_at": primary_reset,
+                "resets_at": primary_reset if primary_reset is not None else int(time.time()) + 300,
             },
             "secondary": {
                 "used_percent": secondary_pct,
                 "window_minutes": 10080,
-                "resets_at": secondary_reset,
+                "resets_at": secondary_reset if secondary_reset is not None else int(time.time()) + 10080,
             },
             "plan_type": plan,
         }
@@ -107,13 +107,17 @@ def _write_rollout(home, session_id, lines, *, trailing_newline=True, subdir="20
 # ---------------------------------------------------------------------------
 
 def test_reads_latest_rate_limits(codex_home):
-    _write_rollout(codex_home, SID, [_token_count_event()])
+    primary_reset = int(time.time()) + 300
+    secondary_reset = primary_reset + 10080
+    _write_rollout(codex_home, SID, [_token_count_event(
+        primary_reset=primary_reset, secondary_reset=secondary_reset,
+    )])
     r = read_quota(SID)
     assert isinstance(r, QuotaReading)
     assert r.window_used_pct == 6.0
     assert r.weekly_used_pct == 30.0
-    assert r.window_resets_at == 1783137258
-    assert r.weekly_resets_at == 1783395399
+    assert r.window_resets_at == primary_reset
+    assert r.weekly_resets_at == secondary_reset
     assert r.plan_type == "prolite"
     assert r.source == "codex-rollout"
 
@@ -180,6 +184,7 @@ def test_null_rate_limits_falls_back_to_context(codex_home):
 def test_no_usable_fields_returns_none(codex_home):
     # rate_limits null AND no usable context -> no reading at all.
     ev = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "type": "event_msg",
         "payload": {"type": "token_count", "info": {}, "rate_limits": None},
     }
@@ -327,6 +332,7 @@ def test_no_token_count_events_returns_none(codex_home):
 def test_wrong_types_in_fields_fail_open(codex_home):
     # used_percent as a string, resets_at as a bool, context window as a list.
     ev = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "type": "event_msg",
         "payload": {
             "type": "token_count",
@@ -356,3 +362,50 @@ def test_bool_is_not_a_number(codex_home):
     assert r is not None
     assert r.window_used_pct is None
     assert r.weekly_used_pct == 30.0
+
+
+@pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan"), -1, 101])
+def test_invalid_percent_cannot_supply_quota_evidence(codex_home, value):
+    _write_rollout(codex_home, SID, [_token_count_event(primary_pct=value, secondary_pct=value)])
+    reading = read_quota(SID)
+    assert reading.window_used_pct is None
+    assert reading.weekly_used_pct is None
+
+
+@pytest.mark.parametrize("window", ["primary", "secondary"])
+@pytest.mark.parametrize("reset_offset", [-1, 0, 1])
+def test_each_window_expires_independently(codex_home, monkeypatch, window, reset_offset):
+    now = int(time.time())
+    event = _token_count_event(primary_reset=now + 10, secondary_reset=now + 10)
+    event["timestamp"] = datetime.fromtimestamp(now - 2, timezone.utc).isoformat()
+    event["payload"]["rate_limits"][window]["resets_at"] = now + reset_offset
+    path = _write_rollout(codex_home, SID, [event])
+    os.utime(path, (now, now))
+    monkeypatch.setattr(quota.time, "time", lambda: now)
+    reading = read_quota(SID)
+    field = "window_used_pct" if window == "primary" else "weekly_used_pct"
+    other = "weekly_used_pct" if window == "primary" else "window_used_pct"
+    assert (getattr(reading, field) is not None) is (reset_offset > 0)
+    assert getattr(reading, other) is not None
+
+
+@pytest.mark.parametrize("sid", ["*", "?", "[0-9]*", "../*", "sessions/*", None, [], 123])
+def test_invalid_session_identity_cannot_select_another_rollout(codex_home, sid):
+    _write_rollout(codex_home, SID, [_token_count_event(primary_pct=99.0)])
+    assert read_quota(sid) is None
+
+
+@pytest.mark.parametrize("reset", [False, "later", []])
+def test_malformed_reset_cannot_supply_window_evidence(codex_home, reset):
+    _write_rollout(codex_home, SID, [_token_count_event(primary_pct=99.0, primary_reset=reset)])
+    reading = read_quota(SID)
+    assert reading.window_used_pct is None
+    assert reading.weekly_used_pct == 30.0
+
+
+@pytest.mark.parametrize("percent", [0, 100])
+def test_valid_percent_boundaries_and_missing_reset_are_supported(codex_home, percent):
+    event = _token_count_event(primary_pct=percent)
+    del event["payload"]["rate_limits"]["primary"]["resets_at"]
+    _write_rollout(codex_home, SID, [event])
+    assert read_quota(SID).window_used_pct == percent

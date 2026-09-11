@@ -80,8 +80,10 @@ def _find_rollout(session_id: str, home: Path) -> Optional[Path]:
     happen — session ids are unique), the most-recently-modified wins.
     """
     try:
-        sid = str(session_id).strip()
-        if not sid:
+        if not isinstance(session_id, str):
+            return None
+        sid = session_id.strip()
+        if not sid or any(char in sid for char in "*?[]/\\\x00"):
             return None
         sessions = home / "sessions"
         if not sessions.is_dir():
@@ -122,9 +124,20 @@ def _extract(payload: dict) -> Optional[QuotaReading]:
             if isinstance(primary, dict):
                 window_pct = _as_float(primary.get("used_percent"))
                 window_reset = _as_int(primary.get("resets_at"))
+                if primary.get("resets_at") is not None and window_reset is None:
+                    window_pct = None
             if isinstance(secondary, dict):
                 weekly_pct = _as_float(secondary.get("used_percent"))
                 weekly_reset = _as_int(secondary.get("resets_at"))
+                if secondary.get("resets_at") is not None and weekly_reset is None:
+                    weekly_pct = None
+            # An event can still be inside the TTL after its quota window
+            # resets. Retain each independent window only while it is valid.
+            now = time.time()
+            if window_reset is not None and window_reset <= now:
+                window_pct = None
+            if weekly_reset is not None and weekly_reset <= now:
+                weekly_pct = None
             p = rl.get("plan_type")
             if isinstance(p, str) and p.strip():
                 plan = p.strip()
@@ -165,7 +178,7 @@ def _extract(payload: dict) -> Optional[QuotaReading]:
 def _as_float(v) -> Optional[float]:
     if isinstance(v, bool) or not isinstance(v, (int, float)):
         return None
-    return float(v)
+    return float(v) if 0 <= v <= 100 else None
 
 
 def _as_int(v) -> Optional[int]:
