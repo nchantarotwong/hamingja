@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -65,7 +66,7 @@ def _token_count_event(
             "plan_type": plan,
         }
     return {
-        "timestamp": "2026-07-05T00:00:00.000Z",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "type": "event_msg",
         "payload": {
             "type": "token_count",
@@ -266,6 +267,49 @@ def test_stale_rollout_cannot_supply_quota_evidence(codex_home):
     stale = time.time() - quota._READING_TTL_SECONDS - 1
     os.utime(path, (stale, stale))
     assert read_quota(SID) is None
+
+
+@pytest.mark.parametrize("age,accepted", [(0, True), (300, True), (301, False), (-1, False)])
+def test_event_freshness_in_actively_written_rollout(codex_home, monkeypatch, age, accepted):
+    now = int(time.time())
+    monkeypatch.setattr(quota.time, "time", lambda: now)
+    event = _token_count_event(primary_pct=99.0)
+    event["timestamp"] = datetime.fromtimestamp(now - age, timezone.utc).isoformat()
+    path = _write_rollout(codex_home, SID, [
+        event,
+        {"type": "response_item", "payload": {"output": "unrelated activity"}},
+    ])
+    os.utime(path, (now, now))
+    assert (read_quota(SID) is not None) is accepted
+
+
+@pytest.mark.parametrize("timestamp", [None, "", "invalid", True, 123, [], {}, "2026-07-05T00:00:00"])
+def test_unproven_event_freshness_cannot_reuse_older_reading(codex_home, timestamp):
+    newest = _token_count_event(primary_pct=99.0)
+    newest["timestamp"] = timestamp
+    _write_rollout(codex_home, SID, [_token_count_event(), newest])
+    assert read_quota(SID) is None
+
+
+def test_missing_event_timestamp_fails_open(codex_home):
+    event = _token_count_event(primary_pct=99.0)
+    del event["timestamp"]
+    _write_rollout(codex_home, SID, [event])
+    assert read_quota(SID) is None
+
+
+def test_newest_unusable_snapshot_cannot_restore_old_quota(codex_home):
+    newest = _token_count_event(rate_limits=None, last_total=None)
+    _write_rollout(codex_home, SID, [_token_count_event(primary_pct=99.0), newest])
+    assert read_quota(SID) is None
+
+
+@pytest.mark.parametrize("zone", [timezone.utc, timezone(timedelta(hours=-7))])
+def test_equivalent_timezone_timestamps_are_fresh(codex_home, zone):
+    event = _token_count_event()
+    event["timestamp"] = datetime.now(zone).isoformat().replace("+00:00", "Z")
+    _write_rollout(codex_home, SID, [event])
+    assert read_quota(SID).window_used_pct == 6.0
 
 
 def test_no_token_count_events_returns_none(codex_home):

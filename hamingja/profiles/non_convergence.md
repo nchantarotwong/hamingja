@@ -1,8 +1,12 @@
 # non_convergence
 
-If the user asks any of these — *"why is this looping?"*, *"why is this taking
-so long?"*, *"what's going on?"*, *"are you making progress?"*, or says
-*"stop"* / *"pause"* / *"hold on"* — enter **review mode** immediately.
+If the user says *"stop"* / *"pause"* / *"hold on"*, asks *"why is this
+looping?"*, or explicitly asks to suspend work for review, enter **review mode** immediately.
+
+Ordinary status questions such as *"what's going on?"*, *"why is this taking
+so long?"*, or *"are you making progress?"* call for an evidence-based update:
+answer briefly and continue authorized work. If the update reveals actual
+non-convergence, enter review mode as described below.
 
 Review mode:
 1. Stop editing. No new tool calls that mutate files, run migrations, push, or otherwise change state.

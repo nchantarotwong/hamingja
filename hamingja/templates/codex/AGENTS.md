@@ -14,9 +14,11 @@ Codex-only notes under the header below.
 
 ## Codex notes
 
-- Codex hooks currently cover `Bash`, `apply_patch`, and MCP tools; newer
-  shell-execution paths may bypass hook coverage. The `error_streak` detector
-  is best-effort under Codex for that reason — see the hamingja README.
+- Current Codex hooks cover shell and unified exec as `Bash`, `apply_patch`,
+  MCP tools, and other local function tools. A running command's result hook
+  may arrive through a later `write_stdin` poll. Hosted tools such as
+  `WebSearch` are not covered, and older runtimes may expose fewer paths.
+  The `error_streak` detector depends on emitted results — see the hamingja README.
 - If you run `/hooks` and Codex asks you to trust the hamingja hooks, do so
   once. The `PreToolUse` hook may deny a tool call (in `enforce` mode) and
   records guardrail/audit state (a marker for the denied call, plus an entry

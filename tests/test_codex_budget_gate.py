@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import io
 import json
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 import hamingja.config as config_mod
 from hamingja.adapters.codex import tripwire
 from hamingja.core import budget as budget_mod
+from hamingja.detectors.base import BLOCK
 
 SID = "019f2bb0-0bc9-7460-9afb-3d285b26b886"
 
@@ -93,6 +95,7 @@ def _write_rollout(codex_home, session_id, *, window, weekly):
     d = codex_home / "sessions" / "2026" / "07" / "05"
     d.mkdir(parents=True, exist_ok=True)
     ev = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "type": "event_msg",
         "payload": {
             "type": "token_count",
@@ -107,9 +110,11 @@ def _write_rollout(codex_home, session_id, *, window, weekly):
             },
         },
     }
-    (d / f"rollout-2026-07-05T00-00-00-{session_id}.jsonl").write_text(
+    path = d / f"rollout-2026-07-05T00-00-00-{session_id}.jsonl"
+    path.write_text(
         json.dumps(ev) + "\n", encoding="utf-8"
     )
+    return path
 
 
 def _seed_at_checkpoint(state_dir, session_id, checkpoint_at):
@@ -135,6 +140,25 @@ def gate_env(tmp_path, monkeypatch):
     (tmp_path / "state").mkdir()
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
     return tmp_path
+
+
+@pytest.mark.parametrize("age,should_block", [(0, True), (600, False)])
+def test_only_fresh_quota_can_supply_operator_stop_evidence(gate_env, age, should_block):
+    path = _write_rollout(gate_env / "codex", SID, window=99.0, weekly=99.0)
+    event = json.loads(path.read_text())
+    event["timestamp"] = (datetime.now(timezone.utc) - timedelta(seconds=age)).isoformat()
+    path.write_text(json.dumps(event) + '\n{"type":"response_item"}\n')
+    cfg = dict(_BUDGET_CFG, checkpoint_at=2, hard_block_at=4, checkpoint_deny=False,
+               operator_stop={"enabled": True, "unconditional": False,
+                              "stall_window_weighted": 3, "unattended_window_weighted": 3,
+                              "scarcity_used_pct": 85})
+    budget_mod.mark_operator_turn(SID, cfg)
+    for _ in range(4):
+        budget_mod.increment_and_check(SID, "Edit", False, cfg)
+    verdict = budget_mod.increment_and_check(
+        SID, "Edit", False, cfg, quota_reading=tripwire._read_quota_safe(SID),
+    )
+    assert (verdict.action == BLOCK) is should_block
 
 
 def test_checkpoint_blocks_without_quota(gate_env, monkeypatch, capsys):

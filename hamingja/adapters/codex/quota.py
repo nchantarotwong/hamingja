@@ -40,6 +40,7 @@ import json
 import os
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -178,8 +179,9 @@ def read_quota(session_id: str, home: Optional[Path] = None) -> Optional[QuotaRe
 
     Locates the session rollout, tails it for the newest ``token_count`` event,
     and normalizes its ``rate_limits`` + context usage into a QuotaReading.
-    Returns None on any error, missing file/field, or if no usable event is
-    within the tail cap.
+    Returns None on any error, missing file/field, or if the latest event
+    within the tail cap cannot prove freshness. File activity alone is not
+    evidence that the quota observation is current.
     """
     try:
         base = home or _codex_home()
@@ -187,7 +189,8 @@ def read_quota(session_id: str, home: Optional[Path] = None) -> Optional[QuotaRe
         if path is None:
             return None
         try:
-            age = time.time() - path.stat().st_mtime
+            now = time.time()
+            age = now - path.stat().st_mtime
         except OSError:
             return None
         if age < 0 or age > _READING_TTL_SECONDS:
@@ -208,9 +211,19 @@ def read_quota(session_id: str, home: Optional[Path] = None) -> Optional[QuotaRe
             payload = obj.get("payload")
             if not isinstance(payload, dict) or payload.get("type") != "token_count":
                 continue
-            reading = _extract(payload)
-            if reading is not None:
-                return reading
+            # Never revive an older quota sample when the newest observation
+            # is stale or ambiguous. A timestamp without a timezone cannot
+            # prove its age independently of the operator's local timezone.
+            timestamp = obj.get("timestamp")
+            if not isinstance(timestamp, str):
+                return None
+            observed_at = datetime.fromisoformat(timestamp)
+            if observed_at.tzinfo is None:
+                return None
+            event_age = now - observed_at.timestamp()
+            if not 0 <= event_age <= _READING_TTL_SECONDS:
+                return None
+            return _extract(payload)
         return None
     except Exception:
         return None

@@ -138,12 +138,16 @@ Default mode is `observe`, so mechanical detector blocks are downgraded while
 you tune them. Explicit operator resource boundaries remain separately
 configured.
 
-Codex hook coverage follows Codex's hook support: `PreToolUse` / `PostToolUse`
-currently cover Bash, `apply_patch`, and MCP tools, but not every possible
-tool path. In particular, newer shell execution paths may bypass tool hooks;
-when Codex does not emit `PostToolUse`, hamingja cannot observe that result,
-so the `error_streak` detector is best-effort for Codex. `repetition` still
-works for any `PreToolUse`-covered call.
+Codex hook coverage follows the runtime's
+[documented tool paths](https://learn.chatgpt.com/docs/hooks#tool-coverage):
+shell commands and unified exec match `Bash`; `apply_patch`, MCP tools, and
+other local function tools also emit hooks. A running unified-exec command may
+deliver its `PostToolUse` only when a later `write_stdin` poll observes completion;
+the poll does not repeat `PreToolUse`. Hosted tools such as `WebSearch` are
+outside this hook path. Older runtime versions may have narrower coverage.
+When a result hook is absent, hamingja cannot observe the outcome, so
+`error_streak` remains best-effort. See the
+[synthetic compatibility checks and remaining limits](docs/codex-runtime-compatibility.md).
 
 ### Runtime capability boundary
 
@@ -308,6 +312,12 @@ never imply scarcity and cannot arm a denial.
   still block independently. Tune checkpoint suppression with
   `budget.quota_relief_below_pct` (default 50; `0` disables).
 
+  Freshness requires the quota event's own timezone-aware timestamp to be no
+  more than five minutes old and not in the future, as well as recent file
+  activity. Unrelated log writes cannot refresh an old observation. Missing or
+  invalid timestamps supply no quota evidence; this best-effort rollout probe
+  falls back to the advisory counter.
+
 The default operator stop is not an unconditional call ceiling. It requires
 work beyond the configured hard ceiling and stall window, proven unattended
 work, plus positive danger evidence: either a strong mechanical non-convergence
@@ -417,6 +427,9 @@ often, then flip to `enforce`. `hamingja report --reset` clears the log;
 dogfood window so older audit records do not contaminate current tuning. The
 summary includes response-shape counts and aggregate first/last timestamps,
 but never prompts, commands, paths, tool output, or captured sessions.
+Use the [observe-mode evaluation protocol](docs/observe-evaluation.md) to pair
+those counts with task outcomes and operator judgments before tuning defaults.
+The report counts sessions with verdicts, not all sessions or tool calls.
 
 **Per-repo opt-out:** drop a `.hamingja-off` file at the repo root and the
 guard stands down there — recording goes inert too — for repos that
