@@ -28,8 +28,8 @@ Model choice for the sub-agent:
 - use a stronger/slower model when the question is reasoning-heavy, high-risk, or two prior fixes failed with the same symptom
 
 Division of labor:
-- **Sub-agent**: diagnoses, designs, or reviews. Produces a plan or a verdict.
-- **Main agent**: implements. Do not delegate implementation unless the user explicitly approves it.
+- **Sub-agent**: diagnoses, designs, reviews, or implements the assigned bounded scope. Returns findings, changes, and validation evidence as appropriate.
+- **Main agent**: implements and integrates. May delegate bounded implementation already authorized by the user when independent work benefits from isolation or parallelism. Assign explicit file ownership, scope, and validation; review the result before integration. Delegation never expands authority for publishing, destructive actions, or external communication, and must respect the user's delegation preferences and available runtime limits.
 
 After escalation, record what you learned in the next commit message or PR
 description.

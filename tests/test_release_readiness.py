@@ -58,3 +58,36 @@ def test_release_workflow_is_bounded_to_trusted_publishing():
     action_refs = re.findall(r"uses: [^@\s]+@([^\s]+)", workflow)
     assert len(action_refs) == 5
     assert all(re.fullmatch(r"[0-9a-f]{40}", ref) for ref in action_refs)
+
+
+def test_release_validates_before_uploading_distributions():
+    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    build_job = workflow.split("\n  publish:", maxsplit=1)[0]
+    checks = (
+        "python -m pytest -q",
+        "python -m build",
+        "python -m twine check dist/*",
+        '"$smoke_env/bin/python" -m pip install --no-deps dist/*.whl',
+        '"$smoke_env/bin/python" -I scripts/check_distribution.py',
+        "uses: actions/upload-artifact@",
+    )
+    positions = [build_job.index(check) for check in checks]
+    assert positions == sorted(positions)
+    assert '--release-tag "$GITHUB_REF_NAME"' in build_job
+
+
+def test_pull_requests_run_tests_and_isolated_wheel_smoke():
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "pull_request:" in workflow
+    assert "pull_request_target:" not in workflow
+    assert "contents: read" in workflow
+    assert "id-token: write" not in workflow
+    assert "persist-credentials: false" in workflow
+    for check in (
+        "python -m pytest -q", "python -m build", "python -m twine check dist/*",
+        '"$smoke_env/bin/python" -m pip install --no-deps dist/*.whl',
+        '"$smoke_env/bin/python" -I scripts/check_distribution.py',
+    ):
+        assert check in workflow
+    action_refs = re.findall(r"uses: [^@\s]+@([^\s]+)", workflow)
+    assert action_refs and all(re.fullmatch(r"[0-9a-f]{40}", ref) for ref in action_refs)

@@ -446,7 +446,7 @@ def _sa_remaining(
 
 def _reading_pct(reading, key: str):
     """Read a percent field off a QuotaReading-like object or dict. None if absent
-    or not a real number. bool is rejected (isinstance(True, int) is True)."""
+    or not a finite percent in [0, 100]. bool is rejected."""
     if reading is None:
         return None
     v = getattr(reading, key, None)
@@ -454,7 +454,7 @@ def _reading_pct(reading, key: str):
         v = reading.get(key)
     if isinstance(v, bool) or not isinstance(v, (int, float)):
         return None
-    return float(v)
+    return float(v) if 0 <= v <= 100 else None
 
 
 def _quota_relief(reading, cfg: dict):

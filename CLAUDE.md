@@ -51,8 +51,8 @@ This rule takes precedence over every other guideline in this file.
 
 ## Stop / Review mode
 
-If the user says "stop", "pause", "hold on", "why is this looping?", or "are
-you making progress?", stop mutating state immediately. Only read files, inspect
+If the user says "stop", "pause", "hold on", "why is this looping?", or explicitly
+asks to suspend work for review, stop mutating state immediately. Only read files, inspect
 `git status`/`git diff`, or list directories as needed to report:
 
 1. Original goal.
@@ -64,6 +64,10 @@ you making progress?", stop mutating state immediately. Only read files, inspect
 7. One minimal diagnostic next step, not a fix.
 
 Wait for explicit approval before editing again.
+
+For ordinary status questions (including "are you making progress?"), answer
+with evidence and continue authorized work unless the evidence reveals actual
+non-convergence or the user also asks to stop.
 
 ## Work with the existing codebase
 
@@ -104,7 +108,7 @@ Before committing a coherent slice:
    untrusted project config escalate or remove an exemption? Can a denied call
    wedge the session? Are read-only/idempotent tools still exempt where needed?
 3. Fix every finding unless clearly out of scope.
-4. Re-run the suite.
+4. Re-run the suite after fixes; do not repeat a passing run when nothing changed.
 
 Cap the loop at 5 passes. If findings remain or a finding forks the design,
 stop and ask. When a finding names a class, audit the whole class.

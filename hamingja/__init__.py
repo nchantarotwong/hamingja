@@ -13,4 +13,4 @@ adapters/. Guardrail evaluation fails OPEN: internal uncertainty defaults to
 allowing the tool call, never inventing a denial.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"

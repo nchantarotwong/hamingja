@@ -72,6 +72,19 @@ def test_default_includes_sub_agent_escalation_guidance():
         assert "use the day-to-day model when the packet is narrow" in out
 
 
+def test_default_profiles_preserve_authorized_work_without_extra_permission():
+    with tempfile.TemporaryDirectory() as d:
+        rc, out, _ = _run(["init", "--dry-run"], cwd=d)
+        assert rc == 0
+        assert "Ordinary status questions" in out
+        assert "answer briefly and continue authorized work" in out
+        assert "Wait for explicit user approval before editing again" in out
+        assert "Never run checks just to earn budget credit" in out
+        assert "already authorized by the user" in out
+        assert "Do not delegate implementation unless the user explicitly approves it" not in out
+        assert "Scale review to the risk and scope of the change" in out
+
+
 def test_default_includes_wrapper_usage_guidance():
     with tempfile.TemporaryDirectory() as d:
         rc, out, _ = _run(["init", "--dry-run"], cwd=d)

@@ -4,6 +4,11 @@ Date: 2026-07-12
 Mode: observe
 Fixtures: synthetic only
 
+Historical rescope record: the completion/lineage statement below describes
+that run's fixtures. Current manifests observe child completion and identity;
+parent lineage remains unavailable. For new tuning runs, use the
+[observe-mode evaluation protocol](observe-evaluation.md).
+
 ## Adapter conformance
 
 - Codex and Claude each received three identical failed mutations followed by

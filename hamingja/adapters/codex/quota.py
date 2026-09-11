@@ -40,6 +40,7 @@ import json
 import os
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -79,8 +80,10 @@ def _find_rollout(session_id: str, home: Path) -> Optional[Path]:
     happen — session ids are unique), the most-recently-modified wins.
     """
     try:
-        sid = str(session_id).strip()
-        if not sid:
+        if not isinstance(session_id, str):
+            return None
+        sid = session_id.strip()
+        if not sid or any(char in sid for char in "*?[]/\\\x00"):
             return None
         sessions = home / "sessions"
         if not sessions.is_dir():
@@ -121,9 +124,20 @@ def _extract(payload: dict) -> Optional[QuotaReading]:
             if isinstance(primary, dict):
                 window_pct = _as_float(primary.get("used_percent"))
                 window_reset = _as_int(primary.get("resets_at"))
+                if primary.get("resets_at") is not None and window_reset is None:
+                    window_pct = None
             if isinstance(secondary, dict):
                 weekly_pct = _as_float(secondary.get("used_percent"))
                 weekly_reset = _as_int(secondary.get("resets_at"))
+                if secondary.get("resets_at") is not None and weekly_reset is None:
+                    weekly_pct = None
+            # An event can still be inside the TTL after its quota window
+            # resets. Retain each independent window only while it is valid.
+            now = time.time()
+            if window_reset is not None and window_reset <= now:
+                window_pct = None
+            if weekly_reset is not None and weekly_reset <= now:
+                weekly_pct = None
             p = rl.get("plan_type")
             if isinstance(p, str) and p.strip():
                 plan = p.strip()
@@ -164,7 +178,7 @@ def _extract(payload: dict) -> Optional[QuotaReading]:
 def _as_float(v) -> Optional[float]:
     if isinstance(v, bool) or not isinstance(v, (int, float)):
         return None
-    return float(v)
+    return float(v) if 0 <= v <= 100 else None
 
 
 def _as_int(v) -> Optional[int]:
@@ -178,8 +192,9 @@ def read_quota(session_id: str, home: Optional[Path] = None) -> Optional[QuotaRe
 
     Locates the session rollout, tails it for the newest ``token_count`` event,
     and normalizes its ``rate_limits`` + context usage into a QuotaReading.
-    Returns None on any error, missing file/field, or if no usable event is
-    within the tail cap.
+    Returns None on any error, missing file/field, or if the latest event
+    within the tail cap cannot prove freshness. File activity alone is not
+    evidence that the quota observation is current.
     """
     try:
         base = home or _codex_home()
@@ -187,7 +202,8 @@ def read_quota(session_id: str, home: Optional[Path] = None) -> Optional[QuotaRe
         if path is None:
             return None
         try:
-            age = time.time() - path.stat().st_mtime
+            now = time.time()
+            age = now - path.stat().st_mtime
         except OSError:
             return None
         if age < 0 or age > _READING_TTL_SECONDS:
@@ -208,9 +224,19 @@ def read_quota(session_id: str, home: Optional[Path] = None) -> Optional[QuotaRe
             payload = obj.get("payload")
             if not isinstance(payload, dict) or payload.get("type") != "token_count":
                 continue
-            reading = _extract(payload)
-            if reading is not None:
-                return reading
+            # Never revive an older quota sample when the newest observation
+            # is stale or ambiguous. A timestamp without a timezone cannot
+            # prove its age independently of the operator's local timezone.
+            timestamp = obj.get("timestamp")
+            if not isinstance(timestamp, str):
+                return None
+            observed_at = datetime.fromisoformat(timestamp)
+            if observed_at.tzinfo is None:
+                return None
+            event_age = now - observed_at.timestamp()
+            if not 0 <= event_age <= _READING_TTL_SECONDS:
+                return None
+            return _extract(payload)
         return None
     except Exception:
         return None
